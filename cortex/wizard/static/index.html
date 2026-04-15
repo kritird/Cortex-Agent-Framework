@@ -1,0 +1,2903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Agent Framework — Setup Wizard</title>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Google Material light palette */
+    --g-blue: #1a73e8;
+    --g-blue-hover: #1557b0;
+    --g-blue-container: #e8f0fe;
+    --g-red: #ea4335;
+    --g-red-dark: #c5221f;
+    --g-yellow: #fbbc04;
+    --g-yellow-dark: #f29900;
+    --g-green: #34a853;
+    --g-green-dark: #137333;
+    --g-green-container: #e6f4ea;
+    --g-red-container: #fce8e6;
+    --g-yellow-container: #fef7e0;
+
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --surface-2: #f1f3f4;
+    --surface-3: #e8eaed;
+    --border: #dadce0;
+    --border-strong: #bdc1c6;
+    --text: #202124;
+    --text-muted: #5f6368;
+    --text-dim: #80868b;
+    --shadow-1: 0 1px 2px 0 rgba(60,64,67,.08), 0 1px 3px 1px rgba(60,64,67,.10);
+    --shadow-2: 0 1px 3px 0 rgba(60,64,67,.15), 0 4px 8px 3px rgba(60,64,67,.10);
+
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 4px;
+    --font-sans: 'Google Sans', 'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'Roboto Mono', 'SF Mono', 'Menlo', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+
+  /* Top app bar */
+  .app-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: var(--shadow-1);
+  }
+  .app-bar img.logo {
+    height: 34px;
+    width: 34px;
+    object-fit: contain;
+  }
+  .app-bar .brand {
+    font-family: 'Google Sans', var(--font-sans);
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.2px;
+  }
+  .app-bar .brand .sub {
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 8px;
+    font-size: 14px;
+  }
+  .app-bar .spacer { flex: 1; }
+  .app-bar .badge-version {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+
+  /* Layout */
+  .wizard-container { max-width: 820px; margin: 0 auto; padding: 36px 24px 80px; }
+  .wizard-header { margin-bottom: 32px; }
+  .wizard-header h1 {
+    font-family: 'Google Sans', var(--font-sans);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.4px;
+    margin-bottom: 6px;
+  }
+  .wizard-header p { color: var(--text-muted); font-size: 14px; }
+
+  /* Progress bar */
+  .progress-bar {
+    display: flex; align-items: flex-start; margin-bottom: 44px; padding: 0 4px;
+  }
+  .progress-step { display: flex; align-items: center; flex: 1; position: relative; }
+  .progress-step:last-child { flex: 0; }
+  .step-circle {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 500; flex-shrink: 0;
+    background: var(--surface); border: 2px solid var(--border); color: var(--text-dim);
+    transition: all .2s ease;
+  }
+  .step-circle.active { background: var(--g-blue); border-color: var(--g-blue); color: #fff; box-shadow: 0 0 0 4px var(--g-blue-container); }
+  .step-circle.done { background: var(--g-green); border-color: var(--g-green); color: #fff; }
+  .step-line { flex: 1; height: 2px; background: var(--border); margin: 0 6px; transition: background .2s; }
+  .step-line.done { background: var(--g-green); }
+  .step-label {
+    position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+    white-space: nowrap; font-size: 11px; color: var(--text-dim); transition: color .2s;
+  }
+  .step-label.active { color: var(--g-blue); font-weight: 500; }
+  .step-label.done { color: var(--g-green-dark); }
+
+  /* Cards / Steps */
+  .step-panel { display: none; animation: fadeIn .25s ease; }
+  .step-panel.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 32px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-1);
+  }
+  .card h2 {
+    font-family: 'Google Sans', var(--font-sans);
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 4px;
+    letter-spacing: -0.2px;
+  }
+  .card .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; }
+
+  /* Form elements */
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  input, select, textarea {
+    width: 100%;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+    font-family: inherit;
+  }
+  input:hover, select:hover, textarea:hover { border-color: var(--border-strong); }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--g-blue);
+    box-shadow: 0 0 0 3px rgba(26,115,232,.14);
+  }
+  textarea { resize: vertical; min-height: 72px; font-family: var(--font-mono); font-size: 13px; }
+  .field { margin-bottom: 18px; }
+  .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.45; }
+  .hint code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 3px; color: var(--text);
+  }
+
+  .row { display: flex; gap: 16px; }
+  .row > * { flex: 1; }
+  .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  /* Section divider heading inside cards */
+  .section-head {
+    font-family: 'Google Sans', var(--font-sans);
+    font-size: 14px; font-weight: 500; color: var(--g-blue);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 28px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .section-head:first-child { margin-top: 0; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 22px;
+    border-radius: var(--radius-sm);
+    font-size: 14px; font-weight: 500;
+    cursor: pointer; border: none;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .btn-primary { background: var(--g-blue); color: #fff; box-shadow: var(--shadow-1); }
+  .btn-primary:hover { background: var(--g-blue-hover); box-shadow: var(--shadow-2); }
+  .btn-secondary {
+    background: var(--surface); color: var(--g-blue);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--g-blue-container); border-color: var(--g-blue); }
+  .btn-success { background: var(--g-green); color: #fff; box-shadow: var(--shadow-1); }
+  .btn-success:hover { background: var(--g-green-dark); }
+  .btn-sm { padding: 8px 16px; font-size: 13px; }
+  .btn-text { background: transparent; color: var(--g-blue); padding: 8px 12px; }
+  .btn-text:hover { background: var(--g-blue-container); }
+
+  .nav-buttons { display: flex; justify-content: space-between; margin-top: 24px; }
+
+  /* Advanced expander */
+  details.advanced {
+    margin-top: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  details.advanced[open] { background: var(--surface); box-shadow: var(--shadow-1); }
+  details.advanced > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 18px;
+    font-family: 'Google Sans', var(--font-sans);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+  }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  details.advanced > summary::before {
+    content: '⌄';
+    display: inline-block;
+    color: var(--g-blue);
+    font-size: 18px;
+    transform: rotate(-90deg);
+    transition: transform .2s;
+    width: 16px; text-align: center;
+  }
+  details.advanced[open] > summary::before { transform: rotate(0); }
+  details.advanced > summary .sum-desc {
+    font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 4px;
+  }
+  details.advanced > .advanced-body {
+    padding: 8px 18px 18px;
+    border-top: 1px solid var(--border);
+  }
+  details.advanced .section-head { color: var(--g-blue); margin-top: 22px; font-size: 12px; }
+  details.advanced .section-head:first-child { margin-top: 8px; }
+
+  /* Publish mode cards */
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .mode-card {
+    background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius);
+    padding: 22px 16px; text-align: center; cursor: pointer; transition: all .2s;
+  }
+  .mode-card:hover { border-color: var(--g-blue); background: var(--g-blue-container); }
+  .mode-card.selected { border-color: var(--g-blue); background: var(--g-blue-container); }
+  .mode-card .mode-icon { font-size: 28px; margin-bottom: 10px; }
+  .mode-card .mode-title { font-family: 'Google Sans', var(--font-sans); font-size: 15px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
+  .mode-card .mode-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+  /* Dynamic list items (tool servers, task types) */
+  .list-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  .list-item .remove-btn {
+    position: absolute; top: 12px; right: 14px;
+    background: transparent; border: none;
+    color: var(--text-dim); cursor: pointer; font-size: 20px; padding: 2px 8px;
+    border-radius: 50%;
+    transition: all .15s;
+  }
+  .list-item .remove-btn:hover { color: var(--g-red); background: var(--g-red-container); }
+  .list-item details.advanced { margin-top: 16px; }
+
+  /* Config preview */
+  pre {
+    background: #202124;
+    color: #e8eaed;
+    padding: 20px;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    font-family: var(--font-mono);
+    border: 1px solid #3c4043;
+    max-height: 460px;
+    overflow-y: auto;
+  }
+
+  /* Info/tip boxes */
+  .tip-box {
+    border-radius: var(--radius-sm);
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.55;
+    border: 1px solid;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .tip-box::before {
+    content: '';
+    display: inline-block;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .tip-box.info { background: var(--g-blue-container); border-color: #aecbfa; color: #174ea6; }
+  .tip-box.info::before { background: var(--g-blue); content: 'i'; color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px; }
+  .tip-box.success { background: var(--g-green-container); border-color: #b7dfb9; color: var(--g-green-dark); }
+  .tip-box.success::before { background: var(--g-green); content: '✓'; color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px; }
+  .tip-box.warn { background: var(--g-yellow-container); border-color: #feefc3; color: #b06000; }
+  .tip-box.warn::before { background: var(--g-yellow-dark); content: '!'; color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px; }
+  .tip-box strong { font-weight: 500; }
+  .tip-box code {
+    background: rgba(255,255,255,.55);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+  .tip-content { flex: 1; min-width: 0; }
+
+  /* Recommendations list */
+  .rec-list { list-style: none; padding: 0; }
+  .rec-list li {
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    margin-bottom: 10px;
+    font-size: 13px;
+    border-left: 3px solid var(--g-blue);
+    line-height: 1.55;
+  }
+  .rec-list li strong { color: var(--g-blue); font-weight: 500; display: block; margin-bottom: 4px; }
+  .rec-list li code {
+    background: var(--surface-3); padding: 1px 6px; border-radius: 3px;
+    font-size: 12px; font-family: var(--font-mono);
+  }
+
+  /* Toggle switch (Material style) */
+  .toggle-row {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--surface-2);
+  }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-row > div:first-child { flex: 1; min-width: 0; }
+  .toggle-row label { margin-bottom: 0; }
+  .toggle-row .hint { margin-top: 4px; }
+  .toggle {
+    position: relative; width: 36px; height: 20px; flex-shrink: 0; margin-top: 2px;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider {
+    position: absolute; inset: 0; background: var(--border-strong);
+    border-radius: 12px; cursor: pointer; transition: .2s;
+  }
+  .toggle .slider::before {
+    content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: .2s;
+    box-shadow: 0 1px 2px rgba(60,64,67,.3);
+  }
+  .toggle input:checked + .slider { background: var(--g-blue); }
+  .toggle input:checked + .slider::before { transform: translateX(16px); }
+
+  /* Chips (transport selector) */
+  .transport-selector { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .transport-selector .chip {
+    padding: 6px 14px; border-radius: 999px; font-size: 12px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-muted);
+    font-weight: 500;
+    transition: all .15s;
+  }
+  .transport-selector .chip:hover { background: var(--surface-2); }
+  .transport-selector .chip.active {
+    background: var(--g-blue-container); border-color: var(--g-blue); color: var(--g-blue);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* Locked field marker */
+  .locked-note {
+    color: var(--g-yellow-dark); font-size: 12px; margin-top: -12px; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* Footer actions */
+  .action-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+</style>
+</head>
+<body>
+
+<div class="app-bar">
+  <img class="logo" src="/logo.svg" alt="Cortex logo" onerror="this.style.display='none'">
+  <div class="brand">Cortex<span class="sub">Agent Framework</span></div>
+  <div class="spacer"></div>
+  <span class="badge-version">Setup Wizard</span>
+</div>
+
+<div class="wizard-container">
+  <div class="wizard-header">
+    <h1>Configure your agent</h1>
+    <p>A guided, step-by-step setup. Advanced sections are collapsed — expand only what you need.</p>
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="progress-bar" id="progressBar"></div>
+
+  <!-- ═══════════════ Step 0: Welcome ═══════════════ -->
+  <div class="step-panel active" data-step="0">
+    <div class="card">
+      <h2>Welcome to the Setup Wizard</h2>
+      <p class="subtitle">This guided setup will walk you through configuring your Cortex agent step by step.</p>
+      <div class="tip-box info"><div class="tip-content">
+        <strong>What you'll configure</strong><br>
+        1. Agent identity — name and purpose<br>
+        2. LLM provider — which model powers your agent<br>
+        3. Tool servers — MCP integrations for capabilities<br>
+        4. Task types — define what your agent can do<br>
+        5. Storage &amp; options — persistence and advanced settings<br>
+        6. Publish mode — how you want to deploy your agent<br>
+        7. Review &amp; finish — save config and get started
+      </div></div>
+      <div class="tip-box warn"><div class="tip-content">
+        <strong>Before you start</strong> — make sure you have an API key for your chosen LLM provider set as an environment variable.
+      </div></div>
+    </div>
+    <div class="nav-buttons">
+      <div></div>
+      <button class="btn btn-primary" onclick="nextStep()">Get started →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 1: Agent Identity ═══════════════ -->
+  <div class="step-panel" data-step="1">
+    <div class="card">
+      <h2>Agent identity</h2>
+      <p class="subtitle">Give your agent a name and describe what it does.</p>
+
+      <div class="field">
+        <label>Agent name</label>
+        <input id="agent_name" value="MyAgent" placeholder="e.g. ResearchAgent, CodeReviewer">
+        <div class="hint">A short, descriptive name. Used as the session identity and referenced in logs.</div>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="agent_description" rows="3" placeholder="Describe what your agent does...">An intelligent AI agent built on the Cortex framework</textarea>
+        <div class="hint">Used by the LLM to understand the agent's purpose and decompose user requests.</div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced <span class="sum-desc">— synthesis guidance, streaming, concurrency, capability scout</span></summary>
+        <div class="advanced-body">
+
+          <div class="section-head">Synthesis</div>
+          <div class="field">
+            <label>Synthesis guidance</label>
+            <textarea id="agent_synthesis_guidance" rows="3" placeholder="e.g. Prefer tables over prose when comparing options. Always cite sources."></textarea>
+            <div class="hint">Free-form instructions injected into the final answer composition step. Use this to steer tone, formatting, or citation style without touching individual tasks.</div>
+          </div>
+
+          <div class="section-head">Performance</div>
+          <div class="toggle-row">
+            <div>
+              <label>Streaming decomposition</label>
+              <div class="hint">Start executing ready tasks as soon as the LLM emits them instead of waiting for the entire plan. Reduces time-to-first-result but slightly increases overall token usage.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="agent_streaming_decomposition"><span class="slider"></span></label>
+          </div>
+
+          <div class="section-head">Concurrency extras</div>
+          <div class="field">
+            <label>Max MCP-agent LLM calls</label>
+            <input id="agent_max_mcp_agent_llm_calls" type="number" value="10" min="1" max="200">
+            <div class="hint">Ceiling on LLM calls a single MCP sub-agent may make for one request. Prevents a runaway sub-agent from draining your budget.</div>
+          </div>
+
+          <div class="section-head">Streaming events (SSE)</div>
+          <div class="toggle-row">
+            <div>
+              <label>Emit status updates</label>
+              <div class="hint">Publish live progress events over SSE so clients can render a progress UI while the agent works.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="agent_streaming_status_updates"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Include task detail in updates</label>
+              <div class="hint">Attach the task name and short summary to each status event. Off means clients only see "step 3 of 7" style progress.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="agent_streaming_include_task_detail" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Forward MCP sub-agent updates</label>
+              <div class="hint">Re-emit progress events from nested MCP agents. Turn on if another agent calls this one and you want its status to reach the end user.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="agent_streaming_mcp_agent_updates"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Reconnect buffer size</label>
+              <input id="agent_streaming_reconnect_buffer_size" type="number" value="50" min="0" max="1000">
+              <div class="hint">Number of past SSE events kept so a reconnecting client can replay what it missed.</div>
+            </div>
+            <div class="field">
+              <label>Min delivery interval (ms)</label>
+              <input id="agent_streaming_min_delivery_interval_ms" type="number" value="200" min="0" max="5000">
+              <div class="hint">Throttle: don't flush more than one event per this many milliseconds. Protects slow clients from event storms.</div>
+            </div>
+          </div>
+
+          <div class="section-head">Clarification</div>
+          <div class="toggle-row">
+            <div>
+              <label>Allow clarification questions</label>
+              <div class="hint">Let the agent pause and ask the user a question when a request is ambiguous, instead of guessing. Requires a UI that can relay questions back.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="agent_clarification_enabled"><span class="slider"></span></label>
+          </div>
+
+          <div class="section-head">Capability scout</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable capability scout</label>
+              <div class="hint">Before planning, probe connected MCP servers to learn what tools they expose. Feeds capabilities into the planner so it can use tools it wasn't explicitly told about.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="scout_enabled" checked><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Max capabilities</label>
+              <input id="scout_max_capabilities" type="number" value="30" min="1" max="500">
+              <div class="hint">Probe at most this many tools per request. Prevents planning-context bloat on servers with hundreds of tools.</div>
+            </div>
+            <div class="field">
+              <label>Scout timeout (s)</label>
+              <input id="scout_timeout_seconds" type="number" value="10" min="1" max="120">
+              <div class="hint">Give up scouting if it exceeds this. Scout is best-effort — timing out is safe, planning continues without the missing info.</div>
+            </div>
+          </div>
+
+          <div class="toggle-row">
+            <div>
+              <label>External MCP discovery</label>
+              <div class="hint">Let the scout query public MCP registries (Smithery, PulseMCP, etc.) to propose new tool servers it could connect to. Off keeps the agent fully offline.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="scout_ext_enabled" checked><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Auto-discovery file</label>
+            <input id="scout_ext_auto_discovery_file" value="cortex_auto_mcps.yaml">
+            <div class="hint">Where auto-discovered MCP records are cached. Relative paths resolve against <code>storage.base_path</code>.</div>
+          </div>
+          <div class="field">
+            <label>Registry sources (one per line)</label>
+            <textarea id="scout_ext_registry_sources" rows="4" placeholder="https://registry.smithery.ai&#10;https://www.pulsemcp.com&#10;https://glama.ai&#10;https://mcp.so"></textarea>
+            <div class="hint">Curated pool of public MCP registries the scout may query, tried in order. Leave blank to use the defaults.</div>
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label>Max new per session</label>
+              <input id="scout_ext_max_new_per_session" type="number" value="5" min="0" max="100">
+              <div class="hint">Cap on how many new external MCPs may be registered during one session. Prevents runaway discovery.</div>
+            </div>
+            <div class="field">
+              <label>Max stale days</label>
+              <input id="scout_ext_max_stale_days" type="number" value="30" min="1" max="365">
+              <div class="hint">Re-verify a discovered server whose last verification is older than this.</div>
+            </div>
+            <div class="field">
+              <label>Search timeout (s)</label>
+              <input id="scout_ext_search_timeout_s" type="number" step="0.5" value="10" min="1" max="120">
+              <div class="hint">Per-registry HTTP request timeout. One slow registry won't block the others.</div>
+            </div>
+          </div>
+
+        </div>
+      </details>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: LLM provider →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 2: LLM Provider ═══════════════ -->
+  <div class="step-panel" data-step="2">
+    <div class="card">
+      <h2>LLM provider</h2>
+      <p class="subtitle">Choose the language model that will power your agent's reasoning.</p>
+
+      <div class="field">
+        <label>Provider</label>
+        <select id="provider" onchange="onProviderChange()">
+          <option value="anthropic">Anthropic (Direct)</option>
+          <option value="anthropic_compatible">Anthropic Compatible (Proxy/Gateway)</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="bedrock">AWS Bedrock</option>
+          <option value="azure_ai">Azure AI</option>
+          <option value="grok">Grok (xAI)</option>
+          <option value="mistral">Mistral</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Model</label>
+        <select id="model"></select>
+      </div>
+
+      <div class="field" id="baseUrlGroup" style="display:none;">
+        <label>Base URL</label>
+        <input id="base_url" placeholder="https://your-proxy.example.com/v1">
+        <div class="hint">Required for proxy/gateway providers.</div>
+      </div>
+
+      <div class="field">
+        <label>API key environment variable</label>
+        <input id="api_key_env_var" value="ANTHROPIC_API_KEY">
+        <div class="hint">The env var name where your API key is stored (e.g. <code>ANTHROPIC_API_KEY</code>). Do not paste the key itself.</div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Max tokens</label>
+          <input id="max_tokens" type="number" value="4096" min="256" max="128000">
+          <div class="hint">Maximum completion tokens per LLM call.</div>
+        </div>
+        <div class="field">
+          <label>Temperature</label>
+          <input id="temperature" type="number" value="1.0" min="0" max="2.0" step="0.1">
+          <div class="hint">Sampling temperature. Lower = more deterministic.</div>
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced <span class="sum-desc">— custom headers, Bedrock/Azure credentials</span></summary>
+        <div class="advanced-body">
+
+          <div class="section-head">Custom headers</div>
+          <div class="field">
+            <label>Extra headers (one per line, <code>Key: Value</code>)</label>
+            <textarea id="llm_headers" rows="3" placeholder="X-Proxy-Tenant: my-team&#10;X-Trace-Id: cortex"></textarea>
+            <div class="hint">Added to every LLM request. Useful for proxy gateways that require routing headers.</div>
+          </div>
+
+          <div class="section-head">AWS Bedrock</div>
+          <div class="row">
+            <div class="field">
+              <label>Region env var</label>
+              <input id="llm_region_env_var" placeholder="AWS_REGION">
+              <div class="hint">Env var holding the AWS region (e.g. <code>us-east-1</code>).</div>
+            </div>
+            <div class="field">
+              <label>Access key env var</label>
+              <input id="llm_access_key_env_var" placeholder="AWS_ACCESS_KEY_ID">
+              <div class="hint">Leave blank to use the default AWS credential chain (IAM role, SSO, etc.).</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Secret key env var</label>
+              <input id="llm_secret_key_env_var" placeholder="AWS_SECRET_ACCESS_KEY">
+              <div class="hint">Only needed when using static keys instead of the credential chain.</div>
+            </div>
+            <div class="field">
+              <label>Session token env var</label>
+              <input id="llm_session_token_env_var" placeholder="AWS_SESSION_TOKEN">
+              <div class="hint">Required when using STS/temporary credentials.</div>
+            </div>
+          </div>
+
+          <div class="section-head">Azure AI</div>
+          <div class="row">
+            <div class="field">
+              <label>Endpoint env var</label>
+              <input id="llm_endpoint_env_var" placeholder="AZURE_ENDPOINT">
+              <div class="hint">Env var holding the Azure AI Foundry endpoint URL.</div>
+            </div>
+            <div class="field">
+              <label>API version</label>
+              <input id="llm_api_version" placeholder="2024-10-01">
+              <div class="hint">Azure API version string used in the request query.</div>
+            </div>
+          </div>
+
+          <div class="section-head">Additional named providers</div>
+          <div class="hint" style="margin-bottom:8px;">Define extra providers that individual task types can target via <code>llm_provider:</code>. Use this to mix cheap/fast models with the default.</div>
+          <div id="llmProviderList"></div>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="addLlmProvider()">+ Add provider</button>
+
+        </div>
+      </details>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Tool servers →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 3: Tool Servers ═══════════════ -->
+  <div class="step-panel" data-step="3">
+    <div class="card">
+      <h2>Tool servers (MCP)</h2>
+      <p class="subtitle">Connect external tools via the Model Context Protocol. Optional — you can add these later.</p>
+      <div class="tip-box info"><div class="tip-content">
+        Tool servers give your agent capabilities like web search, file access, database queries, and more.
+        Each server exposes tools your agent can call during task execution. Expand <strong>Advanced</strong> inside
+        a server to configure auth, TLS, pooling, and health checks.
+      </div></div>
+      <div id="toolServerList"></div>
+      <button class="btn btn-secondary btn-sm" onclick="addToolServer()">+ Add tool server</button>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Task types →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 4: Task Types ═══════════════ -->
+  <div class="step-panel" data-step="4">
+    <div class="card">
+      <h2>Task types</h2>
+      <p class="subtitle">Define the kinds of tasks your agent can handle. Optional — the agent can auto-discover tasks from its tools.</p>
+      <div class="tip-box info"><div class="tip-content">
+        Task types tell the agent how to decompose user requests. Each type maps to a <strong>capability</strong>
+        (LLM synthesis, web search, bash, sandboxed code execution, document/image generation) and produces output in a chosen <strong>format</strong>.
+        Expand <strong>Advanced</strong> on a task for retries, dependencies, validation notes, and output schemas.
+      </div></div>
+      <div id="taskTypeList"></div>
+      <button class="btn btn-secondary btn-sm" onclick="addTaskType()">+ Add task type</button>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Storage &amp; options →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 5: Storage & Options ═══════════════ -->
+  <div class="step-panel" data-step="5">
+    <div class="card">
+      <h2>Storage &amp; options</h2>
+      <p class="subtitle">Configure persistence, runtime limits, and optional agent features.</p>
+
+      <div class="field">
+        <label>Storage base path</label>
+        <input id="storage_path" value="./cortex_storage">
+        <div class="hint">Root directory for all agent-managed files (sessions, blueprints, auto-discovered MCP cache).</div>
+      </div>
+
+      <div class="field">
+        <label>Storage backend</label>
+        <select id="storage_backend" onchange="onStorageBackendChange()">
+          <option value="memory">In-memory (development)</option>
+          <option value="sqlite">SQLite (recommended for single-instance)</option>
+          <option value="redis">Redis (distributed / production)</option>
+        </select>
+        <div class="hint">In-memory state is lost on restart. Pick SQLite or Redis for anything beyond local development.</div>
+      </div>
+
+      <div id="sqliteOptions" style="display:none;">
+        <div class="field">
+          <label>SQLite database path</label>
+          <input id="sqlite_path" value="./cortex_storage/cortex.db">
+          <div class="hint">Absolute or relative path to the SQLite file. The directory will be created if missing.</div>
+        </div>
+      </div>
+
+      <div id="redisOptions" style="display:none;">
+        <div class="row">
+          <div class="field">
+            <label>Redis host</label>
+            <input id="redis_host" value="127.0.0.1">
+          </div>
+          <div class="field">
+            <label>Redis port</label>
+            <input id="redis_port" type="number" value="6379">
+          </div>
+        </div>
+      </div>
+
+      <div class="section-head">Session &amp; timeout settings</div>
+      <div class="row">
+        <div class="field">
+          <label>Session timeout (s)</label>
+          <input id="max_wait_seconds" type="number" value="120" min="10" max="3600">
+          <div class="hint">Max time an entire session can run before being terminated.</div>
+        </div>
+        <div class="field">
+          <label>Default task timeout (s)</label>
+          <input id="default_task_timeout" type="number" value="40" min="5" max="600">
+          <div class="hint">Default timeout per individual task. Can be overridden per task type.</div>
+        </div>
+      </div>
+
+      <div class="section-head">Concurrency limits</div>
+      <div class="row">
+        <div class="field">
+          <label>Max concurrent sessions</label>
+          <input id="max_concurrent_sessions" type="number" value="50" min="1" max="1000">
+          <div class="hint">Global cap on simultaneous sessions.</div>
+        </div>
+        <div class="field">
+          <label>Max sessions per user</label>
+          <input id="max_sessions_per_user" type="number" value="3" min="1" max="50">
+          <div class="hint">Per-user concurrency limit.</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Max parallel tasks</label>
+          <input id="max_parallel_tasks" type="number" value="5" min="1" max="50">
+          <div class="hint">Max tasks executing simultaneously in a single session.</div>
+        </div>
+        <div class="field">
+          <label>Max tasks per session</label>
+          <input id="max_tasks_per_session" type="number" value="20" min="1" max="100">
+          <div class="hint">Upper limit on tasks in one session's task graph.</div>
+        </div>
+      </div>
+
+      <div class="section-head">Features</div>
+      <div class="toggle-row">
+        <div>
+          <label>Response validation</label>
+          <div class="hint">Score agent responses for quality before returning them to the user.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="validation_enabled"><span class="slider"></span></label>
+      </div>
+      <div class="field" style="margin-top:14px;">
+        <label>Wave-gate judge LLM provider</label>
+        <input type="text" id="wave_gate_llm_provider" placeholder="default">
+        <div class="hint">LLM used to validate each task output against its <code>validation_notes</code>. Leave as <b>default</b> unless you want a cheaper/faster model for the judge.</div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <label>Session history</label>
+          <div class="hint">Persist conversation history across sessions.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="history_enabled"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <label>Learning engine</label>
+          <div class="hint">Auto-discover new task types from usage patterns (with user consent).</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="learning_enabled"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <label>Task blueprints</label>
+          <div class="hint">Per-task markdown guidance (dos/don'ts, clarifications, lessons) auto-updated after each run with user consent. Leave off to skip entirely.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="blueprint_enabled"><span class="slider"></span></label>
+      </div>
+      <div id="blueprintOptions" style="display:none; margin: 8px 0 16px 0;">
+        <div class="row">
+          <div class="field">
+            <label>Storage mode</label>
+            <select id="blueprint_storage_mode">
+              <option value="filesystem">Filesystem (.md files)</option>
+              <option value="backend">Storage backend (Redis/SQLite)</option>
+            </select>
+            <div class="hint">Filesystem is editable in a text editor; backend stores blueprints alongside session data.</div>
+          </div>
+          <div class="field">
+            <label>Blueprint directory</label>
+            <input id="blueprint_dir" placeholder="defaults to {storage.base_path}/blueprints">
+            <div class="hint">Filesystem mode only — override the default blueprint folder.</div>
+          </div>
+        </div>
+        <div class="toggle-row" style="border-bottom:none;">
+          <div>
+            <label>Auto-update after runs</label>
+            <div class="hint">Append lessons learned and bump version after each consented run.</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="blueprint_auto_update" checked><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <!-- ═══ Advanced storage options ═══ -->
+      <details class="advanced">
+        <summary>Advanced storage &amp; quotas <span class="sum-desc">— file thresholds, quotas, health limits</span></summary>
+        <div class="advanced-body">
+          <div class="row">
+            <div class="field">
+              <label>Large file threshold (MB)</label>
+              <input id="storage_large_file_threshold_mb" type="number" value="5" min="1" max="10000">
+              <div class="hint">Outputs larger than this are written to disk as files instead of returned inline in task results.</div>
+            </div>
+            <div class="field">
+              <label>Result envelope max (KB)</label>
+              <input id="storage_result_envelope_max_kb" type="number" value="64" min="1" max="100000">
+              <div class="hint">Cap on the inline JSON envelope for a task result. Larger payloads are offloaded to a file.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Session quota (MB)</label>
+              <input id="storage_session_quota_mb" type="number" value="500" min="1" max="100000">
+              <div class="hint">Per-session disk quota. New outputs rejected once exceeded — old sessions are not auto-deleted.</div>
+            </div>
+            <div class="field">
+              <label>Atomic cleanup</label>
+              <div class="toggle-row" style="padding:0; border:none;">
+                <div class="hint" style="margin:0;">Delete session files in a single atomic move. Turn off on exotic filesystems that reject renames.</div>
+                <label class="toggle"><input type="checkbox" id="storage_atomic_cleanup" checked><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Disk health — warning (GB free)</label>
+              <input id="storage_health_warning_free_gb" type="number" step="0.1" value="10" min="0">
+              <div class="hint">Log a warning when free disk drops below this amount.</div>
+            </div>
+            <div class="field">
+              <label>Disk health — critical (GB free)</label>
+              <input id="storage_health_critical_free_gb" type="number" step="0.1" value="2" min="0">
+              <div class="hint">Reject new sessions once free disk drops below this amount.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Advanced SQLite ═══ -->
+      <details class="advanced">
+        <summary>Advanced SQLite <span class="sum-desc">— WAL, connection timeout, TTLs</span></summary>
+        <div class="advanced-body">
+          <div class="toggle-row">
+            <div>
+              <label>WAL mode</label>
+              <div class="hint">Write-Ahead Logging — better concurrency between readers and writers. Safe default; turn off only for filesystems that don't support it.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="sqlite_wal_mode" checked><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Connection timeout (s)</label>
+            <input id="sqlite_connection_timeout_seconds" type="number" value="5" min="1" max="300">
+            <div class="hint">SQLite "busy timeout" — how long a write will wait for a concurrent lock before failing.</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Session data TTL (s)</label>
+              <input id="sqlite_ttl_session_data_seconds" type="number" value="3600" min="60">
+              <div class="hint">In-flight session state expires after this. Safety net for abandoned sessions.</div>
+            </div>
+            <div class="field">
+              <label>Session index TTL (s)</label>
+              <input id="sqlite_ttl_session_index_seconds" type="number" value="86400" min="60">
+              <div class="hint">The index row (lookup metadata) lives longer than the full state so history still resolves.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Advanced Redis ═══ -->
+      <details class="advanced">
+        <summary>Advanced Redis <span class="sum-desc">— auth, TLS, pool, TTLs, key prefix</span></summary>
+        <div class="advanced-body">
+          <div class="row-3">
+            <div class="field">
+              <label>Database</label>
+              <input id="redis_db" type="number" value="1" min="0" max="15">
+              <div class="hint">Logical DB index on the Redis instance.</div>
+            </div>
+            <div class="field">
+              <label>Username</label>
+              <input id="redis_username" placeholder="(blank for default user)">
+              <div class="hint">Redis ACL username. Leave blank for the default user.</div>
+            </div>
+            <div class="field">
+              <label>Password env var</label>
+              <input id="redis_password_env_var" placeholder="REDIS_PASSWORD">
+              <div class="hint">Env var name holding the password. Never paste the password itself.</div>
+            </div>
+          </div>
+
+          <div class="section-head">TLS</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable TLS</label>
+              <div class="hint">Connect using TLS. Required by managed Redis providers (AWS ElastiCache in-transit, Redis Cloud, etc.).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="redis_tls_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Verify peer certificate</label>
+              <div class="hint">Validate the server's TLS cert against your CA bundle. Turn off only for self-signed dev setups.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="redis_tls_verify_peer" checked><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>CA cert file</label>
+              <input id="redis_tls_ca_cert_file" placeholder="/path/to/ca.pem">
+              <div class="hint">Optional custom CA bundle, if your Redis uses a private CA.</div>
+            </div>
+            <div class="field">
+              <label>Client cert file</label>
+              <input id="redis_tls_cert_file" placeholder="/path/to/client.crt">
+              <div class="hint">For mutual TLS, point to the client certificate.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Client key file</label>
+            <input id="redis_tls_key_file" placeholder="/path/to/client.key">
+            <div class="hint">Private key matching the client certificate. Permissions should be 0600.</div>
+          </div>
+
+          <div class="section-head">Connection pool</div>
+          <div class="row">
+            <div class="field">
+              <label>Pool max connections</label>
+              <input id="redis_pool_max_connections" type="number" value="20" min="1" max="1000">
+              <div class="hint">Upper bound on concurrent Redis connections. Size this with your <em>max concurrent sessions</em>.</div>
+            </div>
+            <div class="field">
+              <label>Pool min idle</label>
+              <input id="redis_pool_min_idle" type="number" value="5" min="0" max="1000">
+              <div class="hint">Keep this many warm connections even when idle to avoid cold-start latency.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Connection timeout (ms)</label>
+              <input id="redis_connection_timeout_ms" type="number" value="2000" min="100" max="60000">
+              <div class="hint">Timeout for establishing a new Redis connection.</div>
+            </div>
+            <div class="field">
+              <label>Socket timeout (ms)</label>
+              <input id="redis_socket_timeout_ms" type="number" value="1000" min="100" max="60000">
+              <div class="hint">Per-command socket read timeout.</div>
+            </div>
+          </div>
+
+          <div class="section-head">Key namespace &amp; TTLs</div>
+          <div class="field">
+            <label>Key prefix</label>
+            <input id="redis_key_prefix" value="cortex">
+            <div class="hint">All keys are namespaced under this prefix — lets multiple agents share a Redis instance safely.</div>
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label>Session data TTL (s)</label>
+              <input id="redis_ttl_session_data_seconds" type="number" value="3600" min="60">
+              <div class="hint">TTL on active session-state keys.</div>
+            </div>
+            <div class="field">
+              <label>Session index TTL (s)</label>
+              <input id="redis_ttl_session_index_seconds" type="number" value="86400" min="60">
+              <div class="hint">TTL on index rows that let history queries resolve a session id.</div>
+            </div>
+            <div class="field">
+              <label>Pub/Sub TTL (s)</label>
+              <input id="redis_ttl_pubsub_seconds" type="number" value="300" min="10">
+              <div class="hint">How long published streaming events stay replayable.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ File input ═══ -->
+      <details class="advanced">
+        <summary>File input <span class="sum-desc">— max size, allowed MIME types</span></summary>
+        <div class="advanced-body">
+          <div class="field">
+            <label>Max file size (MB)</label>
+            <input id="file_input_max_size_mb" type="number" value="50" min="1" max="10000">
+            <div class="hint">Largest single attachment a user may upload to a session.</div>
+          </div>
+          <div class="field">
+            <label>Allowed MIME types (one per line)</label>
+            <textarea id="file_input_allowed_mime_types" rows="5" placeholder="text/plain&#10;application/pdf&#10;image/png"></textarea>
+            <div class="hint">Whitelist of accepted upload types. Leave blank to use the safe default set (text, PDF, Office docs, common images, audio).</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Validation advanced ═══ -->
+      <details class="advanced">
+        <summary>Advanced validation <span class="sum-desc">— thresholds, weights, reporting</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when <strong>Response validation</strong> is enabled above.
+          </div></div>
+          <div class="row">
+            <div class="field">
+              <label>Pass threshold</label>
+              <input id="validation_threshold" type="number" step="0.05" value="0.75" min="0" max="1">
+              <div class="hint">Minimum overall score (0–1) required for a response to be considered valid.</div>
+            </div>
+            <div class="field">
+              <label>Critical threshold</label>
+              <input id="validation_critical_threshold" type="number" step="0.05" value="0.40" min="0" max="1">
+              <div class="hint">Below this the response is rejected outright instead of being flagged as low-quality.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Validator timeout (s)</label>
+            <input id="validation_timeout_seconds" type="number" value="15" min="1" max="300">
+            <div class="hint">Max time the LLM judge may take per task output.</div>
+          </div>
+          <div class="section-head">Score weights (must sum to 1.0)</div>
+          <div class="row-3">
+            <div class="field">
+              <label>Intent match</label>
+              <input id="validation_weights_intent_match" type="number" step="0.05" value="0.50" min="0" max="1">
+              <div class="hint">Weight for "did this actually answer the user's request?"</div>
+            </div>
+            <div class="field">
+              <label>Completeness</label>
+              <input id="validation_weights_completeness" type="number" step="0.05" value="0.30" min="0" max="1">
+              <div class="hint">Weight for "did it cover every subtask?"</div>
+            </div>
+            <div class="field">
+              <label>Coherence</label>
+              <input id="validation_weights_coherence" type="number" step="0.05" value="0.20" min="0" max="1">
+              <div class="hint">Weight for internal consistency and fluency.</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Expose full report to user</label>
+              <div class="hint">Attach the validator's written critique to the response. Off keeps it internal (still logged).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="validation_expose_report_to_user" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Expose numeric score</label>
+              <div class="hint">Show the 0–1 score to the user. Off by default because raw scores are noisy.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="validation_expose_score_to_user"><span class="slider"></span></label>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ History advanced ═══ -->
+      <details class="advanced">
+        <summary>Advanced history <span class="sum-desc">— retention, context window, encryption</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when <strong>Session history</strong> is enabled above.
+          </div></div>
+          <div class="row">
+            <div class="field">
+              <label>Retention (days)</label>
+              <input id="history_retention_days" type="number" value="90" min="1" max="3650">
+              <div class="hint">Sessions older than this are pruned on the next maintenance pass.</div>
+            </div>
+            <div class="field">
+              <label>Max sessions in context</label>
+              <input id="history_max_sessions_in_context" type="number" value="5" min="0" max="100">
+              <div class="hint">How many recent sessions are surfaced back into the prompt when answering follow-ups.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Persist task outputs (comma-separated task names)</label>
+            <input id="history_persist_task_outputs" placeholder="e.g. research_summary, meeting_notes">
+            <div class="hint">By default history stores the final answer only. Name specific task types here to keep their raw outputs queryable too.</div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable full-text search</label>
+              <div class="hint">Build a search index over past sessions so users can query "what did we decide about X?".</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="history_search_enabled" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Encrypt at rest</label>
+              <div class="hint">Encrypt history records with a key from the env var below. Off uses plaintext storage.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="history_encryption_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Encryption key env var</label>
+            <input id="history_encryption_key_env_var" placeholder="CORTEX_HISTORY_KEY">
+            <div class="hint">Env var holding a base64-encoded 32-byte key. Losing this env var makes old history unreadable.</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Learning advanced ═══ -->
+      <details class="advanced">
+        <summary>Advanced learning <span class="sum-desc">— auto-apply thresholds, notifications</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when the <strong>Learning engine</strong> is enabled above.
+          </div></div>
+          <div class="row">
+            <div class="field">
+              <label>Auto-apply delta (runtime toggle)</label>
+              <div class="toggle-row" style="padding:0;border:none;">
+                <div class="hint" style="margin:0;">When the learning engine proposes a change, apply it automatically instead of waiting for review.</div>
+                <label class="toggle"><input type="checkbox" id="auto_apply_delta"><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Min confidence</label>
+              <select id="learning_auto_apply_min_confidence">
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high" selected>high</option>
+              </select>
+              <div class="hint">Only auto-apply proposals with at least this confidence level.</div>
+            </div>
+            <div class="field">
+              <label>Min confirmations</label>
+              <input id="learning_auto_apply_min_confirmations" type="number" value="3" min="1" max="100">
+              <div class="hint">Require the same proposal this many times before auto-applying it.</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Notify on apply</label>
+              <div class="hint">Emit a structured log event whenever a delta is applied, so you can audit changes.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="learning_notify_on_apply" checked><span class="slider"></span></label>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Blueprint advanced ═══ -->
+      <details class="advanced">
+        <summary>Advanced blueprints <span class="sum-desc">— prompt injection cap, staleness</span></summary>
+        <div class="advanced-body">
+          <div class="row">
+            <div class="field">
+              <label>Inject max chars</label>
+              <input id="blueprint_inject_max_chars" type="number" value="4000" min="100" max="100000">
+              <div class="hint">Cap on the blueprint snippet injected into the system prompt. Large blueprints are truncated to this many characters.</div>
+            </div>
+            <div class="field">
+              <label>Staleness warning (days)</label>
+              <input id="blueprint_staleness_warning_days" type="number" value="90" min="1" max="3650">
+              <div class="hint">Blueprints untouched for longer than this are flagged stale — the LLM is told to re-discover subtasks rather than blindly follow them.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Security ═══ -->
+      <details class="advanced">
+        <summary>Security <span class="sum-desc">— input cap, secret scrubbing</span></summary>
+        <div class="advanced-body">
+          <div class="field">
+            <label>Max input tokens</label>
+            <input id="security_max_input_tokens" type="number" value="4000" min="100" max="200000">
+            <div class="hint">Hard cap on user-supplied input tokens per request. Rejects prompt-bomb attacks that try to blow out the context window.</div>
+          </div>
+          <div class="field">
+            <label>Secret scrub patterns (one regex per line)</label>
+            <textarea id="security_secret_scrub_patterns" rows="4" placeholder="Bearer \S+&#10;api[_-]?key[_-]?=\S+&#10;password[_-]?=\S+&#10;token[_-]?=\S+"></textarea>
+            <div class="hint">Regex patterns matched against logs and LLM inputs; matches are replaced with <code>[REDACTED]</code>. Leave blank for the default set.</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Startup ═══ -->
+      <details class="advanced">
+        <summary>Startup &amp; discovery <span class="sum-desc">— boot behavior, eager discovery, capability cache</span></summary>
+        <div class="advanced-body">
+          <div class="toggle-row">
+            <div>
+              <label>Require all tool servers at startup</label>
+              <div class="hint">Fail fast if any configured MCP server is unreachable. Off means the agent boots in a degraded state and retries later.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="startup_require_all_servers"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Eager discovery</label>
+              <div class="hint">Probe every tool server at boot so the first request doesn't pay discovery latency. Slower startup, faster first response.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="startup_eager_discovery"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Log discovered tools</label>
+              <div class="hint">Print every discovered tool name at boot. Useful during setup, chatty in production.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="startup_log_discovered_tools" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Verify auth at startup</label>
+              <div class="hint">Test each tool server's credentials before marking it healthy.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="startup_verify_auth" checked><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Discovery timeout (s)</label>
+              <input id="startup_discovery_timeout_seconds" type="number" value="15" min="1" max="600">
+              <div class="hint">Overall time budget for boot-time discovery. Servers that don't respond are marked degraded.</div>
+            </div>
+            <div class="field">
+              <label>Background discovery concurrency</label>
+              <input id="startup_background_discovery_concurrency" type="number" value="10" min="1" max="100">
+              <div class="hint">Max parallel probes when discovery runs in the background (non-eager mode).</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Capability registry path</label>
+            <input id="startup_capability_registry_path" placeholder="(auto-derived from storage.base_path)">
+            <div class="hint">Path to the persisted capability cache. Leave blank to use the default location under <code>storage.base_path</code>.</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ User config ═══ -->
+      <details class="advanced">
+        <summary>User configuration <span class="sum-desc">— per-user overrides</span></summary>
+        <div class="advanced-body">
+          <div class="toggle-row">
+            <div>
+              <label>Allow user-supplied Cortex MCPs</label>
+              <div class="hint">Let end users plug in their own Cortex-branded MCP servers at runtime. Safe by default.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="user_allow_user_cortex_mcp" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Allow user-supplied tool servers</label>
+              <div class="hint">Let end users add arbitrary third-party MCP servers. Off by default — opening this means any user can connect any tool.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="user_allow_user_tool_servers"><span class="slider"></span></label>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Code sandbox ═══ -->
+      <details class="advanced">
+        <summary>Sandboxed code execution <span class="sum-desc">— Python sandbox for code-exec tasks</span></summary>
+        <div class="advanced-body">
+          <div class="toggle-row">
+            <div>
+              <label>Enable sandbox</label>
+              <div class="hint">Allow task types with <code>capability_hint: code_exec</code> to run Python inside a sandbox. Off disables all code execution.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="code_sandbox_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Sandbox timeout (s)</label>
+              <input id="code_sandbox_timeout_seconds" type="number" value="60" min="1" max="3600">
+              <div class="hint">Max wall-clock time for a single code execution.</div>
+            </div>
+            <div class="field">
+              <label>Allow network</label>
+              <div class="toggle-row" style="padding:0;border:none;">
+                <div class="hint" style="margin:0;">Grant the sandbox outbound network access. Off blocks all sockets — strongly recommended.</div>
+                <label class="toggle"><input type="checkbox" id="code_sandbox_allow_network"><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Ask before persisting scripts</label>
+              <div class="hint">After execution, prompt the developer before saving the generated script. Off means scripts are discarded silently.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="code_sandbox_ask_persist_consent" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Auto-add to cortex.yaml on consent</label>
+              <div class="hint">When the developer consents to save a script, also register it as a task type in cortex.yaml automatically. Off leaves YAML edits manual.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="code_sandbox_auto_add_to_yaml"><span class="slider"></span></label>
+          </div>
+        </div>
+      </details>
+
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Publish mode →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 6: Publish Mode ═══════════════ -->
+  <div class="step-panel" data-step="6">
+    <div class="card">
+      <h2>Publish mode</h2>
+      <p class="subtitle">Choose how you want to deploy and run your agent.</p>
+
+      <div class="mode-grid">
+        <div class="mode-card" data-mode="docker" onclick="selectMode('docker')">
+          <div class="mode-icon">📦</div>
+          <div class="mode-title">Docker</div>
+          <div class="mode-desc">Containerized deployment. Best for production, CI/CD, and cloud hosting.</div>
+        </div>
+        <div class="mode-card" data-mode="package" onclick="selectMode('package')">
+          <div class="mode-icon">🐍</div>
+          <div class="mode-title">Python package</div>
+          <div class="mode-desc">Build a distributable pip-installable wheel. Share via PyPI or internal registry.</div>
+        </div>
+        <div class="mode-card" data-mode="mcp" onclick="selectMode('mcp')">
+          <div class="mode-icon">🔗</div>
+          <div class="mode-title">MCP server</div>
+          <div class="mode-desc">Expose as a tool server. Other agents can call this agent's capabilities.</div>
+        </div>
+      </div>
+
+      <div id="modeOptions"></div>
+      <div class="tip-box info" id="modeTip" style="display:none;"><div class="tip-content"></div></div>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Review →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 7: Review ═══════════════ -->
+  <div class="step-panel" data-step="7">
+    <div class="card">
+      <h2>Review &amp; finish</h2>
+      <p class="subtitle">Review your generated configuration, then save and publish.</p>
+      <div id="configLoading" style="text-align:center; padding:20px; color: var(--text-muted);">Generating configuration...</div>
+      <pre id="configPreview" style="display:none;"></pre>
+      <div class="action-bar">
+        <button class="btn btn-primary" onclick="saveConfig()">Save cortex.yaml</button>
+        <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
+        <button class="btn btn-success" onclick="publishAgent()" id="publishBtn" style="display:none;"></button>
+      </div>
+      <div id="saveStatus" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="card" id="recommendationsCard" style="display:none;">
+      <h2>Recommendations &amp; next steps</h2>
+      <p class="subtitle" id="recSubtitle"></p>
+      <ul class="rec-list" id="recList"></ul>
+    </div>
+
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── State ───
+const STEPS = ['Welcome','Agent','LLM','Tools','Tasks','Storage','Publish','Review'];
+let currentStep = 0;
+let selectedMode = null;
+let toolServers = [];
+let llmProviders = [];
+let taskTypes = [];
+let providers = [];
+let generatedConfig = '';
+let isReconfigure = false;
+let lockedFields = [];
+
+const PROVIDER_FALLBACK = {
+  anthropic:              { models: ['claude-sonnet-4-20250514','claude-opus-4-20250514','claude-haiku-4-5-20251001'], env: 'ANTHROPIC_API_KEY' },
+  anthropic_compatible:   { models: ['claude-sonnet-4-20250514'], env: 'ANTHROPIC_API_KEY', baseUrl: true },
+  openai:                 { models: ['gpt-4o','gpt-4o-mini','o3-mini'], env: 'OPENAI_API_KEY' },
+  gemini:                 { models: ['gemini-2.5-pro','gemini-2.5-flash'], env: 'GEMINI_API_KEY' },
+  bedrock:                { models: ['anthropic.claude-sonnet-4-20250514-v1:0'], env: 'AWS_ACCESS_KEY_ID' },
+  azure_ai:               { models: ['claude-sonnet-4-20250514'], env: 'AZURE_API_KEY', baseUrl: true },
+  grok:                   { models: ['grok-3','grok-3-mini'], env: 'XAI_API_KEY' },
+  mistral:                { models: ['mistral-large-latest'], env: 'MISTRAL_API_KEY' },
+  deepseek:               { models: ['deepseek-chat','deepseek-reasoner'], env: 'DEEPSEEK_API_KEY' },
+};
+
+// Helper: set a field value only if it exists in the DOM (Advanced expanders
+// are DOM-present but we silently skip anything missing, for forward-compat).
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (el == null) return;
+  if (el.type === 'checkbox') el.checked = !!v;
+  else el.value = v == null ? '' : v;
+}
+function getVal(id, fallback) {
+  const el = document.getElementById(id);
+  if (el == null) return fallback;
+  if (el.type === 'checkbox') return el.checked;
+  const v = el.value;
+  return v === '' || v == null ? fallback : v;
+}
+function getInt(id, fallback) {
+  const v = getVal(id, null);
+  if (v == null) return fallback;
+  const n = parseInt(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function getFloat(id, fallback) {
+  const v = getVal(id, null);
+  if (v == null) return fallback;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function getStr(id) {
+  const v = getVal(id, '');
+  return (v == null ? '' : String(v)).trim();
+}
+function getBool(id) {
+  const el = document.getElementById(id);
+  return el ? !!el.checked : false;
+}
+
+// ─── Init ───
+document.addEventListener('DOMContentLoaded', async () => {
+  buildProgressBar();
+  onProviderChange();
+  fetchProviders();
+  const bpToggle = document.getElementById('blueprint_enabled');
+  if (bpToggle) {
+    bpToggle.addEventListener('change', () => {
+      document.getElementById('blueprintOptions').style.display = bpToggle.checked ? 'block' : 'none';
+    });
+  }
+  await loadExistingConfig();
+});
+
+async function fetchProviders() {
+  try {
+    const res = await fetch('/api/providers');
+    const data = await res.json();
+    if (data.providers) providers = data.providers;
+  } catch(e) { /* use fallback */ }
+}
+
+async function loadExistingConfig() {
+  try {
+    const res = await fetch('/api/load-config');
+    const result = await res.json();
+    if (!result.exists) return;
+
+    isReconfigure = true;
+    lockedFields = result.locked_fields || [];
+    const d = result.data || {};
+
+    // Basic fields
+    setVal('agent_name', d.agent_name);
+    setVal('agent_description', d.agent_description);
+    setVal('agent_synthesis_guidance', d.agent_synthesis_guidance);
+
+    if (d.provider) { setVal('provider', d.provider); onProviderChange(); }
+    if (d.model) {
+      setTimeout(() => {
+        const modelEl = document.getElementById('model');
+        if (!Array.from(modelEl.options).some(o => o.value === d.model)) {
+          modelEl.insertAdjacentHTML('afterbegin', `<option value="${d.model}">${d.model}</option>`);
+        }
+        modelEl.value = d.model;
+      }, 50);
+    }
+    setVal('api_key_env_var', d.api_key_env_var);
+    setVal('base_url', d.base_url);
+    setVal('max_tokens', d.max_tokens);
+    if (d.temperature !== undefined) setVal('temperature', d.temperature);
+    setVal('llm_headers', d.llm_headers);
+    setVal('llm_region_env_var', d.llm_region_env_var);
+    setVal('llm_access_key_env_var', d.llm_access_key_env_var);
+    setVal('llm_secret_key_env_var', d.llm_secret_key_env_var);
+    setVal('llm_session_token_env_var', d.llm_session_token_env_var);
+    setVal('llm_endpoint_env_var', d.llm_endpoint_env_var);
+    setVal('llm_api_version', d.llm_api_version);
+
+    setVal('storage_path', d.storage_path);
+    if (d.storage_backend) {
+      setVal('storage_backend', d.storage_backend);
+      onStorageBackendChange();
+      if (d.storage_backend === 'sqlite') setVal('sqlite_path', d.sqlite_path);
+      if (d.storage_backend === 'redis') {
+        setVal('redis_host', d.redis_host);
+        setVal('redis_port', d.redis_port);
+      }
+    }
+    setVal('storage_large_file_threshold_mb', d.storage_large_file_threshold_mb);
+    setVal('storage_result_envelope_max_kb', d.storage_result_envelope_max_kb);
+    setVal('storage_session_quota_mb', d.storage_session_quota_mb);
+    setVal('storage_health_warning_free_gb', d.storage_health_warning_free_gb);
+    setVal('storage_health_critical_free_gb', d.storage_health_critical_free_gb);
+    setVal('storage_atomic_cleanup', d.storage_atomic_cleanup);
+
+    setVal('sqlite_connection_timeout_seconds', d.sqlite_connection_timeout_seconds);
+    setVal('sqlite_ttl_session_data_seconds', d.sqlite_ttl_session_data_seconds);
+    setVal('sqlite_ttl_session_index_seconds', d.sqlite_ttl_session_index_seconds);
+
+    [
+      'redis_db','redis_username','redis_password_env_var','redis_tls_enabled','redis_tls_verify_peer',
+      'redis_tls_cert_file','redis_tls_key_file','redis_tls_ca_cert_file','redis_pool_max_connections',
+      'redis_pool_min_idle','redis_connection_timeout_ms','redis_socket_timeout_ms','redis_key_prefix',
+      'redis_ttl_session_data_seconds','redis_ttl_session_index_seconds','redis_ttl_pubsub_seconds'
+    ].forEach(k => setVal(k, d[k]));
+
+    setVal('file_input_max_size_mb', d.file_input_max_size_mb);
+    setVal('file_input_allowed_mime_types', d.file_input_allowed_mime_types);
+
+    // Runtime / concurrency
+    [
+      'max_wait_seconds','default_task_timeout','max_concurrent_sessions','max_sessions_per_user',
+      'max_parallel_tasks','max_tasks_per_session','agent_streaming_decomposition',
+      'agent_max_mcp_agent_llm_calls','agent_streaming_status_updates','agent_streaming_include_task_detail',
+      'agent_streaming_mcp_agent_updates','agent_streaming_reconnect_buffer_size','agent_streaming_min_delivery_interval_ms',
+      'agent_clarification_enabled','scout_enabled','scout_max_capabilities','scout_timeout_seconds',
+      'scout_ext_enabled','scout_ext_auto_discovery_file','scout_ext_registry_sources',
+      'scout_ext_max_new_per_session','scout_ext_max_stale_days','scout_ext_search_timeout_s'
+    ].forEach(k => setVal(k, d[k]));
+
+    // Validation / history / learning / blueprint
+    setVal('validation_enabled', d.validation_enabled);
+    setVal('wave_gate_llm_provider', d.wave_gate_llm_provider);
+    [
+      'validation_threshold','validation_critical_threshold','validation_timeout_seconds',
+      'validation_weights_intent_match','validation_weights_completeness','validation_weights_coherence',
+      'validation_expose_report_to_user','validation_expose_score_to_user'
+    ].forEach(k => setVal(k, d[k]));
+
+    setVal('history_enabled', d.history_enabled);
+    [
+      'history_retention_days','history_max_sessions_in_context','history_persist_task_outputs',
+      'history_search_enabled','history_encryption_enabled','history_encryption_key_env_var'
+    ].forEach(k => setVal(k, d[k]));
+
+    setVal('learning_enabled', d.learning_enabled);
+    setVal('auto_apply_delta', d.auto_apply_delta);
+    setVal('learning_auto_apply_min_confidence', d.learning_auto_apply_min_confidence);
+    setVal('learning_auto_apply_min_confirmations', d.learning_auto_apply_min_confirmations);
+    setVal('learning_notify_on_apply', d.learning_notify_on_apply);
+
+    if (d.blueprint_enabled) {
+      document.getElementById('blueprint_enabled').checked = true;
+      document.getElementById('blueprintOptions').style.display = 'block';
+    }
+    setVal('blueprint_storage_mode', d.blueprint_storage_mode);
+    setVal('blueprint_dir', d.blueprint_dir);
+    setVal('blueprint_auto_update', d.blueprint_auto_update !== false);
+    setVal('blueprint_inject_max_chars', d.blueprint_inject_max_chars);
+    setVal('blueprint_staleness_warning_days', d.blueprint_staleness_warning_days);
+
+    // Security / Startup / User / Sandbox
+    setVal('security_max_input_tokens', d.security_max_input_tokens);
+    setVal('security_secret_scrub_patterns', d.security_secret_scrub_patterns);
+
+    [
+      'startup_require_all_servers','startup_discovery_timeout_seconds','startup_log_discovered_tools',
+      'startup_verify_auth','startup_eager_discovery','startup_capability_registry_path',
+      'startup_background_discovery_concurrency'
+    ].forEach(k => setVal(k, d[k]));
+
+    setVal('user_allow_user_cortex_mcp', d.user_allow_user_cortex_mcp);
+    setVal('user_allow_user_tool_servers', d.user_allow_user_tool_servers);
+
+    setVal('code_sandbox_enabled', d.code_sandbox_enabled);
+    setVal('code_sandbox_timeout_seconds', d.code_sandbox_timeout_seconds);
+    setVal('code_sandbox_allow_network', d.code_sandbox_allow_network);
+    setVal('code_sandbox_ask_persist_consent', d.code_sandbox_ask_persist_consent);
+    setVal('code_sandbox_auto_add_to_yaml', d.code_sandbox_auto_add_to_yaml);
+
+    // Tool servers
+    if (d.tool_servers && d.tool_servers.length) {
+      toolServers = d.tool_servers.map((ts, i) => ({
+        id: Date.now() + i,
+        name: ts.name || '',
+        transport: ts.transport || 'sse',
+        url: ts.url || '',
+        command: ts.command || '',
+        args: ts.args || '',
+        description: ts.description || '',
+        startup_timeout_seconds: ts.startup_timeout_seconds ?? 10,
+        conn_timeout: ts.conn_timeout ?? 10,
+        conn_read_timeout: ts.conn_read_timeout ?? 60,
+        conn_max_retries: ts.conn_max_retries ?? 3,
+        conn_retry_backoff_ms: ts.conn_retry_backoff_ms ?? 500,
+        auth_type: ts.auth_type || 'none',
+        auth_token_env_var: ts.auth_token_env_var || '',
+        auth_header: ts.auth_header || '',
+        auth_key_env_var: ts.auth_key_env_var || '',
+        auth_username_env_var: ts.auth_username_env_var || '',
+        auth_password_env_var: ts.auth_password_env_var || '',
+        auth_token_url: ts.auth_token_url || '',
+        auth_client_id_env_var: ts.auth_client_id_env_var || '',
+        auth_client_secret_env_var: ts.auth_client_secret_env_var || '',
+        auth_scope: ts.auth_scope || '',
+        tls_enabled: ts.tls_enabled || false,
+        tls_verify_cert: ts.tls_verify_cert !== false,
+        tls_ca_cert_file: ts.tls_ca_cert_file || '',
+        tls_client_cert_file: ts.tls_client_cert_file || '',
+        tls_client_key_file: ts.tls_client_key_file || '',
+        pool_min_connections: ts.pool_min_connections ?? 1,
+        pool_max_connections: ts.pool_max_connections ?? 10,
+        discovery_auto: ts.discovery_auto !== false,
+        discovery_capability_hints: ts.discovery_capability_hints || '',
+        discovery_domain_hints: ts.discovery_domain_hints || '',
+        working_dir: ts.working_dir || '',
+        env_text: ts.env_text || '',
+        headers_text: ts.headers_text || '',
+        health_enabled: ts.health_enabled !== false,
+        health_endpoint: ts.health_endpoint || '',
+        health_interval_seconds: ts.health_interval_seconds ?? 30,
+        health_failure_threshold: ts.health_failure_threshold ?? 3,
+        health_recovery_threshold: ts.health_recovery_threshold ?? 2,
+      }));
+      renderToolServers();
+    }
+
+    // Named LLM providers
+    if (d.llm_providers && d.llm_providers.length) {
+      llmProviders = d.llm_providers.map((p, i) => ({ id: Date.now() + i + 500, ...p }));
+      renderLlmProviders();
+    }
+
+    // Task types
+    if (d.task_types && d.task_types.length) {
+      taskTypes = d.task_types.map((tt, i) => ({ id: Date.now() + i + 1000, ...tt }));
+      renderTaskTypes();
+    }
+
+    applyLockedFields();
+    updateWelcomeForReconfigure();
+  } catch(e) { /* fresh setup */ }
+}
+
+function applyLockedFields() {
+  lockedFields.forEach(fieldId => {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    el.disabled = true;
+    el.style.opacity = '0.6';
+    el.style.cursor = 'not-allowed';
+    const lock = document.createElement('div');
+    lock.className = 'locked-note';
+    lock.innerHTML = '🔒 Locked — changing this field could break existing data or references.';
+    el.parentNode.insertBefore(lock, el.nextSibling);
+  });
+}
+
+function updateWelcomeForReconfigure() {
+  const card = document.querySelector('.step-panel[data-step="0"] .card');
+  card.querySelector('h2').textContent = 'Reconfigure your agent';
+  card.querySelector('.subtitle').textContent = 'An existing cortex.yaml was detected. Your current settings have been loaded.';
+  const tipBoxes = card.querySelectorAll('.tip-box');
+  if (tipBoxes[0]) {
+    tipBoxes[0].className = 'tip-box success';
+    tipBoxes[0].innerHTML = '<div class="tip-content"><strong>Existing configuration loaded.</strong> Your current settings are pre-filled. ' +
+      'Fields marked with a lock icon cannot be changed safely after initial setup (e.g. agent name, storage backend with existing data). ' +
+      'All other fields are editable — modify what you need and save.</div>';
+  }
+  if (tipBoxes[1]) {
+    tipBoxes[1].className = 'tip-box info';
+    tipBoxes[1].innerHTML = '<div class="tip-content"><strong>What you can change</strong>: LLM provider &amp; model, tool servers, task types, ' +
+      'all advanced options, and publish mode. Fields that affect data integrity are locked.</div>';
+  }
+}
+
+// ─── Progress Bar ───
+function buildProgressBar() {
+  const bar = document.getElementById('progressBar');
+  bar.innerHTML = STEPS.map((label, i) => {
+    return `<div class="progress-step"><div class="step-circle${i===0?' active':''}" id="sc${i}">${i+1}</div><span class="step-label${i===0?' active':''}" id="sl${i}">${label}</span>${i < STEPS.length-1 ? '<div class="step-line" id="sln'+i+'"></div>' : ''}</div>`;
+  }).join('');
+}
+
+function updateProgressBar() {
+  STEPS.forEach((_, i) => {
+    const circle = document.getElementById('sc'+i);
+    const label = document.getElementById('sl'+i);
+    const line = document.getElementById('sln'+i);
+    circle.className = 'step-circle' + (i < currentStep ? ' done' : i === currentStep ? ' active' : '');
+    circle.textContent = i < currentStep ? '\u2713' : i+1;
+    label.className = 'step-label' + (i < currentStep ? ' done' : i === currentStep ? ' active' : '');
+    if (line) line.className = 'step-line' + (i < currentStep ? ' done' : '');
+  });
+}
+
+// ─── Navigation ───
+function showStep(idx) {
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.step-panel[data-step="${idx}"]`).classList.add('active');
+  currentStep = idx;
+  updateProgressBar();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (idx === 7) generateConfig();
+}
+function nextStep() { if (currentStep < STEPS.length - 1) showStep(currentStep + 1); }
+function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
+
+// ─── Provider ───
+function getProviderInfo(val) {
+  const fromServer = providers.find(p => p.value === val);
+  if (fromServer) return { models: fromServer.models, env: fromServer.default_env, baseUrl: fromServer.needs_base_url };
+  return PROVIDER_FALLBACK[val] || PROVIDER_FALLBACK.anthropic;
+}
+
+function onProviderChange() {
+  const val = document.getElementById('provider').value;
+  const info = getProviderInfo(val);
+  const modelSelect = document.getElementById('model');
+  modelSelect.innerHTML = info.models.map(m => `<option value="${m}">${m}</option>`).join('');
+  document.getElementById('api_key_env_var').value = info.env;
+  document.getElementById('baseUrlGroup').style.display = info.baseUrl ? 'block' : 'none';
+}
+
+// ─── Named LLM providers ───
+function addLlmProvider() {
+  llmProviders.push({
+    id: Date.now(), name: '', provider: 'anthropic', model: '',
+    api_key_env_var: '', base_url: '', max_tokens: 4096,
+  });
+  renderLlmProviders();
+}
+function removeLlmProvider(id) { llmProviders = llmProviders.filter(p => p.id !== id); renderLlmProviders(); }
+function updateLlmProvider(id, field, value) {
+  const p = llmProviders.find(x => x.id === id);
+  if (p) p[field] = value;
+}
+function renderLlmProviders() {
+  const list = document.getElementById('llmProviderList');
+  if (!list) return;
+  if (llmProviders.length === 0) { list.innerHTML = ''; return; }
+  const opts = (providers.length ? providers.map(p => p.value) : ['anthropic','anthropic_compatible','openai','gemini','bedrock','azure_ai','grok','mistral','deepseek']);
+  list.innerHTML = llmProviders.map(p => `
+    <div class="list-item">
+      <button class="remove-btn" onclick="removeLlmProvider(${p.id})">&times;</button>
+      <div class="row">
+        <div class="field">
+          <label>Alias</label>
+          <input value="${escAttr(p.name)}" placeholder="e.g. fast, cheap, local" onchange="updateLlmProvider(${p.id},'name',this.value)">
+          <div class="hint">Key referenced by task types via <code>llm_provider:</code>.</div>
+        </div>
+        <div class="field">
+          <label>Provider</label>
+          <select onchange="updateLlmProvider(${p.id},'provider',this.value)">
+            ${opts.map(o => `<option value="${o}" ${p.provider===o?'selected':''}>${o}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Model</label>
+          <input value="${escAttr(p.model)}" placeholder="e.g. claude-haiku-4-5" onchange="updateLlmProvider(${p.id},'model',this.value)">
+        </div>
+        <div class="field">
+          <label>API key env var</label>
+          <input value="${escAttr(p.api_key_env_var)}" placeholder="MY_KEY" onchange="updateLlmProvider(${p.id},'api_key_env_var',this.value)">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Base URL (optional)</label>
+          <input value="${escAttr(p.base_url)}" placeholder="https://proxy.example.com/v1" onchange="updateLlmProvider(${p.id},'base_url',this.value)">
+        </div>
+        <div class="field">
+          <label>Max tokens</label>
+          <input type="number" value="${escAttr(p.max_tokens)}" min="256" max="128000" onchange="updateLlmProvider(${p.id},'max_tokens',+this.value)">
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ─── Tool Servers ───
+function addToolServer() {
+  toolServers.push({
+    id: Date.now(), name: '', url: '', transport: 'sse', command: '', args: '',
+    description: '', startup_timeout_seconds: 10,
+    conn_timeout: 10, conn_read_timeout: 60, conn_max_retries: 3, conn_retry_backoff_ms: 500,
+    auth_type: 'none', auth_token_env_var: '', auth_header: '', auth_key_env_var: '',
+    auth_username_env_var: '', auth_password_env_var: '',
+    auth_token_url: '', auth_client_id_env_var: '', auth_client_secret_env_var: '', auth_scope: '',
+    tls_enabled: false, tls_verify_cert: true, tls_ca_cert_file: '', tls_client_cert_file: '', tls_client_key_file: '',
+    pool_min_connections: 1, pool_max_connections: 10,
+    discovery_auto: true, discovery_capability_hints: '', discovery_domain_hints: '',
+    working_dir: '', env_text: '', headers_text: '',
+    health_enabled: true, health_endpoint: '',
+    health_interval_seconds: 30, health_failure_threshold: 3, health_recovery_threshold: 2,
+  });
+  renderToolServers();
+}
+function removeToolServer(id) { toolServers = toolServers.filter(t => t.id !== id); renderToolServers(); }
+function updateToolServer(id, field, value) {
+  const s = toolServers.find(t => t.id === id);
+  if (s) s[field] = value;
+}
+function escAttr(v) { return String(v == null ? '' : v).replace(/"/g,'&quot;'); }
+
+function renderToolServers() {
+  const list = document.getElementById('toolServerList');
+  if (toolServers.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = toolServers.map(t => `
+    <div class="list-item">
+      <button class="remove-btn" onclick="removeToolServer(${t.id})">&times;</button>
+      <div class="field">
+        <label>Server name</label>
+        <input value="${escAttr(t.name)}" placeholder="e.g. filesystem, web_search" onchange="updateToolServer(${t.id},'name',this.value)">
+        <div class="hint">Key used in your cortex.yaml under <code>tool_servers</code>. Must be unique.</div>
+      </div>
+      <div class="transport-selector">
+        <span class="chip ${t.transport==='sse'?'active':''}" onclick="updateToolServer(${t.id},'transport','sse');renderToolServers()">SSE</span>
+        <span class="chip ${t.transport==='streamable_http'?'active':''}" onclick="updateToolServer(${t.id},'transport','streamable_http');renderToolServers()">Streamable HTTP</span>
+        <span class="chip ${t.transport==='stdio'?'active':''}" onclick="updateToolServer(${t.id},'transport','stdio');renderToolServers()">Stdio</span>
+      </div>
+      ${t.transport === 'stdio' ? `
+        <div class="field">
+          <label>Command</label>
+          <input value="${escAttr(t.command)}" placeholder="e.g. npx, python" onchange="updateToolServer(${t.id},'command',this.value)">
+          <div class="hint">Executable that speaks MCP over stdio.</div>
+        </div>
+        <div class="field">
+          <label>Args (comma-separated)</label>
+          <input value="${escAttr(t.args)}" placeholder="e.g. -y, @modelcontextprotocol/server-filesystem" onchange="updateToolServer(${t.id},'args',this.value)">
+          <div class="hint">CLI arguments passed to the command.</div>
+        </div>
+      ` : `
+        <div class="field">
+          <label>URL</label>
+          <input value="${escAttr(t.url)}" placeholder="http://localhost:8051/sse" onchange="updateToolServer(${t.id},'url',this.value)">
+          <div class="hint">Full URL of the MCP endpoint.</div>
+        </div>
+      `}
+
+      <details class="advanced">
+        <summary>Advanced <span class="sum-desc">— auth, connection, health check, env</span></summary>
+        <div class="advanced-body">
+          <div class="field">
+            <label>Description</label>
+            <input value="${escAttr(t.description)}" placeholder="What this server provides" onchange="updateToolServer(${t.id},'description',this.value)">
+            <div class="hint">Free-text description shown in discovery logs.</div>
+          </div>
+          <div class="section-head">Auth</div>
+          <div class="field">
+            <label>Auth type</label>
+            <select onchange="updateToolServer(${t.id},'auth_type',this.value);renderToolServers()">
+              <option value="none" ${t.auth_type==='none'?'selected':''}>None</option>
+              <option value="bearer" ${t.auth_type==='bearer'?'selected':''}>Bearer token</option>
+              <option value="api_key" ${t.auth_type==='api_key'?'selected':''}>API key header</option>
+              <option value="basic" ${t.auth_type==='basic'?'selected':''}>Basic auth</option>
+              <option value="oauth2_client_credentials" ${t.auth_type==='oauth2_client_credentials'?'selected':''}>OAuth2 client credentials</option>
+            </select>
+            <div class="hint">How the server authenticates requests. "none" is the default.</div>
+          </div>
+          ${t.auth_type === 'bearer' ? `
+          <div class="field">
+            <label>Token env var</label>
+            <input value="${escAttr(t.auth_token_env_var)}" placeholder="e.g. MY_SERVER_TOKEN" onchange="updateToolServer(${t.id},'auth_token_env_var',this.value)">
+            <div class="hint">Env var holding the bearer token. The framework sends <code>Authorization: Bearer $TOKEN</code>.</div>
+          </div>
+          ` : ''}
+          ${t.auth_type === 'api_key' ? `
+          <div class="row">
+            <div class="field">
+              <label>Header name</label>
+              <input value="${escAttr(t.auth_header)}" placeholder="X-API-Key" onchange="updateToolServer(${t.id},'auth_header',this.value)">
+              <div class="hint">HTTP header that carries the key.</div>
+            </div>
+            <div class="field">
+              <label>Key env var</label>
+              <input value="${escAttr(t.auth_key_env_var)}" placeholder="e.g. MY_API_KEY" onchange="updateToolServer(${t.id},'auth_key_env_var',this.value)">
+              <div class="hint">Env var holding the API key value.</div>
+            </div>
+          </div>
+          ` : ''}
+          ${t.auth_type === 'basic' ? `
+          <div class="row">
+            <div class="field">
+              <label>Username env var</label>
+              <input value="${escAttr(t.auth_username_env_var)}" placeholder="e.g. MCP_USER" onchange="updateToolServer(${t.id},'auth_username_env_var',this.value)">
+            </div>
+            <div class="field">
+              <label>Password env var</label>
+              <input value="${escAttr(t.auth_password_env_var)}" placeholder="e.g. MCP_PASS" onchange="updateToolServer(${t.id},'auth_password_env_var',this.value)">
+            </div>
+          </div>
+          ` : ''}
+          ${t.auth_type === 'oauth2_client_credentials' ? `
+          <div class="field">
+            <label>Token URL</label>
+            <input value="${escAttr(t.auth_token_url)}" placeholder="https://auth.example.com/oauth/token" onchange="updateToolServer(${t.id},'auth_token_url',this.value)">
+            <div class="hint">OAuth2 token endpoint for the client credentials grant.</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Client ID env var</label>
+              <input value="${escAttr(t.auth_client_id_env_var)}" placeholder="OAUTH_CLIENT_ID" onchange="updateToolServer(${t.id},'auth_client_id_env_var',this.value)">
+            </div>
+            <div class="field">
+              <label>Client secret env var</label>
+              <input value="${escAttr(t.auth_client_secret_env_var)}" placeholder="OAUTH_CLIENT_SECRET" onchange="updateToolServer(${t.id},'auth_client_secret_env_var',this.value)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Scope</label>
+            <input value="${escAttr(t.auth_scope)}" placeholder="read:tools write:tools" onchange="updateToolServer(${t.id},'auth_scope',this.value)">
+            <div class="hint">Space-separated OAuth scopes to request.</div>
+          </div>
+          ` : ''}
+
+          <div class="section-head">Connection</div>
+          <div class="row-3">
+            <div class="field">
+              <label>Startup timeout (s)</label>
+              <input type="number" value="${escAttr(t.startup_timeout_seconds)}" min="1" max="600" onchange="updateToolServer(${t.id},'startup_timeout_seconds',+this.value)">
+              <div class="hint">Max time to wait for the server to become ready at boot.</div>
+            </div>
+            <div class="field">
+              <label>Connect timeout (s)</label>
+              <input type="number" value="${escAttr(t.conn_timeout)}" min="1" max="300" onchange="updateToolServer(${t.id},'conn_timeout',+this.value)">
+              <div class="hint">Time budget for establishing a TCP/HTTP connection.</div>
+            </div>
+            <div class="field">
+              <label>Read timeout (s)</label>
+              <input type="number" value="${escAttr(t.conn_read_timeout)}" min="1" max="600" onchange="updateToolServer(${t.id},'conn_read_timeout',+this.value)">
+              <div class="hint">Time budget for receiving a response once connected.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Max retries</label>
+              <input type="number" value="${escAttr(t.conn_max_retries)}" min="0" max="20" onchange="updateToolServer(${t.id},'conn_max_retries',+this.value)">
+              <div class="hint">Retries on transient failure (connect/read errors, 5xx).</div>
+            </div>
+            <div class="field">
+              <label>Retry backoff (ms)</label>
+              <input type="number" value="${escAttr(t.conn_retry_backoff_ms)}" min="0" max="60000" onchange="updateToolServer(${t.id},'conn_retry_backoff_ms',+this.value)">
+              <div class="hint">Initial backoff between retries; doubles with each attempt.</div>
+            </div>
+          </div>
+
+          ${t.transport !== 'stdio' ? `
+          <div class="section-head">TLS</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable TLS</label>
+              <div class="hint">Use TLS for transport. Required when the URL is <code>https://</code> — enable for custom CAs or mTLS.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" ${t.tls_enabled?'checked':''} onchange="updateToolServer(${t.id},'tls_enabled',this.checked)"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Verify certificate</label>
+              <div class="hint">Validate the server's cert. Turn off only for self-signed dev servers.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" ${t.tls_verify_cert!==false?'checked':''} onchange="updateToolServer(${t.id},'tls_verify_cert',this.checked)"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>CA cert file</label>
+              <input value="${escAttr(t.tls_ca_cert_file)}" placeholder="/path/to/ca.pem" onchange="updateToolServer(${t.id},'tls_ca_cert_file',this.value)">
+              <div class="hint">Custom CA bundle for servers that use a private CA.</div>
+            </div>
+            <div class="field">
+              <label>Client cert file</label>
+              <input value="${escAttr(t.tls_client_cert_file)}" placeholder="/path/to/client.crt" onchange="updateToolServer(${t.id},'tls_client_cert_file',this.value)">
+              <div class="hint">For mutual TLS.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Client key file</label>
+            <input value="${escAttr(t.tls_client_key_file)}" placeholder="/path/to/client.key" onchange="updateToolServer(${t.id},'tls_client_key_file',this.value)">
+            <div class="hint">Private key for the client certificate (mTLS).</div>
+          </div>
+
+          <div class="section-head">Connection pool</div>
+          <div class="row">
+            <div class="field">
+              <label>Min connections</label>
+              <input type="number" value="${escAttr(t.pool_min_connections)}" min="0" max="100" onchange="updateToolServer(${t.id},'pool_min_connections',+this.value)">
+              <div class="hint">Warm connections kept open to avoid cold-start latency.</div>
+            </div>
+            <div class="field">
+              <label>Max connections</label>
+              <input type="number" value="${escAttr(t.pool_max_connections)}" min="1" max="1000" onchange="updateToolServer(${t.id},'pool_max_connections',+this.value)">
+              <div class="hint">Upper bound on concurrent connections to this server.</div>
+            </div>
+          </div>
+          ` : ''}
+
+          <div class="section-head">Discovery</div>
+          <div class="toggle-row">
+            <div>
+              <label>Auto-discover tools</label>
+              <div class="hint">Probe this server to learn what tools it exposes. Off means you must list capabilities manually.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" ${t.discovery_auto!==false?'checked':''} onchange="updateToolServer(${t.id},'discovery_auto',this.checked)"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Capability hints (comma-separated)</label>
+              <input value="${escAttr(t.discovery_capability_hints)}" placeholder="web_search, filesystem" onchange="updateToolServer(${t.id},'discovery_capability_hints',this.value)">
+              <div class="hint">Capability tags to pre-seed if auto-discovery is off or partial.</div>
+            </div>
+            <div class="field">
+              <label>Domain hints (comma-separated)</label>
+              <input value="${escAttr(t.discovery_domain_hints)}" placeholder="research, coding" onchange="updateToolServer(${t.id},'discovery_domain_hints',this.value)">
+              <div class="hint">Domain labels used by the planner to bias toward this server.</div>
+            </div>
+          </div>
+
+          ${t.transport === 'stdio' ? `
+          <div class="field">
+            <label>Working directory</label>
+            <input value="${escAttr(t.working_dir)}" placeholder="/absolute/path" onchange="updateToolServer(${t.id},'working_dir',this.value)">
+            <div class="hint">Directory in which the stdio subprocess is launched. Blank = inherit from parent.</div>
+          </div>
+          ` : ''}
+
+          <div class="field">
+            <label>Environment variables (one per line, <code>KEY=value</code>)</label>
+            <textarea rows="3" onchange="updateToolServer(${t.id},'env_text',this.value)" placeholder="NODE_ENV=production&#10;LOG_LEVEL=info">${escAttr(t.env_text)}</textarea>
+            <div class="hint">Extra env passed to the MCP server process. Secrets belong in env vars you export before launch, not here.</div>
+          </div>
+
+          <div class="field">
+            <label>Extra HTTP headers (one per line, <code>Key: Value</code>)</label>
+            <textarea rows="2" onchange="updateToolServer(${t.id},'headers_text',this.value)" placeholder="X-Tenant: my-team">${escAttr(t.headers_text)}</textarea>
+            <div class="hint">For SSE/HTTP transports only. Useful for adding tracing or tenant headers.</div>
+          </div>
+
+          <div class="section-head">Health check</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable health check</label>
+              <div class="hint">Ping this server periodically and mark it degraded on failure.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" ${t.health_enabled?'checked':''} onchange="updateToolServer(${t.id},'health_enabled',this.checked)"><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Health check endpoint</label>
+            <input value="${escAttr(t.health_endpoint)}" placeholder="/health" onchange="updateToolServer(${t.id},'health_endpoint',this.value)">
+            <div class="hint">Custom ping path. Leave blank to use the server's default.</div>
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label>Interval (s)</label>
+              <input type="number" value="${escAttr(t.health_interval_seconds)}" min="5" max="3600" onchange="updateToolServer(${t.id},'health_interval_seconds',+this.value)">
+              <div class="hint">Time between pings.</div>
+            </div>
+            <div class="field">
+              <label>Failure threshold</label>
+              <input type="number" value="${escAttr(t.health_failure_threshold)}" min="1" max="20" onchange="updateToolServer(${t.id},'health_failure_threshold',+this.value)">
+              <div class="hint">Consecutive failures before marking the server degraded.</div>
+            </div>
+            <div class="field">
+              <label>Recovery threshold</label>
+              <input type="number" value="${escAttr(t.health_recovery_threshold)}" min="1" max="20" onchange="updateToolServer(${t.id},'health_recovery_threshold',+this.value)">
+              <div class="hint">Consecutive successes before marking it healthy again.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+  `).join('');
+}
+
+// ─── Task Types ───
+function addTaskType() {
+  taskTypes.push({
+    id: Date.now(), name: '', description: '', output_format: 'text',
+    capability_hint: 'auto', timeout_seconds: 40, blueprint: '',
+    mandatory: true, complexity: 'adaptive', llm_provider: 'default',
+    handler: '', depends_on: '', tool_servers_list: '',
+    retry_max_attempts: 2, retry_backoff_initial_ms: 500, output_max_size_mb: 100, output_content_summary_tokens: 400,
+    validation_notes: '', human_in_loop: false, output_schema_json: '',
+  });
+  renderTaskTypes();
+}
+function removeTaskType(id) { taskTypes = taskTypes.filter(t => t.id !== id); renderTaskTypes(); }
+function updateTaskType(id, field, value) { const t = taskTypes.find(x => x.id === id); if (t) t[field] = value; }
+
+function renderTaskTypes() {
+  const list = document.getElementById('taskTypeList');
+  if (taskTypes.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = taskTypes.map(t => `
+    <div class="list-item">
+      <button class="remove-btn" onclick="removeTaskType(${t.id})">&times;</button>
+      <div class="field">
+        <label>Task name</label>
+        <input value="${escAttr(t.name)}" placeholder="e.g. web_research, code_review" onchange="updateTaskType(${t.id},'name',this.value)">
+        <div class="hint">Identifier used in the task graph. Snake_case recommended.</div>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <input value="${escAttr(t.description)}" placeholder="Tell the LLM when to use this task type" onchange="updateTaskType(${t.id},'description',this.value)">
+        <div class="hint">Plain-English trigger conditions — shown to the planner LLM.</div>
+      </div>
+      <div class="row-3">
+        <div class="field">
+          <label>Output format</label>
+          <select onchange="updateTaskType(${t.id},'output_format',this.value)">
+            <option value="text" ${t.output_format==='text'?'selected':''}>Text</option>
+            <option value="md" ${t.output_format==='md'?'selected':''}>Markdown</option>
+            <option value="json" ${t.output_format==='json'?'selected':''}>JSON</option>
+            <option value="file" ${t.output_format==='file'?'selected':''}>File</option>
+            <option value="html" ${t.output_format==='html'?'selected':''}>HTML</option>
+            <option value="csv" ${t.output_format==='csv'?'selected':''}>CSV</option>
+            <option value="code" ${t.output_format==='code'?'selected':''}>Code</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Capability hint</label>
+          <select onchange="updateTaskType(${t.id},'capability_hint',this.value)">
+            <option value="auto" ${t.capability_hint==='auto'?'selected':''}>Auto-detect</option>
+            <option value="llm_synthesis" ${t.capability_hint==='llm_synthesis'?'selected':''}>LLM synthesis</option>
+            <option value="web_search" ${t.capability_hint==='web_search'?'selected':''}>Web search</option>
+            <option value="bash" ${t.capability_hint==='bash'?'selected':''}>Bash</option>
+            <option value="code_exec" ${t.capability_hint==='code_exec'?'selected':''}>Code execution</option>
+            <option value="document_generation" ${t.capability_hint==='document_generation'?'selected':''}>Document generation</option>
+            <option value="image_generation" ${t.capability_hint==='image_generation'?'selected':''}>Image generation</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Timeout (s)</label>
+          <input type="number" value="${escAttr(t.timeout_seconds)}" min="5" max="600" onchange="updateTaskType(${t.id},'timeout_seconds',+this.value)">
+        </div>
+      </div>
+      <div class="field">
+        <label>Blueprint reference <span class="hint" style="display:inline;">(optional)</span></label>
+        <div class="row" style="display:grid; grid-template-columns: 1fr auto auto; gap:8px;">
+          <input value="${escAttr(t.blueprint)}" placeholder="e.g. ${escAttr(t.name || 'my_task')}.md" onchange="updateTaskType(${t.id},'blueprint',this.value)">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="showBlueprint(${t.id})">Show</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="autoNameBlueprint(${t.id})">Auto</button>
+        </div>
+        <div class="hint">Pointer to a markdown blueprint injected when this task runs. Click Show to view/edit.</div>
+      </div>
+
+      <div class="field">
+        <label>Execution mode</label>
+        <select onchange="updateTaskType(${t.id},'complexity',this.value); renderTaskTypes();">
+          <option value="adaptive" ${t.complexity==='adaptive'?'selected':''}>Adaptive — LLM decomposes freely each time</option>
+          <option value="pinned" ${t.complexity==='pinned'?'selected':''}>Pinned — LLM executes tasks, sub-task flow locked to blueprint</option>
+          <option value="scripted" ${t.complexity==='scripted'?'selected':''}>Scripted — runs a Python handler, no LLM call</option>
+        </select>
+        <div class="hint" style="margin-top:6px;">
+          ${t.complexity === 'pinned'
+            ? '<strong>Pinned:</strong> The LLM still runs each sub-task, but the decomposition DAG (which tasks, in what order) is locked by the Topology section of the blueprint. Use this when you always want the same workflow — e.g. an SDLC task that must always follow: code &rarr; test &rarr; deploy, every run, without the LLM re-inventing it.'
+            : t.complexity === 'scripted'
+            ? '<strong>Scripted:</strong> Skips the LLM entirely. Your Python handler function runs directly and returns the output. Fast, auditable, zero token cost. Requires a Handler path (see below).'
+            : '<strong>Adaptive:</strong> The LLM decides how to decompose and execute this task on each run. After each run, soft hints are accumulated in the blueprint\'s Discovery Hints section and fed back to steer future runs. Best for open-ended tasks where the approach may vary.'
+          }
+        </div>
+      </div>
+
+      ${t.complexity === 'scripted' ? `
+      <div class="field">
+        <label>Handler (Python dotted path)</label>
+        <input value="${escAttr(t.handler)}" placeholder="my_pkg.my_module.handle_task" onchange="updateTaskType(${t.id},'handler',this.value)">
+        <div class="hint">Required for Scripted mode. The async function to call — receives a <code>TaskContext</code> and must return the task output. Must be importable from the Cortex process.</div>
+      </div>
+      ` : ''}
+
+      <details class="advanced">
+        <summary>Advanced <span class="sum-desc">— mandatory, LLM provider, deps, retries, validation, schema</span></summary>
+        <div class="advanced-body">
+          <div class="row-3">
+            <div class="field">
+              <label>Mandatory</label>
+              <div class="toggle-row" style="padding:0;border:none;">
+                <div class="hint" style="margin:0;">Task must succeed for the overall session to succeed.</div>
+                <label class="toggle"><input type="checkbox" ${t.mandatory?'checked':''} onchange="updateTaskType(${t.id},'mandatory',this.checked)"><span class="slider"></span></label>
+              </div>
+            </div>
+            <div class="field">
+              <label>LLM provider</label>
+              <input value="${escAttr(t.llm_provider)}" placeholder="default" onchange="updateTaskType(${t.id},'llm_provider',this.value)">
+              <div class="hint">Named provider from <code>llm_access.providers</code>, or <code>default</code>.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Depends on (comma-separated task names)</label>
+              <input value="${escAttr(t.depends_on)}" placeholder="e.g. web_research, extract_facts" onchange="updateTaskType(${t.id},'depends_on',this.value)">
+              <div class="hint">This task runs only after all listed tasks succeed.</div>
+            </div>
+            <div class="field">
+              <label>Tool servers (comma-separated)</label>
+              <input value="${escAttr(t.tool_servers_list)}" placeholder="e.g. filesystem, brave_search" onchange="updateTaskType(${t.id},'tool_servers_list',this.value)">
+              <div class="hint">Restrict this task to only these tool servers. Empty = all.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Retry max attempts</label>
+              <input type="number" value="${escAttr(t.retry_max_attempts)}" min="1" max="10" onchange="updateTaskType(${t.id},'retry_max_attempts',+this.value)">
+              <div class="hint">How many times to retry on failure.</div>
+            </div>
+            <div class="field">
+              <label>Retry backoff (ms)</label>
+              <input type="number" value="${escAttr(t.retry_backoff_initial_ms)}" min="0" max="60000" onchange="updateTaskType(${t.id},'retry_backoff_initial_ms',+this.value)">
+              <div class="hint">Initial backoff between retries; doubles on each attempt.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Output max (MB)</label>
+              <input type="number" value="${escAttr(t.output_max_size_mb)}" min="1" max="10000" onchange="updateTaskType(${t.id},'output_max_size_mb',+this.value)">
+              <div class="hint">Reject outputs larger than this.</div>
+            </div>
+            <div class="field">
+              <label>Summary tokens</label>
+              <input type="number" value="${escAttr(t.output_content_summary_tokens)}" min="50" max="10000" onchange="updateTaskType(${t.id},'output_content_summary_tokens',+this.value)">
+              <div class="hint">When output is offloaded to a file, the summary injected back into the plan is capped to this many tokens.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Validation notes</label>
+            <textarea rows="2" onchange="updateTaskType(${t.id},'validation_notes',this.value)" placeholder="e.g. Output must include at least 3 cited sources.">${escAttr(t.validation_notes)}</textarea>
+            <div class="hint">Free-text rules read by the wave-gate LLM judge. Triggers per-task validation.</div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Human-in-the-loop</label>
+              <div class="hint">Task may pause and ask the user a clarifying question mid-run. Only works with a UI that forwards questions.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" ${t.human_in_loop?'checked':''} onchange="updateTaskType(${t.id},'human_in_loop',this.checked)"><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Output JSON schema</label>
+            <textarea rows="4" onchange="updateTaskType(${t.id},'output_schema_json',this.value)" placeholder='{"type":"object","properties":{"title":{"type":"string"}}}'>${escAttr(t.output_schema_json)}</textarea>
+            <div class="hint">JSON-Schema-like shape used by the wave-gate judge. Invalid JSON is silently ignored at save time.</div>
+          </div>
+        </div>
+      </details>
+    </div>
+  `).join('');
+}
+
+// ─── Blueprint viewer ───
+async function showBlueprint(id) {
+  const t = taskTypes.find(x => x.id === id);
+  if (!t) return;
+  if (!t.name) { alert('Set the task name first.'); return; }
+  if (!t.blueprint) { alert('Set a blueprint reference for this task first (or click Auto).'); return; }
+  const cfgPath = document.getElementById('save_path')?.value || 'cortex.yaml';
+  try {
+    const url = `/api/blueprint?task_name=${encodeURIComponent(t.name)}&blueprint_ref=${encodeURIComponent(t.blueprint)}&config_path=${encodeURIComponent(cfgPath)}`;
+    const resp = await fetch(url);
+    const result = await resp.json();
+    _openBlueprintModal(t, result);
+  } catch (e) {
+    alert('Failed to fetch blueprint: ' + e);
+  }
+}
+
+function autoNameBlueprint(id) {
+  const t = taskTypes.find(x => x.id === id);
+  if (!t || !t.name) { alert('Set the task name first.'); return; }
+  const safe = t.name.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') || 'task';
+  let h = 0;
+  for (let i = 0; i < t.name.length; i++) h = ((h << 5) - h + t.name.charCodeAt(i)) | 0;
+  const short = (h >>> 0).toString(16).padStart(8, '0').slice(0, 8);
+  t.blueprint = `${safe}__${short}.md`;
+  renderTaskTypes();
+}
+
+function _openBlueprintModal(t, result) {
+  let modal = document.getElementById('blueprintModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'blueprintModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(32,33,36,0.55);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    modal.innerHTML = `
+      <div style="background:var(--surface);color:var(--text);padding:24px;border-radius:12px;width:min(780px,92vw);max-height:86vh;display:flex;flex-direction:column;gap:12px;border:1px solid var(--border);box-shadow:var(--shadow-2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h3 id="bpTitle" style="margin:0;font-size:18px;font-family:'Google Sans',sans-serif;font-weight:500;"></h3>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="document.getElementById('blueprintModal').remove()">Close</button>
+        </div>
+        <div id="bpStatus" class="hint"></div>
+        <textarea id="bpContent" style="flex:1;min-height:360px;font-family:var(--font-mono);font-size:12px;width:100%;"></textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-primary" type="button" id="bpSaveBtn">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+  const titleEl = modal.querySelector('#bpTitle');
+  const statusEl = modal.querySelector('#bpStatus');
+  const contentEl = modal.querySelector('#bpContent');
+  const saveBtn = modal.querySelector('#bpSaveBtn');
+  titleEl.textContent = `Blueprint: ${t.name} (${t.blueprint})`;
+  contentEl.value = result.content || '';
+  if (result.error) statusEl.textContent = 'Error: ' + result.error;
+  else if (result.exists) statusEl.textContent = `Loaded from ${result.path}`;
+  else statusEl.textContent = `No blueprint file yet — showing a template. Edit and Save to create it at ${result.path}`;
+  saveBtn.onclick = async () => {
+    const cfgPath = document.getElementById('save_path')?.value || 'cortex.yaml';
+    try {
+      const resp = await fetch('/api/blueprint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_name: t.name, blueprint_ref: t.blueprint, content: contentEl.value, config_path: cfgPath }),
+      });
+      const r = await resp.json();
+      statusEl.textContent = r.saved ? `Saved to ${r.path}` : `Save failed: ${r.error || 'unknown'}`;
+    } catch (e) { statusEl.textContent = 'Save failed: ' + e; }
+  };
+}
+
+// ─── Storage Backend ───
+function onStorageBackendChange() {
+  const val = document.getElementById('storage_backend').value;
+  document.getElementById('sqliteOptions').style.display = val === 'sqlite' ? 'block' : 'none';
+  document.getElementById('redisOptions').style.display = val === 'redis' ? 'block' : 'none';
+}
+
+// ─── Publish Mode ───
+function selectMode(mode) {
+  selectedMode = mode;
+  document.querySelectorAll('.mode-card').forEach(c => c.classList.toggle('selected', c.dataset.mode === mode));
+  const opts = document.getElementById('modeOptions');
+  const tip = document.getElementById('modeTip');
+  const tipContent = tip.querySelector('.tip-content');
+  tip.style.display = 'flex';
+
+  if (mode === 'docker') {
+    opts.innerHTML = `
+      <div class="field" style="margin-top:14px;">
+        <label>Docker image tag</label>
+        <input id="docker_tag" value="cortex-agent:latest">
+      </div>`;
+    tipContent.innerHTML = '<strong>Docker mode</strong> generates a <code>Dockerfile.cortex</code> in your project root. You can then build and run the container, or push to a container registry for cloud deployment.';
+  } else if (mode === 'package') {
+    opts.innerHTML = `
+      <div class="field" style="margin-top:14px;">
+        <label>Output directory</label>
+        <input id="package_output_dir" value="dist">
+      </div>`;
+    tipContent.innerHTML = '<strong>Package mode</strong> builds a Python wheel (.whl) you can distribute via pip, PyPI, or an internal package registry. Users install with <code>pip install your-agent.whl</code> and run via the <code>cortex</code> CLI.';
+  } else if (mode === 'mcp') {
+    opts.innerHTML = `
+      <div class="field" style="margin-top:14px;">
+        <label>MCP server port</label>
+        <input id="mcp_port" type="number" value="8080">
+      </div>`;
+    tipContent.innerHTML = '<strong>MCP Server mode</strong> exposes your agent as a tool server over HTTP. Other Cortex agents (or any MCP-compatible client) can call your agent\'s capabilities as tools, enabling agent-to-agent composition.';
+  }
+}
+
+// ─── Config Generation ───
+async function generateConfig() {
+  const data = collectFormData();
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    generatedConfig = result.config;
+    document.getElementById('configLoading').style.display = 'none';
+    document.getElementById('configPreview').style.display = 'block';
+    document.getElementById('configPreview').textContent = generatedConfig;
+
+    if (selectedMode) {
+      const btn = document.getElementById('publishBtn');
+      btn.style.display = 'inline-flex';
+      btn.textContent = 'Publish as ' + selectedMode.charAt(0).toUpperCase() + selectedMode.slice(1);
+    }
+    showRecommendations();
+  } catch(e) {
+    document.getElementById('configLoading').textContent = 'Error generating config: ' + e.message;
+  }
+}
+
+function parseKV(text) {
+  const out = {};
+  if (!text) return out;
+  text.split(/\n/).forEach(line => {
+    line = line.trim();
+    if (!line || line.startsWith('#')) return;
+    let k, v;
+    if (line.includes(':')) { [k, ...v] = line.split(':'); v = v.join(':'); }
+    else if (line.includes('=')) { [k, ...v] = line.split('='); v = v.join('='); }
+    else return;
+    k = (k || '').trim(); v = (v || '').trim();
+    if (k) out[k] = v;
+  });
+  return out;
+}
+
+function collectFormData() {
+  const data = {
+    // Agent identity
+    agent_name: getStr('agent_name'),
+    agent_description: getStr('agent_description'),
+    agent_synthesis_guidance: getStr('agent_synthesis_guidance'),
+
+    // LLM
+    provider: getStr('provider'),
+    model: getStr('model'),
+    api_key_env_var: getStr('api_key_env_var'),
+    max_tokens: getInt('max_tokens', 4096),
+    temperature: getFloat('temperature', 1.0),
+    llm_headers: getStr('llm_headers'),
+    llm_region_env_var: getStr('llm_region_env_var'),
+    llm_access_key_env_var: getStr('llm_access_key_env_var'),
+    llm_secret_key_env_var: getStr('llm_secret_key_env_var'),
+    llm_session_token_env_var: getStr('llm_session_token_env_var'),
+    llm_endpoint_env_var: getStr('llm_endpoint_env_var'),
+    llm_api_version: getStr('llm_api_version'),
+
+    // Storage
+    storage_path: getStr('storage_path'),
+    storage_backend: getStr('storage_backend') || 'memory',
+    storage_large_file_threshold_mb: getInt('storage_large_file_threshold_mb', 5),
+    storage_result_envelope_max_kb: getInt('storage_result_envelope_max_kb', 64),
+    storage_session_quota_mb: getInt('storage_session_quota_mb', 500),
+    storage_health_warning_free_gb: getFloat('storage_health_warning_free_gb', 10.0),
+    storage_health_critical_free_gb: getFloat('storage_health_critical_free_gb', 2.0),
+    storage_atomic_cleanup: getBool('storage_atomic_cleanup'),
+
+    // SQLite / Redis advanced
+    sqlite_wal_mode: getBool('sqlite_wal_mode'),
+    sqlite_connection_timeout_seconds: getInt('sqlite_connection_timeout_seconds', 5),
+    sqlite_ttl_session_data_seconds: getInt('sqlite_ttl_session_data_seconds', 3600),
+    sqlite_ttl_session_index_seconds: getInt('sqlite_ttl_session_index_seconds', 86400),
+    redis_db: getInt('redis_db', 1),
+    redis_username: getStr('redis_username'),
+    redis_password_env_var: getStr('redis_password_env_var'),
+    redis_tls_enabled: getBool('redis_tls_enabled'),
+    redis_tls_verify_peer: getBool('redis_tls_verify_peer'),
+    redis_tls_cert_file: getStr('redis_tls_cert_file'),
+    redis_tls_key_file: getStr('redis_tls_key_file'),
+    redis_tls_ca_cert_file: getStr('redis_tls_ca_cert_file'),
+    redis_pool_max_connections: getInt('redis_pool_max_connections', 20),
+    redis_pool_min_idle: getInt('redis_pool_min_idle', 5),
+    redis_connection_timeout_ms: getInt('redis_connection_timeout_ms', 2000),
+    redis_socket_timeout_ms: getInt('redis_socket_timeout_ms', 1000),
+    redis_key_prefix: getStr('redis_key_prefix') || 'cortex',
+    redis_ttl_session_data_seconds: getInt('redis_ttl_session_data_seconds', 3600),
+    redis_ttl_session_index_seconds: getInt('redis_ttl_session_index_seconds', 86400),
+    redis_ttl_pubsub_seconds: getInt('redis_ttl_pubsub_seconds', 300),
+
+    // File input
+    file_input_max_size_mb: getInt('file_input_max_size_mb', 50),
+    file_input_allowed_mime_types: getStr('file_input_allowed_mime_types'),
+
+    // Runtime
+    max_wait_seconds: getInt('max_wait_seconds', 120),
+    default_task_timeout: getInt('default_task_timeout', 40),
+    max_concurrent_sessions: getInt('max_concurrent_sessions', 50),
+    max_sessions_per_user: getInt('max_sessions_per_user', 3),
+    max_parallel_tasks: getInt('max_parallel_tasks', 5),
+    max_tasks_per_session: getInt('max_tasks_per_session', 20),
+
+    // Agent advanced
+    agent_streaming_decomposition: getBool('agent_streaming_decomposition'),
+    agent_max_mcp_agent_llm_calls: getInt('agent_max_mcp_agent_llm_calls', 10),
+    agent_streaming_status_updates: getBool('agent_streaming_status_updates'),
+    agent_streaming_include_task_detail: getBool('agent_streaming_include_task_detail'),
+    agent_streaming_mcp_agent_updates: getBool('agent_streaming_mcp_agent_updates'),
+    agent_streaming_reconnect_buffer_size: getInt('agent_streaming_reconnect_buffer_size', 50),
+    agent_streaming_min_delivery_interval_ms: getInt('agent_streaming_min_delivery_interval_ms', 200),
+    agent_clarification_enabled: getBool('agent_clarification_enabled'),
+    scout_enabled: getBool('scout_enabled'),
+    scout_max_capabilities: getInt('scout_max_capabilities', 30),
+    scout_timeout_seconds: getInt('scout_timeout_seconds', 10),
+    scout_ext_enabled: getBool('scout_ext_enabled'),
+    scout_ext_auto_discovery_file: getStr('scout_ext_auto_discovery_file') || 'cortex_auto_mcps.yaml',
+    scout_ext_registry_sources: getStr('scout_ext_registry_sources'),
+    scout_ext_max_new_per_session: getInt('scout_ext_max_new_per_session', 5),
+    scout_ext_max_stale_days: getInt('scout_ext_max_stale_days', 30),
+    scout_ext_search_timeout_s: getFloat('scout_ext_search_timeout_s', 10.0),
+
+    // Features
+    validation_enabled: getBool('validation_enabled'),
+    wave_gate_llm_provider: getStr('wave_gate_llm_provider') || 'default',
+    validation_threshold: getFloat('validation_threshold', 0.75),
+    validation_critical_threshold: getFloat('validation_critical_threshold', 0.40),
+    validation_timeout_seconds: getInt('validation_timeout_seconds', 15),
+    validation_weights_intent_match: getFloat('validation_weights_intent_match', 0.50),
+    validation_weights_completeness: getFloat('validation_weights_completeness', 0.30),
+    validation_weights_coherence: getFloat('validation_weights_coherence', 0.20),
+    validation_expose_report_to_user: getBool('validation_expose_report_to_user'),
+    validation_expose_score_to_user: getBool('validation_expose_score_to_user'),
+
+    history_enabled: getBool('history_enabled'),
+    history_retention_days: getInt('history_retention_days', 90),
+    history_max_sessions_in_context: getInt('history_max_sessions_in_context', 5),
+    history_persist_task_outputs: getStr('history_persist_task_outputs'),
+    history_search_enabled: getBool('history_search_enabled'),
+    history_encryption_enabled: getBool('history_encryption_enabled'),
+    history_encryption_key_env_var: getStr('history_encryption_key_env_var'),
+
+    learning_enabled: getBool('learning_enabled'),
+    auto_apply_delta: getBool('auto_apply_delta'),
+    learning_auto_apply_min_confidence: getStr('learning_auto_apply_min_confidence') || 'high',
+    learning_auto_apply_min_confirmations: getInt('learning_auto_apply_min_confirmations', 3),
+    learning_notify_on_apply: getBool('learning_notify_on_apply'),
+
+    blueprint_enabled: getBool('blueprint_enabled'),
+    blueprint_storage_mode: getStr('blueprint_storage_mode') || 'filesystem',
+    blueprint_dir: getStr('blueprint_dir'),
+    blueprint_auto_update: getBool('blueprint_auto_update'),
+    blueprint_inject_max_chars: getInt('blueprint_inject_max_chars', 4000),
+    blueprint_staleness_warning_days: getInt('blueprint_staleness_warning_days', 90),
+
+    // Security / startup / user / sandbox
+    security_max_input_tokens: getInt('security_max_input_tokens', 4000),
+    security_secret_scrub_patterns: getStr('security_secret_scrub_patterns'),
+    startup_require_all_servers: getBool('startup_require_all_servers'),
+    startup_discovery_timeout_seconds: getInt('startup_discovery_timeout_seconds', 15),
+    startup_log_discovered_tools: getBool('startup_log_discovered_tools'),
+    startup_verify_auth: getBool('startup_verify_auth'),
+    startup_eager_discovery: getBool('startup_eager_discovery'),
+    startup_capability_registry_path: getStr('startup_capability_registry_path'),
+    startup_background_discovery_concurrency: getInt('startup_background_discovery_concurrency', 10),
+    user_allow_user_cortex_mcp: getBool('user_allow_user_cortex_mcp'),
+    user_allow_user_tool_servers: getBool('user_allow_user_tool_servers'),
+    code_sandbox_enabled: getBool('code_sandbox_enabled'),
+    code_sandbox_timeout_seconds: getInt('code_sandbox_timeout_seconds', 60),
+    code_sandbox_allow_network: getBool('code_sandbox_allow_network'),
+    code_sandbox_ask_persist_consent: getBool('code_sandbox_ask_persist_consent'),
+    code_sandbox_auto_add_to_yaml: getBool('code_sandbox_auto_add_to_yaml'),
+  };
+
+  const baseUrl = document.getElementById('base_url').value;
+  if (baseUrl) data.base_url = baseUrl;
+
+  if (data.storage_backend === 'sqlite') {
+    data.sqlite_path = document.getElementById('sqlite_path').value;
+  } else if (data.storage_backend === 'redis') {
+    data.redis_host = document.getElementById('redis_host').value;
+    data.redis_port = parseInt(document.getElementById('redis_port').value) || 6379;
+  }
+
+  // Tool servers — build dict with optional advanced fields
+  const ts = {};
+  toolServers.forEach(s => {
+    if (!s.name) return;
+    const entry = { transport: s.transport };
+    if (s.transport === 'stdio') {
+      entry.command = s.command;
+      entry.args = (s.args || '').split(',').map(a => a.trim()).filter(Boolean);
+      if (s.working_dir) entry.working_dir = s.working_dir;
+    } else {
+      entry.url = s.url;
+    }
+    if (s.description) entry.description = s.description;
+    if (+s.startup_timeout_seconds !== 10) entry.startup_timeout_seconds = +s.startup_timeout_seconds || 10;
+
+    const conn = {};
+    if (+s.conn_timeout !== 10) conn.timeout_seconds = +s.conn_timeout;
+    if (+s.conn_read_timeout !== 60) conn.read_timeout_seconds = +s.conn_read_timeout;
+    if (+s.conn_max_retries !== 3) conn.max_retries = +s.conn_max_retries;
+    if (+s.conn_retry_backoff_ms !== 500) conn.retry_backoff_ms = +s.conn_retry_backoff_ms;
+    if (Object.keys(conn).length) entry.connection = conn;
+
+    if (s.auth_type && s.auth_type !== 'none') {
+      entry.auth = { type: s.auth_type };
+      if (s.auth_type === 'bearer' && s.auth_token_env_var) entry.auth.token_env_var = s.auth_token_env_var;
+      if (s.auth_type === 'api_key') {
+        if (s.auth_header) entry.auth.header = s.auth_header;
+        if (s.auth_key_env_var) entry.auth.key_env_var = s.auth_key_env_var;
+      }
+      if (s.auth_type === 'basic') {
+        if (s.auth_username_env_var) entry.auth.username_env_var = s.auth_username_env_var;
+        if (s.auth_password_env_var) entry.auth.password_env_var = s.auth_password_env_var;
+      }
+      if (s.auth_type === 'oauth2_client_credentials') {
+        if (s.auth_token_url) entry.auth.token_url = s.auth_token_url;
+        if (s.auth_client_id_env_var) entry.auth.client_id_env_var = s.auth_client_id_env_var;
+        if (s.auth_client_secret_env_var) entry.auth.client_secret_env_var = s.auth_client_secret_env_var;
+        if (s.auth_scope) entry.auth.scope = s.auth_scope;
+      }
+    }
+
+    if (s.transport !== 'stdio') {
+      const tls = {};
+      if (s.tls_enabled) tls.enabled = true;
+      if (s.tls_verify_cert === false) tls.verify_cert = false;
+      if (s.tls_ca_cert_file) tls.ca_cert_file = s.tls_ca_cert_file;
+      if (s.tls_client_cert_file) tls.client_cert_file = s.tls_client_cert_file;
+      if (s.tls_client_key_file) tls.client_key_file = s.tls_client_key_file;
+      if (Object.keys(tls).length) entry.tls = tls;
+
+      const pool = {};
+      if (+s.pool_min_connections !== 1) pool.min_connections = +s.pool_min_connections;
+      if (+s.pool_max_connections !== 10) pool.max_connections = +s.pool_max_connections;
+      if (Object.keys(pool).length) entry.pool = pool;
+    }
+
+    const discovery = {};
+    if (s.discovery_auto === false) discovery.auto = false;
+    const capHints = (s.discovery_capability_hints || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (capHints.length) discovery.capability_hints = capHints;
+    const domHints = (s.discovery_domain_hints || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (domHints.length) discovery.domain_hints = domHints;
+    if (Object.keys(discovery).length) entry.discovery = discovery;
+
+    const envObj = parseKV(s.env_text);
+    if (Object.keys(envObj).length) entry.env = envObj;
+    const headersObj = parseKV(s.headers_text);
+    if (Object.keys(headersObj).length) entry.headers = headersObj;
+
+    const hc = {};
+    if (s.health_enabled === false) hc.enabled = false;
+    if (s.health_endpoint) hc.endpoint = s.health_endpoint;
+    if (+s.health_interval_seconds !== 30) hc.interval_seconds = +s.health_interval_seconds;
+    if (+s.health_failure_threshold !== 3) hc.failure_threshold = +s.health_failure_threshold;
+    if (+s.health_recovery_threshold !== 2) hc.recovery_threshold = +s.health_recovery_threshold;
+    if (Object.keys(hc).length) entry.health_check = hc;
+    ts[s.name] = entry;
+  });
+  if (Object.keys(ts).length) data.tool_servers = ts;
+
+  // Named LLM providers
+  const lps = llmProviders.filter(p => p.name).map(p => ({
+    name: p.name,
+    provider: p.provider,
+    model: p.model,
+    api_key_env_var: p.api_key_env_var,
+    base_url: p.base_url,
+    max_tokens: p.max_tokens,
+  }));
+  if (lps.length) data.llm_providers = lps;
+
+  // Task types — pass raw objects so server builds the full YAML blocks
+  const tt = taskTypes.filter(t => t.name).map(t => ({
+    name: t.name,
+    description: t.description,
+    output_format: t.output_format,
+    capability_hint: t.capability_hint,
+    timeout_seconds: t.timeout_seconds,
+    blueprint: t.blueprint,
+    mandatory: t.mandatory,
+    complexity: t.complexity,
+    llm_provider: t.llm_provider,
+    handler: t.handler,
+    depends_on: t.depends_on,
+    tool_servers_list: t.tool_servers_list,
+    retry_max_attempts: t.retry_max_attempts,
+    retry_backoff_initial_ms: t.retry_backoff_initial_ms,
+    output_max_size_mb: t.output_max_size_mb,
+    output_content_summary_tokens: t.output_content_summary_tokens,
+    validation_notes: t.validation_notes,
+    human_in_loop: t.human_in_loop,
+    output_schema_json: t.output_schema_json,
+  }));
+  if (tt.length) data.task_types = tt;
+
+  return data;
+}
+
+// ─── Save / Validate / Publish ───
+async function saveConfig() {
+  const status = document.getElementById('saveStatus');
+  try {
+    const res = await fetch('/api/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: generatedConfig, path: 'cortex.yaml' }),
+    });
+    const result = await res.json();
+    if (result.saved) {
+      status.innerHTML = '<div class="tip-box success"><div class="tip-content"><strong>Saved.</strong> Configuration written to <code>' + result.path + '</code></div></div>';
+    }
+  } catch(e) {
+    status.innerHTML = '<div class="tip-box warn"><div class="tip-content">Save failed: ' + e.message + '</div></div>';
+  }
+}
+
+async function validateConfig() {
+  const status = document.getElementById('saveStatus');
+  status.innerHTML = '<div class="tip-box info"><div class="tip-content">Validating…</div></div>';
+  try {
+    const res = await fetch('/api/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: generatedConfig }),
+    });
+    const result = await res.json();
+    if (result.valid) {
+      status.innerHTML = '<div class="tip-box success"><div class="tip-content"><strong>Valid.</strong> Your configuration passed all schema checks.</div></div>';
+    } else {
+      status.innerHTML = '<div class="tip-box warn"><div class="tip-content"><strong>Validation errors:</strong><br>' + result.errors.join('<br>') + '</div></div>';
+    }
+  } catch(e) {
+    status.innerHTML = '<div class="tip-box warn"><div class="tip-content">Validation failed: ' + e.message + '</div></div>';
+  }
+}
+
+async function publishAgent() {
+  if (!selectedMode) return;
+  const status = document.getElementById('saveStatus');
+  status.innerHTML = '<div class="tip-box info"><div class="tip-content">Publishing as ' + selectedMode + '…</div></div>';
+
+  await fetch('/api/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: generatedConfig, path: 'cortex.yaml' }),
+  });
+
+  const publishData = { mode: selectedMode, config_path: 'cortex.yaml' };
+  if (selectedMode === 'docker') publishData.docker_tag = (document.getElementById('docker_tag') || {}).value || 'cortex-agent:latest';
+  if (selectedMode === 'package') publishData.output_dir = (document.getElementById('package_output_dir') || {}).value || 'dist';
+  if (selectedMode === 'mcp') publishData.mcp_port = parseInt((document.getElementById('mcp_port') || {}).value) || 8080;
+
+  try {
+    const res = await fetch('/api/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(publishData),
+    });
+    const result = await res.json();
+    if (result.success) {
+      let html = '<div class="tip-box success"><div class="tip-content"><strong>Published.</strong><pre style="margin:8px 0 0; background:transparent; color:inherit; border:none; padding:0;">' + escapeHtml(result.output) + '</pre></div></div>';
+      if (result.next_steps && result.next_steps.length) {
+        html += '<div class="tip-box info"><div class="tip-content"><strong>Run these next:</strong><br>' + result.next_steps.map(s => '<code>' + escapeHtml(s) + '</code>').join('<br>') + '</div></div>';
+      }
+      status.innerHTML = html;
+    } else {
+      status.innerHTML = '<div class="tip-box warn"><div class="tip-content"><strong>Publish output:</strong><pre style="margin:4px 0 0; background:transparent; border:none; padding:0; color:inherit;">' + escapeHtml(result.output) + '</pre></div></div>';
+    }
+  } catch(e) {
+    status.innerHTML = '<div class="tip-box warn"><div class="tip-content">Publish failed: ' + e.message + '</div></div>';
+  }
+}
+
+// ─── Recommendations ───
+function showRecommendations() {
+  const card = document.getElementById('recommendationsCard');
+  const subtitle = document.getElementById('recSubtitle');
+  const list = document.getElementById('recList');
+  card.style.display = 'block';
+
+  const recs = [];
+  const data = collectFormData();
+
+  if (selectedMode === 'docker') {
+    subtitle.textContent = 'Recommended usage for Docker deployment';
+    recs.push({ title: 'Run in dev mode first', desc: 'Test locally before containerizing: <code>cortex dev --config cortex.yaml --watch</code>' });
+    recs.push({ title: 'Use environment files', desc: 'Store API keys in <code>.env</code> and pass to Docker: <code>docker run --env-file .env ...</code>' });
+    recs.push({ title: 'Health checks', desc: 'Add Docker health check to monitor your agent container. The dev server exposes a <code>/health</code> endpoint.' });
+    recs.push({ title: 'Dry run validation', desc: 'Validate your task graph before deploying: <code>cortex dry-run "your test query"</code>' });
+    if (data.storage_backend === 'memory') {
+      recs.push({ title: 'Upgrade storage for containers', desc: 'In-memory storage is lost on restart. Consider <strong>SQLite</strong> with a volume mount or <strong>Redis</strong> for persistent state.' });
+    }
+  } else if (selectedMode === 'package') {
+    subtitle.textContent = 'Recommended usage for Python package distribution';
+    recs.push({ title: 'Test locally', desc: 'Run <code>cortex dev --config cortex.yaml</code> before building the package.' });
+    recs.push({ title: 'Install and verify', desc: 'After building: <code>pip install dist/*.whl</code>, then <code>cortex dev</code> to start.' });
+    recs.push({ title: 'Bundle your config', desc: 'Include <code>cortex.yaml</code> in your package data so users get a working default configuration.' });
+    recs.push({ title: 'Generate a spec', desc: 'Create a capability manifest for documentation: <code>cortex spec --format json -o agent-spec.json</code>' });
+  } else if (selectedMode === 'mcp') {
+    subtitle.textContent = 'Recommended usage for MCP Server deployment';
+    const port = (document.getElementById('mcp_port') || {}).value || '8080';
+    recs.push({ title: 'Start the MCP server', desc: `Launch with: <code>cortex publish mcp --port ${port}</code>` });
+    recs.push({ title: 'Connect from another agent', desc: `Add to another agent\'s <code>cortex.yaml</code>:<br><code>tool_servers:<br>&nbsp;&nbsp;${data.agent_name}:<br>&nbsp;&nbsp;&nbsp;&nbsp;url: http://localhost:${port}/sse<br>&nbsp;&nbsp;&nbsp;&nbsp;transport: sse</code>` });
+    recs.push({ title: 'Agent composition', desc: 'MCP mode enables <strong>agent-to-agent</strong> workflows. Your agent becomes a tool that other agents can invoke for specialized tasks.' });
+    recs.push({ title: 'Capability discovery', desc: 'Enable <code>discovery.auto: true</code> on the consumer side so the calling agent can auto-discover this agent\'s tools.' });
+  } else {
+    subtitle.textContent = 'General recommendations for your agent';
+    recs.push({ title: 'Select a publish mode', desc: 'Go back and choose Docker, Package, or MCP Server to get mode-specific recommendations.' });
+  }
+
+  if (!data.task_types || !data.task_types.length) {
+    recs.push({ title: 'Add task types', desc: 'Defining task types helps the agent decompose requests more accurately. You can also let the <strong>Learning Engine</strong> discover them automatically.' });
+  }
+  if (!data.tool_servers || !Object.keys(data.tool_servers).length) {
+    recs.push({ title: 'Connect tool servers', desc: 'Without MCP tool servers, your agent relies purely on LLM reasoning. Add tools for web search, file access, or custom APIs to expand capabilities.' });
+  }
+  if (data.history_enabled && data.learning_enabled) {
+    recs.push({ title: 'Review deltas periodically', desc: 'The learning engine will propose new task types. Review them with: <code>cortex delta review</code>' });
+  }
+
+  list.innerHTML = recs.map(r => `<li><strong>${r.title}</strong>${r.desc}</li>`).join('');
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

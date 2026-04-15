@@ -1,0 +1,13 @@
+agent:
+  name: MyTestAgent
+  description: An intelligent AI agent
+llm_access:
+  default:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    api_key_env_var: ANTHROPIC_API_KEY
+    max_tokens: 4096
+storage:
+  base_path: ./cortex_storage
+task_types: []
+tool_servers: {}

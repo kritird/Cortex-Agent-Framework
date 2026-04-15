@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cortex-agent-framework"
+version = "1.0.0"
+description = "Fan-Out/Fan-In agentic orchestration framework with multi-provider LLM support and MCP tool integration."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Kriti Ranjan Das", email = "kritiranjan.das@gmail.com" },
+]
+maintainers = [
+    { name = "Kriti Ranjan Das", email = "kritiranjan.das@gmail.com" },
+]
+keywords = [
+    "agent",
+    "agentic",
+    "llm",
+    "orchestration",
+    "anthropic",
+    "claude",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "framework",
+    "fan-out-fan-in",
+    "task-graph",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = [
+    "anthropic>=0.40.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "aiohttp>=3.9",
+    "aiofiles>=23.0",
+    "boto3>=1.34",
+    "click>=8.1",
+    "redis>=5.0",
+    "aiosqlite>=0.20",
+    "cryptography>=42.0",
+    "opentelemetry-sdk>=1.24",
+    "opentelemetry-exporter-otlp>=1.24",
+    "jinja2>=3.1",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
+    "coverage",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/kritird/cortex-agent-framework"
+Repository = "https://github.com/kritird/cortex-agent-framework"
+Issues = "https://github.com/kritird/cortex-agent-framework/issues"
+Documentation = "https://github.com/kritird/cortex-agent-framework/tree/main/docs"
+Changelog = "https://github.com/kritird/cortex-agent-framework/blob/main/CHANGELOG.md"
+
+[project.scripts]
+cortex = "cortex.cli.main:cli"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cortex*"]
