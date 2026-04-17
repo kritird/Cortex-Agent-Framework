@@ -398,6 +398,27 @@ def _generate_config(data: dict) -> str:
     if file_input_cfg:
         config["file_input"] = file_input_cfg
 
+    # Chat UI
+    if data.get("ui_enabled"):
+        ui_cfg = {"enabled": True}
+        _only_if(ui_cfg, "host", data.get("ui_host"), "0.0.0.0")
+        _only_if(ui_cfg, "port", data.get("ui_port"), 8090)
+        _only_if(ui_cfg, "title", data.get("ui_title"), "Cortex Agent")
+        auth_cfg = {}
+        mode = data.get("ui_auth_mode", "none") or "none"
+        if mode != "none":
+            auth_cfg["mode"] = mode
+            if mode == "token" and data.get("ui_auth_token"):
+                auth_cfg["token"] = data["ui_auth_token"]
+            elif mode == "basic":
+                if data.get("ui_auth_username"):
+                    auth_cfg["username"] = data["ui_auth_username"]
+                if data.get("ui_auth_password"):
+                    auth_cfg["password"] = data["ui_auth_password"]
+        if auth_cfg:
+            ui_cfg["auth"] = auth_cfg
+        config["ui"] = ui_cfg
+
     # Task types — basic fields plus optional per-task advanced
     task_types_in = data.get("task_types", [])
     task_types_out = []
@@ -590,6 +611,8 @@ def _load_existing_config(config_path: str) -> dict:
     user_raw = raw.get("user_config", {}) or {}
     sandbox_raw = raw.get("code_sandbox", {}) or {}
     file_input_raw = raw.get("file_input", {}) or {}
+    ui_raw = raw.get("ui", {}) or {}
+    ui_auth_raw = ui_raw.get("auth", {}) or {}
 
     def _kv_to_text(d):
         if not isinstance(d, dict):
@@ -704,6 +727,15 @@ def _load_existing_config(config_path: str) -> dict:
         "code_sandbox_allow_network": sandbox_raw.get("allow_network", False),
         "code_sandbox_ask_persist_consent": sandbox_raw.get("ask_persist_consent", True),
         "code_sandbox_auto_add_to_yaml": sandbox_raw.get("auto_add_to_yaml", False),
+        # ── Chat UI ──
+        "ui_enabled": ui_raw.get("enabled", False),
+        "ui_host": ui_raw.get("host", "0.0.0.0"),
+        "ui_port": ui_raw.get("port", 8090),
+        "ui_title": ui_raw.get("title", "Cortex Agent"),
+        "ui_auth_mode": ui_auth_raw.get("mode", "none"),
+        "ui_auth_token": ui_auth_raw.get("token", "") or "",
+        "ui_auth_username": ui_auth_raw.get("username", "") or "",
+        "ui_auth_password": ui_auth_raw.get("password", "") or "",
     }
 
     # Storage backend detection
@@ -980,6 +1012,25 @@ def _run_publish(mode: str, config_path: str, data: dict) -> dict:
                 "next_steps": [
                     f"cortex publish mcp --port {port}",
                     f"Add to another agent's cortex.yaml:\n  tool_servers:\n    my_agent:\n      url: http://localhost:{port}/sse\n      transport: sse",
+                ],
+            }
+        elif mode == "ui":
+            host = data.get("ui_host", "0.0.0.0")
+            port = data.get("ui_port", 8090)
+            # We don't start the server from the wizard (it would block the
+            # wizard process). Just surface the command the user should run.
+            return {
+                "success": True,
+                "output": (
+                    "Chat UI is configured. Start it with:\n"
+                    f"  cortex publish ui --config {config_path}\n"
+                    f"Then open http://{host}:{port} in your browser."
+                ),
+                "mode": "ui",
+                "next_steps": [
+                    f"cortex publish ui --config {config_path}",
+                    f"Open http://{host}:{port}",
+                    "For Docker: cortex publish docker --with-ui",
                 ],
             }
         else:

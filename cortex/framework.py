@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from cortex.config.loader import load_config
 from cortex.config.schema import CortexConfig
 from cortex.exceptions import CortexConfigError, CortexException, CortexInvalidUserError, CortexSecurityError
+from cortex.identity import Principal
 from cortex.llm.client import LLMClient
 from cortex.llm.context import TokenUsage
 from cortex.modules.history_store import (
@@ -364,6 +365,7 @@ class CortexFramework:
         user_task_types: Optional[List] = None,
         user_consent: str = "none",
         resume_session_id: Optional[str] = None,
+        principal: Optional[Principal] = None,
     ) -> SessionResult:
         """
         Execute a complete agent session: decompose → fan-out → fan-in → synthesise → validate.
@@ -378,6 +380,10 @@ class CortexFramework:
             resume_session_id: If set, resume a previously timed-out session instead of
                                starting fresh. The original decomposition is skipped and
                                only the remaining pending tasks are executed.
+            principal: Optional Principal identity. If not provided, one is
+                       constructed automatically from ``user_id`` via
+                       ``Principal.from_user_id()``. Pass an explicit principal
+                       for system agents or agent-to-agent delegation.
 
         Returns:
             SessionResult with final response and all metadata
@@ -385,6 +391,10 @@ class CortexFramework:
         self._assert_initialized()
         self._assert_valid_user_id(user_id)
         start_time = time.time()
+
+        # Build principal — use explicit one if provided, otherwise derive from user_id
+        if principal is None:
+            principal = Principal.from_user_id(user_id)
 
         # ── Resume path: re-open timed-out session ────────────────────────────
         if resume_session_id:
@@ -395,6 +405,7 @@ class CortexFramework:
                 user_task_types=user_task_types,
                 user_consent=user_consent,
                 start_time=start_time,
+                principal=principal,
             )
 
         # Sanitise input
@@ -403,7 +414,7 @@ class CortexFramework:
         # Create session
         session = await self._session_manager.create_session(user_id, request)
         session_id = session.session_id
-        self._observability.emit_session_start(session_id, user_id)
+        self._observability.emit_session_start(session_id, user_id, principal=principal)
 
         # Auto-cleanup expired history
         await self._session_manager.auto_cleanup_expired_history(user_id)
@@ -590,6 +601,7 @@ class CortexFramework:
                     user_task_types=user_task_types,
                     max_tasks=self._config.agent.concurrency.max_tasks_per_session,
                     sandbox_enabled=self._config.code_sandbox.enabled,
+                    principal=principal,
                 )
 
                 # Register all task signals
@@ -613,7 +625,7 @@ class CortexFramework:
 
                     for task in ready:
                         task.status = "running"
-                        self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name)
+                        self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name, principal=task.principal)
 
                     async def _run_with_sem(task):
                         async with sem:
@@ -730,6 +742,7 @@ class CortexFramework:
                                 completed_envelopes=all_envelopes,
                                 task_compiler=self._task_compiler,
                                 event_queue=event_queue,
+                                principal=principal,
                             )
                         except Exception as e:
                             logger.debug("Replan hook raised (non-fatal): %s", e)
@@ -1042,6 +1055,7 @@ class CortexFramework:
         user_task_types: Optional[List],
         user_consent: str,
         start_time: float,
+        principal: Optional[Principal] = None,
     ) -> SessionResult:
         """
         Resume a timed-out session from its saved graph snapshot.
@@ -1076,7 +1090,7 @@ class CortexFramework:
 
         # Re-open the session in SessionManager
         await self._session_manager.reopen_session(resume_session_id, user_id)
-        self._observability.emit_session_start(session_id, user_id)
+        self._observability.emit_session_start(session_id, user_id, principal=principal)
 
         await event_queue.put(StatusEvent(
             message=f"Resuming session — re-executing remaining tasks...",
@@ -1130,7 +1144,7 @@ class CortexFramework:
 
                 for task in ready:
                     task.status = "running"
-                    self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name)
+                    self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name, principal=task.principal)
 
                 async def _run_with_sem(task):
                     async with sem:
@@ -1207,6 +1221,7 @@ class CortexFramework:
                             completed_envelopes=all_envelopes,
                             task_compiler=self._task_compiler,
                             event_queue=event_queue,
+                            principal=principal,
                         )
                     except Exception as e:
                         logger.debug("Replan hook raised (non-fatal): %s", e)

@@ -164,6 +164,79 @@ What changes is **what wraps those lines**. Below are all the ways developers us
 
 ---
 
+## Caller Identity: `user_id` and `principal`
+
+Every call to `run_session()` carries an **identity** — who initiated the request. Cortex uses this identity for storage isolation, audit logs, session ownership, and per-user concurrency caps.
+
+There are two parameters:
+
+| Parameter | Required | Purpose |
+|---|---|---|
+| `user_id` | **Yes** | Storage namespace key. Sessions, history, and per-user data are isolated under this id. |
+| `principal` | No | Rich identity object (`Principal`) that captures *type* (human/system/agent) and the **delegation chain** when one agent calls another. Auto-built from `user_id` if omitted. |
+
+For most applications you only ever pass `user_id` — the framework constructs a human-user `Principal` for you. The `principal=` parameter exists for two cases: **system/autonomous agents** and **agent-to-agent delegation**.
+
+### Case 1: Human user (most common)
+
+```python
+await framework.run_session(
+    user_id="user_123",
+    request="Analyse Q3 revenue trends",
+    event_queue=asyncio.Queue(),
+)
+```
+
+Cortex internally builds `Principal.from_user_id("user_123")`. No code changes needed for existing apps.
+
+### Case 2: System / autonomous agent
+
+For background jobs, schedulers, cron triggers, or any non-human initiator:
+
+```python
+from cortex.identity import Principal
+
+scheduler = Principal.system("nightly-report")   # → principal_id = "system:nightly-report"
+
+await framework.run_session(
+    user_id="system:nightly-report",   # storage key — matches principal_id
+    request="Generate the nightly KPI report",
+    event_queue=asyncio.Queue(),
+    principal=scheduler,
+)
+```
+
+System principal ids must follow `"system:<name>"` (alphanumeric, dash, underscore). Audit logs will record `principal_type=system` so you can distinguish autonomous runs from human-driven ones.
+
+### Case 3: Agent-to-agent delegation
+
+When your agent calls Cortex *on behalf of* an end user — e.g. a sales bot that uses Cortex to research a prospect — pass an `agent` principal that records the original user:
+
+```python
+from cortex.identity import Principal
+
+user = Principal.from_user_id("user_123")
+bot  = Principal.agent("sales-bot", delegated_by=user)
+
+await framework.run_session(
+    user_id="user_123",        # origin user — storage stays under their namespace
+    request="Research competitor pricing for ACME Corp",
+    event_queue=asyncio.Queue(),
+    principal=bot,             # carries the chain ["user_123"] → "agent:sales-bot"
+)
+```
+
+Delegation chains compose — if `sales-bot` then delegates to a `pricing-engine` agent, build a third principal with `delegated_by=bot` and the chain becomes `["user_123", "agent:sales-bot"]`. Audit logs preserve the full provenance.
+
+### Key rules
+
+1. **`user_id` should always be the storage namespace.** For delegated calls, that's the *originating* user — never the agent's id. This keeps all hops in a delegation chain in one storage space, which means session history, blueprints, and learned task types are attributed to the human who started the work.
+2. **`principal_id` for system/agent principals must match `<type>:<name>`.** Cortex enforces this at construction time.
+3. **You can resume a delegated session** by passing `resume_session_id=` along with the same `user_id` — ownership is checked against the origin user, not the agent.
+4. **`Principal` is immutable.** Build a new one for each delegation hop rather than mutating an existing one.
+
+---
+
 ### Usage 1: Conversational Chat UI
 
 **Best for**: Customer-facing apps, internal tools, support agents, dashboards with AI chat.

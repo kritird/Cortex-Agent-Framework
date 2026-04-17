@@ -86,11 +86,17 @@ class ObservabilityEmitter:
         except OSError as e:
             logger.error("Audit log write failed: %s", e)
 
-    def emit_session_start(self, session_id: str, user_id: str) -> None:
-        self._emit_operational("session_start", {
+    def emit_session_start(self, session_id: str, user_id: str, principal=None) -> None:
+        data = {
             "session_id": session_id,
             "user_id": user_id,
-        })
+        }
+        if principal is not None:
+            data["principal_id"] = principal.principal_id
+            data["principal_type"] = principal.principal_type
+            if principal.delegation_chain:
+                data["delegation_chain"] = principal.delegation_chain
+        self._emit_operational("session_start", data)
 
     def emit_session_end(self, session_id: str, record: HistoryRecord) -> None:
         self._emit_operational("session_end", {
@@ -104,12 +110,16 @@ class ObservabilityEmitter:
             "tasks_total": record.task_completion.total_tasks,
         })
 
-    def emit_task_dispatch(self, session_id: str, task_id: str, task_name: str) -> None:
-        self._emit_operational("task_dispatch", {
+    def emit_task_dispatch(self, session_id: str, task_id: str, task_name: str, principal=None) -> None:
+        data = {
             "session_id": session_id,
             "task_id": task_id,
             "task_name": task_name,
-        })
+        }
+        if principal is not None:
+            data["principal_id"] = principal.principal_id
+            data["principal_type"] = principal.principal_type
+        self._emit_operational("task_dispatch", data)
 
     def emit_task_complete(self, session_id: str, envelope: ResultEnvelope) -> None:
         self._emit_operational("task_complete", {

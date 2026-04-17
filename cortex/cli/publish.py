@@ -1,28 +1,39 @@
-"""cortex publish — publish docker image, package, or MCP server."""
+"""cortex publish — publish docker image, package, MCP server, or chat UI."""
 import click
 
 
 @click.group()
 def publish_group():
-    """Publish your agent as a Docker image, Python package, or MCP server."""
+    """Publish your agent as Docker, a Python package, an MCP server, or a chat UI."""
     pass
 
 
 @publish_group.command("docker")
 @click.option("--tag", default="cortex-agent:latest")
 @click.option("--config", default="cortex.yaml")
-def publish_docker(tag: str, config: str):
+@click.option("--with-ui", is_flag=True, help="Bundle the chat UI and expose its port.")
+def publish_docker(tag: str, config: str, with_ui: bool):
     """Build and publish a Docker image for this agent."""
     click.echo(f"Building Docker image: {tag}")
     click.echo("  (Generating Dockerfile...)")
-    dockerfile = _generate_dockerfile(config)
+    dockerfile = _generate_dockerfile(config, with_ui=with_ui)
     with open("Dockerfile.cortex", "w") as f:
         f.write(dockerfile)
     click.echo("  ✓ Dockerfile.cortex generated")
+    if with_ui:
+        click.echo("  ✓ Image will launch the chat UI on startup")
     click.echo(f"  Run: docker build -f Dockerfile.cortex -t {tag} .")
 
 
-def _generate_dockerfile(config_path: str) -> str:
+def _generate_dockerfile(config_path: str, with_ui: bool = False) -> str:
+    if with_ui:
+        return f"""FROM python:3.11-slim
+WORKDIR /app
+COPY . .
+RUN pip install -e .
+EXPOSE 8090
+CMD ["python", "-m", "cortex.cli.main", "publish", "ui", "--config", "{config_path}"]
+"""
     return f"""FROM python:3.11-slim
 WORKDIR /app
 COPY . .
@@ -53,3 +64,37 @@ def publish_mcp(config: str, port: int):
     click.echo("  This agent can be accessed by other Cortex instances as a tool server.")
     click.echo(f"  Run: cortex publish mcp --port {port}")
     click.echo(f"  Configure in other cortex.yaml as tool_server with url: http://host:{port}")
+
+
+@publish_group.command("ui")
+@click.option("--config", default="cortex.yaml")
+@click.option("--host", default=None, help="Override ui.host from cortex.yaml.")
+@click.option("--port", default=None, type=int, help="Override ui.port from cortex.yaml.")
+def publish_ui(config: str, host, port):
+    """Serve a chat UI backed by this agent.
+
+    A clean web UI with text + file upload, SSE streaming, and persistent
+    session history. Auth, host and port are read from the ``ui`` block in
+    cortex.yaml; --host/--port override them for ad-hoc runs.
+    """
+    import asyncio
+    from cortex.framework import CortexFramework
+    from cortex.ui import run_ui_server
+
+    async def _serve():
+        framework = CortexFramework(config)
+        await framework.initialize()
+        ui_cfg = framework._config.ui
+        if host is not None:
+            ui_cfg.host = host
+        if port is not None:
+            ui_cfg.port = port
+        click.echo(f"Cortex chat UI: http://{ui_cfg.host}:{ui_cfg.port}")
+        click.echo(f"  auth mode: {ui_cfg.auth.mode}")
+        click.echo("  Ctrl-C to stop.")
+        await run_ui_server(framework)
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        click.echo("\nStopped.")

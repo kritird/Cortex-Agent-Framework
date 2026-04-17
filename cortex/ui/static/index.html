@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cortex Agent</title>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --panel: #ffffff;
+    --border: #e6e4df;
+    --text: #1a1a1a;
+    --muted: #6b6b6b;
+    --accent: #c96442;
+    --accent-hover: #b8573a;
+    --assistant: #f4f3ef;
+    --user: #ffffff;
+    --pill: #eef2f7;
+    --pill-text: #334155;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    overflow: hidden;
+  }
+  /* Sidebar */
+  aside {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  aside header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  aside header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .newchat {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .newchat:hover { background: var(--accent-hover); }
+  .threads {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .thread {
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .thread:hover { background: var(--assistant); }
+  .thread.active { background: var(--assistant); font-weight: 500; }
+  .thread .del {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+  }
+  .thread:hover .del { opacity: 1; }
+  /* Main */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 0;
+  }
+  .msg {
+    max-width: 760px;
+    margin: 0 auto 20px;
+    padding: 0 24px;
+  }
+  .msg .role {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .msg .body {
+    font-size: 15px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg.assistant .body { color: var(--text); }
+  .msg .attachments {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    background: var(--pill);
+    color: var(--pill-text);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .chip:hover { background: #dde5f0; }
+  .status-pill {
+    max-width: 760px;
+    margin: 0 auto 20px;
+    padding: 0 24px;
+  }
+  .status-pill .inner {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--pill);
+    color: var(--pill-text);
+    padding: 6px 12px;
+    border-radius: 14px;
+    font-size: 12px;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.2s infinite ease-in-out;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  /* Composer */
+  .composer-wrap {
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 16px 24px;
+  }
+  .composer {
+    max-width: 760px;
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .composer.drag { border-color: var(--accent); background: #fff8f4; }
+  .composer textarea {
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    background: transparent;
+    color: var(--text);
+    min-height: 24px;
+    max-height: 200px;
+  }
+  .composer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .attach-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .attach-item {
+    background: var(--assistant);
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .attach-item button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 0;
+    line-height: 1;
+  }
+  .icon-btn {
+    background: none;
+    border: 1px solid var(--border);
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+  .icon-btn:hover { background: var(--assistant); color: var(--text); }
+  .send-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .send-btn:disabled { background: #d4d4d4; cursor: not-allowed; }
+  .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    margin-top: 15vh;
+    font-size: 15px;
+  }
+  .empty h2 { color: var(--text); font-weight: 600; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1 id="title">Cortex Agent</h1>
+    <button class="newchat" id="newchat">New</button>
+  </header>
+  <div class="threads" id="threads"></div>
+</aside>
+<main>
+  <div class="messages" id="messages">
+    <div class="empty">
+      <h2>How can I help?</h2>
+      <div>Attach files or type a message below.</div>
+    </div>
+  </div>
+  <div class="composer-wrap">
+    <div class="composer" id="composer">
+      <div class="attach-list" id="attach-list"></div>
+      <textarea id="input" placeholder="Message the agent…" rows="1"></textarea>
+      <div class="composer-row">
+        <button class="icon-btn" id="attach-btn" title="Attach files">📎</button>
+        <button class="send-btn" id="send-btn" title="Send" disabled>→</button>
+      </div>
+      <input type="file" id="file-input" multiple style="display:none">
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const messagesEl = $("messages");
+const threadsEl = $("threads");
+const inputEl = $("input");
+const sendBtn = $("send-btn");
+const attachBtn = $("attach-btn");
+const fileInput = $("file-input");
+const attachList = $("attach-list");
+const composer = $("composer");
+const newChatBtn = $("newchat");
+
+let pendingFiles = [];
+let currentThread = null;
+let streaming = false;
+let currentStatusEl = null;
+let currentAssistantEl = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function renderAttachments(files, sessionId) {
+  if (!files || files.length === 0) return "";
+  return `<div class="attachments">` + files.map((f) => {
+    const url = sessionId
+      ? `/api/history/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(f.task_name)}/${encodeURIComponent(f.filename)}`
+      : "#";
+    return `<a class="chip" href="${url}" download>📄 ${escapeHtml(f.filename)}</a>`;
+  }).join("") + `</div>`;
+}
+function appendMessage(role, text, files, sessionId) {
+  const empty = messagesEl.querySelector(".empty");
+  if (empty) empty.remove();
+  const el = document.createElement("div");
+  el.className = `msg ${role}`;
+  el.innerHTML = `<div class="role">${role === "user" ? "You" : "Assistant"}</div>
+    <div class="body">${escapeHtml(text || "")}</div>
+    ${renderAttachments(files, sessionId)}`;
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return el;
+}
+function appendStatus(message) {
+  if (!currentStatusEl) {
+    currentStatusEl = document.createElement("div");
+    currentStatusEl.className = "status-pill";
+    currentStatusEl.innerHTML = `<div class="inner"><span class="dot"></span><span class="txt"></span></div>`;
+    messagesEl.appendChild(currentStatusEl);
+  }
+  currentStatusEl.querySelector(".txt").textContent = message;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function clearStatus() {
+  if (currentStatusEl) { currentStatusEl.remove(); currentStatusEl = null; }
+}
+
+// ── Threads ───────────────────────────────────────────────────────────────
+async function loadThreads() {
+  try {
+    const r = await fetch("/api/history");
+    if (!r.ok) return;
+    const data = await r.json();
+    threadsEl.innerHTML = "";
+    for (const s of data.sessions) {
+      const el = document.createElement("div");
+      el.className = "thread" + (s.session_id === currentThread ? " active" : "");
+      el.innerHTML = `<span>${escapeHtml(s.title)}</span><button class="del" title="Delete">×</button>`;
+      el.querySelector("span").onclick = () => openThread(s.session_id);
+      el.querySelector(".del").onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm("Delete this chat?")) return;
+        await fetch(`/api/history/${encodeURIComponent(s.session_id)}`, { method: "DELETE" });
+        if (currentThread === s.session_id) resetView();
+        loadThreads();
+      };
+      threadsEl.appendChild(el);
+    }
+  } catch (e) { console.error(e); }
+}
+async function openThread(sid) {
+  currentThread = sid;
+  try {
+    const r = await fetch(`/api/history/${encodeURIComponent(sid)}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    messagesEl.innerHTML = "";
+    appendMessage("user", d.request, null, null);
+    appendMessage("assistant", d.response, d.files, d.session_id);
+  } catch (e) { console.error(e); }
+  loadThreads();
+}
+function resetView() {
+  currentThread = null;
+  messagesEl.innerHTML = `<div class="empty"><h2>How can I help?</h2><div>Attach files or type a message below.</div></div>`;
+  pendingFiles = [];
+  renderAttachPills();
+  inputEl.value = "";
+  updateSendBtn();
+}
+newChatBtn.onclick = () => { resetView(); loadThreads(); };
+
+// ── Composer ──────────────────────────────────────────────────────────────
+function renderAttachPills() {
+  attachList.innerHTML = "";
+  pendingFiles.forEach((f, i) => {
+    const el = document.createElement("div");
+    el.className = "attach-item";
+    el.innerHTML = `📄 ${escapeHtml(f.name)} <button data-i="${i}">×</button>`;
+    el.querySelector("button").onclick = () => {
+      pendingFiles.splice(i, 1);
+      renderAttachPills();
+      updateSendBtn();
+    };
+    attachList.appendChild(el);
+  });
+}
+function updateSendBtn() {
+  sendBtn.disabled = streaming || (!inputEl.value.trim() && pendingFiles.length === 0);
+}
+inputEl.addEventListener("input", () => {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
+  updateSendBtn();
+});
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+attachBtn.onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  for (const f of fileInput.files) pendingFiles.push(f);
+  fileInput.value = "";
+  renderAttachPills();
+  updateSendBtn();
+};
+// Drag and drop
+composer.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drag"); });
+composer.addEventListener("dragleave", () => composer.classList.remove("drag"));
+composer.addEventListener("drop", (e) => {
+  e.preventDefault();
+  composer.classList.remove("drag");
+  for (const f of e.dataTransfer.files) pendingFiles.push(f);
+  renderAttachPills();
+  updateSendBtn();
+});
+
+// ── Send & stream ─────────────────────────────────────────────────────────
+async function send() {
+  if (streaming) return;
+  const text = inputEl.value.trim();
+  if (!text && pendingFiles.length === 0) return;
+
+  const fileNames = pendingFiles.map((f) => ({ task_name: "_user_upload", filename: f.name }));
+  appendMessage("user", text, fileNames, null);
+
+  const fd = new FormData();
+  fd.append("text", text);
+  for (const f of pendingFiles) fd.append("files", f, f.name);
+
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  pendingFiles = [];
+  renderAttachPills();
+  streaming = true;
+  updateSendBtn();
+  appendStatus("Starting…");
+
+  let uiId = null;
+  try {
+    const r = await fetch("/api/session", { method: "POST", body: fd });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      clearStatus();
+      appendMessage("assistant", "Error: " + (err.error || r.statusText), null, null);
+      streaming = false;
+      updateSendBtn();
+      return;
+    }
+    uiId = (await r.json()).ui_session_id;
+  } catch (e) {
+    clearStatus();
+    appendMessage("assistant", "Error: " + e.message, null, null);
+    streaming = false;
+    updateSendBtn();
+    return;
+  }
+
+  const es = new EventSource(`/api/session/${encodeURIComponent(uiId)}/events`);
+  es.addEventListener("status", (e) => {
+    const d = JSON.parse(e.data);
+    appendStatus(d.message || "Working…");
+  });
+  es.addEventListener("task_start", (e) => {
+    const d = JSON.parse(e.data);
+    appendStatus(d.message || "Running task…");
+  });
+  es.addEventListener("task_complete", (e) => {
+    const d = JSON.parse(e.data);
+    appendStatus(d.message || "Task complete");
+  });
+  es.addEventListener("session_start", (e) => {
+    const d = JSON.parse(e.data);
+    appendStatus(d.message || "Session started");
+  });
+  es.addEventListener("session_end", () => {
+    appendStatus("Finalising…");
+  });
+  es.addEventListener("result", (e) => {
+    const d = JSON.parse(e.data);
+    clearStatus();
+    if (!currentAssistantEl) {
+      currentAssistantEl = appendMessage("assistant", d.content || "", null, null);
+    } else {
+      currentAssistantEl.querySelector(".body").textContent = d.content || "";
+    }
+  });
+  es.addEventListener("error", (e) => {
+    try {
+      const d = JSON.parse(e.data || "{}");
+      clearStatus();
+      appendMessage("assistant", "Error: " + (d.message || "unknown"), null, null);
+    } catch (_) {}
+  });
+  es.addEventListener("done", (e) => {
+    const d = JSON.parse(e.data);
+    if (d.session_id) currentThread = d.session_id;
+    clearStatus();
+    currentAssistantEl = null;
+    streaming = false;
+    updateSendBtn();
+    es.close();
+    loadThreads();
+  });
+  es.onerror = () => {
+    if (streaming) {
+      clearStatus();
+      streaming = false;
+      updateSendBtn();
+      es.close();
+    }
+  };
+}
+sendBtn.onclick = send;
+
+// ── Init ──────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const r = await fetch("/api/config");
+    if (r.ok) {
+      const d = await r.json();
+      if (d.title) { document.title = d.title; $("title").textContent = d.title; }
+    }
+  } catch (e) {}
+  loadThreads();
+})();
+</script>
+</body>
+</html>

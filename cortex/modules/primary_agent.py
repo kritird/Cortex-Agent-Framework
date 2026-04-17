@@ -758,6 +758,7 @@ class PrimaryAgent:
         completed_envelopes,
         task_compiler,
         event_queue,
+        principal=None,
     ) -> None:
         """Mid-session replanning — invoked by the wave loop only when a stale
         task completes its wave or a mandatory task fails.
@@ -898,6 +899,7 @@ class PrimaryAgent:
                 effective_types = {tt.name: tt for tt in self._config.task_types}
                 committed = task_compiler.add_tasks_batch(
                     runtime_graph, add_batch, effective_types,
+                    principal=principal,
                 )
                 applied += len(committed)
 

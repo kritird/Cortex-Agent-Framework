@@ -2,6 +2,7 @@
 Cortex Agent Framework — Fan-Out/Fan-In agentic orchestration backed by Claude.
 """
 from cortex.framework import CortexFramework
+from cortex.identity import Principal
 from cortex.exceptions import (
     CortexException,
     CortexConfigError,
@@ -42,4 +43,5 @@ __all__ = [
     "CortexQuotaError",
     "CortexDeltaError",
     "ActiveSessionInfo",
+    "Principal",
 ]

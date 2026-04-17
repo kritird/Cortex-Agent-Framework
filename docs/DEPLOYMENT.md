@@ -2,13 +2,14 @@
 
 [← Back to README](../README.md)
 
-Cortex ships three deployment targets out of the box: **Docker**, **Python package**, and **MCP server**. Pick based on who's calling your agent.
+Cortex ships four deployment targets out of the box: **Docker**, **Python package**, **MCP server**, and **Chat UI**. Pick based on who's calling your agent.
 
 | Mode | Consumer | Transport | When to use |
 |---|---|---|---|
 | Docker | End users / services | HTTP to a running container | Production microservice, multi-tenant backend |
 | Package | Python developers | `import` in-process | Embed in an existing Django/FastAPI app |
 | MCP server | Other agents | MCP protocol tool call | Multi-agent composition, IDE integrations |
+| Chat UI | End users (browser) | HTTP + SSE | Quick demo, internal tool, user-facing chat |
 
 ---
 
@@ -103,6 +104,58 @@ Use this when:
 
 ---
 
+## Option D: Chat UI
+
+```bash
+cortex publish ui --config cortex.yaml
+# → Cortex chat UI: http://0.0.0.0:8090
+```
+
+Serves a clean, single-page web frontend backed by your agent. Users get:
+
+- **Text + file uploads** — files are validated against `file_input` MIME / size limits.
+- **SSE-streamed responses** — status pills ("decomposing → running 3 tasks → synthesising") update live.
+- **Persistent session history** — threads listed in a sidebar, backed by your existing History Store.
+- **Per-user identity** — anonymous cookie (`auth.mode: none`), shared token, or HTTP Basic.
+
+### Configuration
+
+All settings live under the `ui` block in `cortex.yaml`:
+
+```yaml
+ui:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8090
+  title: "My Agent"
+  auth:
+    mode: none      # none | token | basic
+    # token: "s3cret"            # for mode: token
+    # username: admin             # for mode: basic
+    # password: changeme          # for mode: basic
+```
+
+These can also be configured through the **Chat UI** section in the setup wizard (`cortex setup`).
+
+### Docker with Chat UI
+
+```bash
+cortex publish docker --with-ui --tag my-agent:latest
+docker build -f Dockerfile.cortex -t my-agent:latest .
+docker run -p 8090:8090 --env-file .env my-agent:latest
+```
+
+The generated Dockerfile runs `cortex publish ui` as its entrypoint and exposes port 8090.
+
+### Tips
+
+- **Enable history** (`history.enabled: true`) so conversations survive page reloads.
+- **Use SQLite or Redis** for the storage backend — in-memory storage loses all chat history on restart.
+- **Auth for public access**: if exposing to the internet, switch from `none` to `token` or `basic`.
+- Host and port can be overridden on the CLI: `cortex publish ui --host 127.0.0.1 --port 9000`.
+
+---
+
 ## Multi-agent deployment
 
 Cortex is designed for multi-agent composition. Any number of Cortex agents can run on one host or across a cluster — each just needs its own directory, its own `cortex.yaml`, and its own ports.
@@ -114,6 +167,7 @@ Cortex is designed for multi-agent composition. Any number of Cortex agents can 
 | Config file | `./cortex.yaml` | `--config PATH` or `CORTEX_CONFIG` env var |
 | Wizard port | `7799` | `cortex setup --port 7800` |
 | MCP publish port | `8080` | `cortex publish mcp --port 8081` |
+| Chat UI port | `8090` | Set `ui.port` or `cortex publish ui --port 9000` |
 | Storage base_path | `./cortex_storage` | Set `storage.base_path` in each `cortex.yaml` |
 | SQLite DB path | `./cortex_storage/cortex.db` | Set `sqlite.path` — **never share across running agents** |
 

@@ -10,7 +10,6 @@ Cortex is built around one core pattern: decompose the user's request into a typ
 flowchart TB
     User([User Request])
     Final([Final Response])
-
     subgraph Entry["Entry & Safety"]
         direction TB
         FW[CortexFramework.run_session]
@@ -187,6 +186,23 @@ Observes task patterns across sessions. When the same decomposition pattern recu
 
 ### Session & validation
 
+#### Principal (Identity & Delegation)
+Immutable identity attached to every session and task. Every framework operation carries a `Principal` so that storage paths, audit logs, observability events, and session ownership work consistently regardless of *who* (or *what*) initiated the request — a human user, a system agent (cron, scheduler), or another agent delegating on a user's behalf.
+
+Three principal types:
+
+- **`user`** — a human end user. `principal_id` is the application-supplied `user_id`.
+- **`system`** — an autonomous initiator (scheduler, cron job, background worker). `principal_id` follows `"system:<name>"`.
+- **`agent`** — a delegated call where one agent invokes Cortex on behalf of an upstream principal. `principal_id` follows `"agent:<name>"` and the principal carries a `delegation_chain` recording every hop back to the original initiator.
+
+The `storage_key` derived from a principal always resolves to the **origin** id (the first entry in the chain, or the principal_id itself for direct calls), so all hops in a delegation chain share one storage namespace and one history timeline. This is what keeps a sales-bot's research session attributed to the human user who triggered it, not to the bot.
+
+`run_session(user_id=..., principal=...)` accepts an explicit `Principal` for system / delegated calls; for the common human-user case the framework auto-builds one from `user_id`. See **[Getting Started → Caller Identity](GETTING_STARTED.md#caller-identity-user_id-and-principal)** for usage patterns.
+
+**Why:** Agent-to-agent composition needs a way to preserve provenance across hops. Without it, audit logs lose track of who originally authorised a chain of agent calls, and storage gets fragmented per-agent instead of per-user.
+
+**File:** [`cortex/identity.py`](../cortex/identity.py)
+
 #### Session Manager
 Enforces concurrency limits (global and per-user), tracks in-flight sessions, persists session state to the configured backend, and handles resume for sessions that timed out. Uses a write-ahead log so a crash during a session doesn't lose work.
 
@@ -261,28 +277,29 @@ All three implement the same interface; swap via the `storage` config block.
 
 Here's what actually happens when you call `framework.run_session()`, in the order the code executes:
 
-1. **Sanitise input.** The Input Sanitiser strips control characters and enforces token limits.
-2. **Create session.** The Session Manager allocates a `session_id`, enforces concurrency limits, writes to WAL.
-3. **Clean expired history.** The History Store garbage-collects records older than the configured retention.
-4. **Emit `session_start`.**
-5. **Capability discovery.** The Capability Scout asks the LLM which configured tool servers are relevant, fetches real tool descriptions from them, and consults the External MCP Registry. Honours a timeout.
-6. **Blueprint staleness check.** For every task type with a blueprint reference, compare `last_successful_run_at` against the configured staleness window; flag stale task names to force re-discovery during decomposition.
-7. **LLM call #1 — decompose.** The Primary Agent receives history context, discovered tools, stale task hints, and any loaded blueprints. It emits a typed task list with dependency edges, streamed as `DecomposedTask` objects.
-8. **Instantiate the graph.** The Task Graph Compiler validates, detects cycles, registers signals, and exposes `get_ready_tasks()`.
-9. **Fan-out / fan-in wave loop.** While ready tasks exist:
-   - Grab all dependency-free tasks.
-   - Dispatch them in parallel under a `max_parallel_tasks` semaphore.
-   - Each Generic MCP Agent runs its tool-use loop, calls MCP servers via the Tool Server Registry, optionally runs code in the Sandbox, and stores its envelope in the Result Envelope Store (scrubbed of credentials).
-   - Per-task validation gate: if the task declared an `output_schema` or `validation_notes`, validate and retry up to three times with feedback.
-   - Conditional replan: if a stale-blueprint task completed, a mandatory task failed, or an adaptive task completed, call the Primary Agent's `replan()` to grow the DAG before the next wave.
-   - Check the session deadline; extend it if the user grants an extension.
-10. **LLM call #2 — synthesise.** The Primary Agent combines the stored result envelopes into a final response.
-11. **Final validation.** The Validation Agent scores the response on intent / completeness / coherence and applies remediation if below threshold.
-12. **Evolution consent.** If ad-hoc tasks produced reusable scripts and validation passed, prompt the user. On consent, the Learning Engine stages new task types and the Agent Code Store persists the scripts.
-13. **Blueprint auto-update.** If the user consented and `blueprint.auto_update` is enabled, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
-14. **Session complete.** The Session Manager marks done and cleans up result envelopes (kept only if the session timed out, for resume).
-15. **Surface auth-required external MCPs.** Any server discovered mid-run that needs credentials is reported to the caller.
-16. **Emit `session_end`** and queue the SSE sentinel.
+1. **Resolve identity.** If no `principal` was passed, the framework builds one from `user_id` via `Principal.from_user_id()`. The principal is stamped onto every task in the graph and into every observability event so audit trails preserve provenance — including the full delegation chain for agent-to-agent calls.
+2. **Sanitise input.** The Input Sanitiser strips control characters and enforces token limits.
+3. **Create session.** The Session Manager allocates a `session_id`, enforces concurrency limits, writes to WAL.
+4. **Clean expired history.** The History Store garbage-collects records older than the configured retention.
+5. **Emit `session_start`.**
+6. **Capability discovery.** The Capability Scout asks the LLM which configured tool servers are relevant, fetches real tool descriptions from them, and consults the External MCP Registry. Honours a timeout.
+7. **Blueprint staleness check.** For every task type with a blueprint reference, compare `last_successful_run_at` against the configured staleness window; flag stale task names to force re-discovery during decomposition.
+8. **LLM call #1 — decompose.** The Primary Agent receives history context, discovered tools, stale task hints, and any loaded blueprints. It emits a typed task list with dependency edges, streamed as `DecomposedTask` objects.
+9. **Instantiate the graph.** The Task Graph Compiler validates, detects cycles, registers signals, and exposes `get_ready_tasks()`.
+10. **Fan-out / fan-in wave loop.** While ready tasks exist:
+    - Grab all dependency-free tasks.
+    - Dispatch them in parallel under a `max_parallel_tasks` semaphore.
+    - Each Generic MCP Agent runs its tool-use loop, calls MCP servers via the Tool Server Registry, optionally runs code in the Sandbox, and stores its envelope in the Result Envelope Store (scrubbed of credentials).
+    - Per-task validation gate: if the task declared an `output_schema` or `validation_notes`, validate and retry up to three times with feedback.
+    - Conditional replan: if a stale-blueprint task completed, a mandatory task failed, or an adaptive task completed, call the Primary Agent's `replan()` to grow the DAG before the next wave.
+    - Check the session deadline; extend it if the user grants an extension.
+11. **LLM call #2 — synthesise.** The Primary Agent combines the stored result envelopes into a final response.
+12. **Final validation.** The Validation Agent scores the response on intent / completeness / coherence and applies remediation if below threshold.
+13. **Evolution consent.** If ad-hoc tasks produced reusable scripts and validation passed, prompt the user. On consent, the Learning Engine stages new task types and the Agent Code Store persists the scripts.
+14. **Blueprint auto-update.** If the user consented and `blueprint.auto_update` is enabled, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
+15. **Session complete.** The Session Manager marks done and cleans up result envelopes (kept only if the session timed out, for resume).
+16. **Surface auth-required external MCPs.** Any server discovered mid-run that needs credentials is reported to the caller.
+17. **Emit `session_end`** and queue the SSE sentinel.
 
 Throughout all of this, the Observability Emitter writes operational telemetry and audit-log entries on a side channel, and typed events are streamed to the caller via `event_queue`.
 
@@ -316,4 +333,15 @@ Each sub-agent:
 
 There's no custom inter-agent protocol. It's all MCP, all the way down.
 
-See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step multi-agent deployment.
+## Chat UI
+
+Any agent can also be published as a web chat frontend (`cortex publish ui`). This serves a single-page HTML application over HTTP + SSE that supports:
+
+- Text and file uploads (validated against `file_input` MIME/size config)
+- Live-streamed status events and final responses
+- Persistent per-user session history (via the existing History Store)
+- Configurable auth: anonymous cookie, Bearer token, or HTTP Basic
+
+The UI module lives in [`cortex/ui/`](../cortex/ui/). Configuration is under the `ui` block in `cortex.yaml`. For Docker deployments, `cortex publish docker --with-ui` generates a Dockerfile that launches the chat UI on startup.
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step deployment of all four targets.

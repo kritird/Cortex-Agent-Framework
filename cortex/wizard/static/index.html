@@ -410,7 +410,7 @@
 
   /* Locked field marker */
   .locked-note {
-    color: var(--g-yellow-dark); font-size: 12px; margin-top: -12px; margin-bottom: 14px;
+    color: var(--g-yellow-dark); font-size: 12px; margin-top: 4px; margin-bottom: 4px;
     display: flex; align-items: center; gap: 6px;
   }
 
@@ -1110,6 +1110,64 @@
         </div>
       </details>
 
+      <!-- ═══ Chat UI ═══ -->
+      <details class="advanced">
+        <summary>Chat UI <span class="sum-desc">— publish a web chat frontend (text + file upload, history)</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            Enables <code>cortex publish ui</code>: a clean chat interface with streaming responses,
+            file attachments, and per-user session history. History is stored via the configured
+            history backend above. File uploads are validated against the <strong>File input</strong>
+            MIME and size settings.
+          </div></div>
+          <div class="field">
+            <label><input id="ui_enabled" type="checkbox"> Enable chat UI</label>
+            <div class="hint">When on, <code>cortex publish ui</code> will serve the UI on the host/port below.</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Host</label>
+              <input id="ui_host" type="text" value="0.0.0.0">
+              <div class="hint">Bind address. Use <code>127.0.0.1</code> for local-only.</div>
+            </div>
+            <div class="field">
+              <label>Port</label>
+              <input id="ui_port" type="number" value="8090" min="1" max="65535">
+              <div class="hint">HTTP port the chat UI listens on.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>UI title</label>
+            <input id="ui_title" type="text" value="Cortex Agent">
+            <div class="hint">Shown in the browser tab and the sidebar header.</div>
+          </div>
+          <div class="field">
+            <label>Auth mode</label>
+            <select id="ui_auth_mode">
+              <option value="none">none (anonymous cookie)</option>
+              <option value="token">token (Authorization: Bearer …)</option>
+              <option value="basic">basic (HTTP Basic)</option>
+            </select>
+            <div class="hint"><code>none</code> assigns each browser an anonymous id so history persists per-device. <code>token</code>/<code>basic</code> gate the whole UI behind a shared credential.</div>
+          </div>
+          <div class="field">
+            <label>Token (for token mode)</label>
+            <input id="ui_auth_token" type="text" placeholder="shared secret for Bearer auth">
+            <div class="hint">Clients must send <code>Authorization: Bearer &lt;token&gt;</code>.</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Basic auth username</label>
+              <input id="ui_auth_username" type="text">
+            </div>
+            <div class="field">
+              <label>Basic auth password</label>
+              <input id="ui_auth_password" type="password">
+            </div>
+          </div>
+        </div>
+      </details>
+
       <!-- ═══ Validation advanced ═══ -->
       <details class="advanced">
         <summary>Advanced validation <span class="sum-desc">— thresholds, weights, reporting</span></summary>
@@ -1437,6 +1495,11 @@
           <div class="mode-title">MCP server</div>
           <div class="mode-desc">Expose as a tool server. Other agents can call this agent's capabilities.</div>
         </div>
+        <div class="mode-card" data-mode="ui" onclick="selectMode('ui')">
+          <div class="mode-icon">💬</div>
+          <div class="mode-title">Chat UI</div>
+          <div class="mode-desc">A clean web chat frontend — text + file upload, streaming, persistent history per user.</div>
+        </div>
       </div>
 
       <div id="modeOptions"></div>
@@ -1627,6 +1690,16 @@ async function loadExistingConfig() {
 
     setVal('file_input_max_size_mb', d.file_input_max_size_mb);
     setVal('file_input_allowed_mime_types', d.file_input_allowed_mime_types);
+
+    // Chat UI
+    setVal('ui_enabled', d.ui_enabled);
+    setVal('ui_host', d.ui_host);
+    setVal('ui_port', d.ui_port);
+    setVal('ui_title', d.ui_title);
+    setVal('ui_auth_mode', d.ui_auth_mode);
+    setVal('ui_auth_token', d.ui_auth_token);
+    setVal('ui_auth_username', d.ui_auth_username);
+    setVal('ui_auth_password', d.ui_auth_password);
 
     // Runtime / concurrency
     [
@@ -2465,6 +2538,16 @@ function selectMode(mode) {
         <input id="mcp_port" type="number" value="8080">
       </div>`;
     tipContent.innerHTML = '<strong>MCP Server mode</strong> exposes your agent as a tool server over HTTP. Other Cortex agents (or any MCP-compatible client) can call your agent\'s capabilities as tools, enabling agent-to-agent composition.';
+  } else if (mode === 'ui') {
+    // Auto-enable the UI block if the user chose this publish target.
+    const uiEnabled = document.getElementById('ui_enabled');
+    if (uiEnabled && !uiEnabled.checked) uiEnabled.checked = true;
+    opts.innerHTML = `
+      <div class="tip-box info" style="margin-top:14px;"><div class="tip-content">
+        UI settings (host, port, auth, title) live in the <strong>Chat UI</strong> section under advanced options.
+        This publish target will run <code>cortex publish ui</code> using those values.
+      </div></div>`;
+    tipContent.innerHTML = '<strong>Chat UI mode</strong> serves a clean web chat frontend backed by this agent. Users get text + file uploads, streaming responses, and persistent per-user session history — all reusing your existing history/storage backends. Combine with <code>cortex publish docker --with-ui</code> to ship the whole thing as a container.';
   }
 }
 
@@ -2566,6 +2649,16 @@ function collectFormData() {
     // File input
     file_input_max_size_mb: getInt('file_input_max_size_mb', 50),
     file_input_allowed_mime_types: getStr('file_input_allowed_mime_types'),
+
+    // Chat UI
+    ui_enabled: getBool('ui_enabled'),
+    ui_host: getStr('ui_host') || '0.0.0.0',
+    ui_port: getInt('ui_port', 8090),
+    ui_title: getStr('ui_title') || 'Cortex Agent',
+    ui_auth_mode: getStr('ui_auth_mode') || 'none',
+    ui_auth_token: getStr('ui_auth_token'),
+    ui_auth_username: getStr('ui_auth_username'),
+    ui_auth_password: getStr('ui_auth_password'),
 
     // Runtime
     max_wait_seconds: getInt('max_wait_seconds', 120),
@@ -2824,6 +2917,10 @@ async function publishAgent() {
   if (selectedMode === 'docker') publishData.docker_tag = (document.getElementById('docker_tag') || {}).value || 'cortex-agent:latest';
   if (selectedMode === 'package') publishData.output_dir = (document.getElementById('package_output_dir') || {}).value || 'dist';
   if (selectedMode === 'mcp') publishData.mcp_port = parseInt((document.getElementById('mcp_port') || {}).value) || 8080;
+  if (selectedMode === 'ui') {
+    publishData.ui_host = (document.getElementById('ui_host') || {}).value || '0.0.0.0';
+    publishData.ui_port = parseInt((document.getElementById('ui_port') || {}).value) || 8090;
+  }
 
   try {
     const res = await fetch('/api/publish', {
@@ -2877,9 +2974,21 @@ function showRecommendations() {
     recs.push({ title: 'Connect from another agent', desc: `Add to another agent\'s <code>cortex.yaml</code>:<br><code>tool_servers:<br>&nbsp;&nbsp;${data.agent_name}:<br>&nbsp;&nbsp;&nbsp;&nbsp;url: http://localhost:${port}/sse<br>&nbsp;&nbsp;&nbsp;&nbsp;transport: sse</code>` });
     recs.push({ title: 'Agent composition', desc: 'MCP mode enables <strong>agent-to-agent</strong> workflows. Your agent becomes a tool that other agents can invoke for specialized tasks.' });
     recs.push({ title: 'Capability discovery', desc: 'Enable <code>discovery.auto: true</code> on the consumer side so the calling agent can auto-discover this agent\'s tools.' });
+  } else if (selectedMode === 'ui') {
+    subtitle.textContent = 'Recommended usage for Chat UI deployment';
+    const uiPort = data.ui_port || 8090;
+    recs.push({ title: 'Start the chat UI', desc: `Launch with: <code>cortex publish ui --config cortex.yaml</code>, then open <code>http://localhost:${uiPort}</code>.` });
+    recs.push({ title: 'Enable history', desc: 'The chat UI reads from the same <strong>History Store</strong> your agent already uses. Make sure <code>history.enabled: true</code> so conversations persist across page reloads.' });
+    recs.push({ title: 'Ship via Docker', desc: 'Run <code>cortex publish docker --with-ui</code> to generate a Dockerfile that launches the chat UI on startup.' });
+    if (data.ui_auth_mode === 'none') {
+      recs.push({ title: 'Consider auth for public access', desc: 'Currently set to <code>none</code> (anonymous cookie). If exposing to the internet, switch to <code>token</code> or <code>basic</code> auth in the Chat UI config section.' });
+    }
+    if (data.storage_backend === 'memory') {
+      recs.push({ title: 'Persistent storage recommended', desc: 'In-memory storage loses all chat history on restart. Switch to <strong>SQLite</strong> or <strong>Redis</strong> for a durable experience.' });
+    }
   } else {
     subtitle.textContent = 'General recommendations for your agent';
-    recs.push({ title: 'Select a publish mode', desc: 'Go back and choose Docker, Package, or MCP Server to get mode-specific recommendations.' });
+    recs.push({ title: 'Select a publish mode', desc: 'Go back and choose Docker, Package, MCP Server, or Chat UI to get mode-specific recommendations.' });
   }
 
   if (!data.task_types || !data.task_types.length) {

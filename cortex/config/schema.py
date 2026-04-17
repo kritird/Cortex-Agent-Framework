@@ -286,6 +286,23 @@ class FileInputConfig(BaseModel):
     ])
 
 
+class UIAuthConfig(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    mode: str = "none"  # none | token | basic
+    token: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+class UIConfig(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8090
+    title: str = "Cortex Agent"
+    auth: UIAuthConfig = Field(default_factory=UIAuthConfig)
+
+
 class ValidationConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     threshold: float = 0.75
@@ -398,3 +415,4 @@ class CortexConfig(BaseModel):
     user_config: UserConfig = Field(default_factory=UserConfig)
     code_sandbox: CodeSandboxConfig = Field(default_factory=CodeSandboxConfig)
     blueprint: BlueprintConfig = Field(default_factory=BlueprintConfig)
+    ui: UIConfig = Field(default_factory=UIConfig)

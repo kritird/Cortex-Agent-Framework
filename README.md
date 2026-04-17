@@ -128,6 +128,7 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 | **Fan-out / fan-in** | LLM-generated DAG with parallel execution; independent tasks run simultaneously |
 | **MCP-native tools** | First-class SSE, stdio, and streamable-HTTP MCP tool servers |
 | **Multi-agent mesh** | Publish any agent as an MCP server — compose specialist agents into an orchestrator |
+| **Identity & delegation** | First-class `Principal` model — human, system, or agent-to-agent calls with full delegation chains in audit logs |
 | **Quality validation** | Every response scored and gated; per-task validation inside the execution loop |
 | **Delta learning** | Agent proposes improvements; human-in-the-loop review before apply |
 | **Blueprints** | Reusable workflow knowledge loaded into context, auto-updated with consent |

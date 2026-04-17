@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from cortex.config.schema import TaskTypeConfig
 from cortex.exceptions import CortexCycleError, CortexConfigError, CortexMissingDependencyError
+from cortex.identity import Principal
 from cortex.modules.result_envelope_store import TaskEnvelope
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,9 @@ class RuntimeTask:
     # HITL budget per sub-agent attempt. Reset by the wave gate on each retry.
     # Hard-capped at 3 asks per attempt to prevent runaway clarification loops.
     hitl_ask_count: int = 0
+    # Identity of the principal who owns this task (propagated from session).
+    # Used for audit logging and agent-to-agent delegation tracking.
+    principal: Optional[Principal] = None
 
 
 @dataclass
@@ -159,6 +163,7 @@ class TaskGraphCompiler:
         user_task_types: Optional[List[TaskTypeConfig]] = None,
         max_tasks: int = 20,
         sandbox_enabled: bool = False,
+        principal: Optional[Principal] = None,
     ) -> RuntimeTaskGraph:
         """
         Create a RuntimeTaskGraph from decomposed LLM output.
@@ -223,6 +228,7 @@ class TaskGraphCompiler:
                 context_hints=dt.context_hints,
                 config=config,
                 is_adhoc=dt.task_name in adhoc_task_names,
+                principal=principal,
             )
 
         # Resolve depends_on to task_ids
@@ -285,6 +291,7 @@ class TaskGraphCompiler:
         graph: RuntimeTaskGraph,
         adds: List[dict],
         effective_types: Dict[str, TaskTypeConfig],
+        principal: Optional[Principal] = None,
     ) -> List[RuntimeTask]:
         """Append new tasks to a live RuntimeTaskGraph mid-session.
 
@@ -395,6 +402,7 @@ class TaskGraphCompiler:
                         mandatory=bool(mandatory),
                         config=config,
                         is_adhoc=True,
+                        principal=principal,
                     )
                     graph.tasks[task_id] = task
                     graph.name_to_id[add["task_name"]] = task_id
@@ -463,6 +471,7 @@ class TaskGraphCompiler:
                 "attempt_count": task.attempt_count,
                 "validation_feedback": task.validation_feedback,
                 "hitl_ask_count": task.hitl_ask_count,
+                "principal": task.principal.to_dict() if task.principal else None,
             }
         return {
             "session_id": graph.session_id,
@@ -499,6 +508,7 @@ class TaskGraphCompiler:
                 attempt_count=data.get("attempt_count", 0),
                 validation_feedback=data.get("validation_feedback"),
                 hitl_ask_count=data.get("hitl_ask_count", 0),
+                principal=Principal.from_dict(data["principal"]) if data.get("principal") else None,
             )
 
         ready_tasks = self.get_ready_tasks_from(tasks)

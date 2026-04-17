@@ -239,6 +239,16 @@ class GenericMCPAgent:
         tool_trace = []
         kwargs["event_queue"] = event_queue
 
+        # Log principal identity for audit trail
+        if task.principal:
+            logger.info(
+                "Task %s executing as principal %s (type=%s%s)",
+                task.task_id,
+                task.principal.principal_id,
+                task.principal.principal_type,
+                f", delegated_by={task.principal.delegation_chain}" if task.principal.is_delegated else "",
+            )
+
         # Resolve input_refs from storage
         input_context = ""
         for ref in task.input_refs:
