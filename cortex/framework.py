@@ -155,6 +155,7 @@ class CortexFramework:
         self._code_sandbox = None
         self._code_store = None
         self._external_mcp_registry = None
+        self._ant_colony = None
 
     async def initialize(self) -> "CortexFramework":
         """
@@ -320,6 +321,30 @@ class CortexFramework:
                 cfg.code_sandbox.timeout_seconds,
                 cfg.code_sandbox.allow_network,
                 len(self._code_store.list_scripts()),
+            )
+
+        # Ant Colony — self-spawning specialist agent subsystem
+        if cfg.ant_colony.enabled:
+            from cortex.ants.ant_colony import AntColony
+            self._ant_colony = AntColony(
+                base_path=cfg.storage.base_path,
+                base_port=cfg.ant_colony.base_port,
+                max_ants=cfg.ant_colony.max_ants,
+                auto_restart=cfg.ant_colony.auto_restart,
+                llm_provider=cfg.ant_colony.llm_provider,
+                llm_model=cfg.ant_colony.llm_model,
+                api_key_env_var=cfg.ant_colony.api_key_env_var,
+            )
+            self._ant_colony.set_register_callback(self._on_ant_registered)
+            self._ant_colony.set_deregister_callback(self._on_ant_deregistered)
+            # Re-hatch any previously running ants from ants.yaml
+            await self._ant_colony.resume_colony(self._tool_registry)
+            logger.info(
+                "Ant Colony enabled (base_port=%d, max_ants=%d, auto_restart=%s, %d ant(s) loaded)",
+                cfg.ant_colony.base_port,
+                cfg.ant_colony.max_ants,
+                cfg.ant_colony.auto_restart,
+                len(self._ant_colony.list_ants()),
             )
 
         self._initialized = True
@@ -524,6 +549,8 @@ class CortexFramework:
                             no_probe_capabilities=no_probe_caps or None,
                             external_registry=self._external_mcp_registry,
                             discovery_config=_ext_disc_cfg,
+                            ant_colony=self._ant_colony,
+                            auto_hatch_on_gap=self._config.ant_colony.auto_hatch_on_gap,
                         ),
                         timeout=self._config.agent.capability_scout.timeout_seconds,
                     )
@@ -1394,6 +1421,58 @@ class CortexFramework:
         """Deregister a tool server."""
         self._assert_initialized()
         await self._tool_registry.deregister_tool_server(name)
+
+    # ── Ant Colony public API ──────────────────────────────────────────────────
+
+    async def hatch_ant(self, name: str, capability: str, description: str = "") -> Dict:
+        """Hatch a new specialist ant agent for the given capability.
+
+        Returns a dict with ant info (name, capability, url, port, pid, status).
+        Raises CortexAntError if ant_colony is not enabled.
+        """
+        self._assert_initialized()
+        if not self._ant_colony:
+            from cortex.exceptions import CortexAntError
+            raise CortexAntError("Ant Colony is not enabled. Set ant_colony.enabled: true in cortex.yaml.")
+        info = await self._ant_colony.hatch(
+            name=name,
+            capability=capability,
+            description=description or f"Specialist agent for {capability}",
+            llm_client=self._llm_client,
+        )
+        return info.to_dict()
+
+    async def stop_ant(self, name: str) -> None:
+        """Stop a running ant agent by name."""
+        self._assert_initialized()
+        if not self._ant_colony:
+            from cortex.exceptions import CortexAntError
+            raise CortexAntError("Ant Colony is not enabled.")
+        await self._ant_colony.stop(name)
+
+    def list_ants(self) -> List[Dict]:
+        """Return status of all ants in the colony."""
+        self._assert_initialized()
+        if not self._ant_colony:
+            return []
+        return [a.to_dict() for a in self._ant_colony.list_ants()]
+
+    async def _on_ant_registered(self, name: str, url: str) -> None:
+        """Callback: register a freshly hatched ant with the tool registry."""
+        ant = self._ant_colony.get_ant(name) if self._ant_colony else None
+        capability = ant.capability if ant else "llm_synthesis"
+        try:
+            await self._tool_registry.register_ant_server(name=name, url=url, capability=capability)
+            logger.info("Framework: ant '%s' registered at %s", name, url)
+        except Exception as exc:
+            logger.warning("Framework: failed to register ant '%s': %s", name, exc)
+
+    async def _on_ant_deregistered(self, name: str) -> None:
+        """Callback: remove a stopped/crashed ant from the tool registry."""
+        try:
+            await self._tool_registry.deregister_tool_server(name)
+        except Exception:
+            pass
 
     async def apply_delta(
         self,

@@ -158,6 +158,23 @@ Persistent registry of internet MCP servers auto-discovered mid-run and stored i
 
 **File:** [`cortex/modules/external_mcp_registry.py`](../cortex/modules/external_mcp_registry.py)
 
+#### Ant Colony
+A self-expanding specialist agent mesh. When the Capability Scout identifies a capability gap that no configured or discovered MCP server can fill, it can hatch a new **ant** — an independent Cortex agent running as an MCP server on a dynamically allocated port. Ants are full Cortex agents with their own `cortex.yaml`, specialised for one capability (e.g. `web_search`, `document_generation`).
+
+The `AntColony` module handles: port allocation, per-ant `cortex.yaml` generation, subprocess spawning via a generated Python bootstrap, health-polling until ready, PID supervision with auto-restart, `ants.yaml` persistence across process restarts, and register/deregister callbacks into the Tool Server Registry.
+
+**Trust tier:** Ants are registered with `trust_tier="ant"` — treated like internal servers (write tools not stripped, output guard not applied) but persisted separately from developer-configured servers.
+
+**Lifecycle:**
+1. Gap detected → `CapabilityScout._hatch_ants_for_gaps()` calls `AntColony.hatch()`
+2. Colony allocates port, writes ant `cortex.yaml`, writes bootstrap script, spawns subprocess
+3. Colony polls `/health` until ready (30 s timeout)
+4. Ant registered in `ToolServerRegistry` via `register_ant_server()`
+5. Supervisor loop monitors PIDs; crashed ants are restarted if `auto_restart: true`
+6. On framework shutdown, `stop_all()` terminates all ant subprocesses
+
+**File:** [`cortex/ants/ant_colony.py`](../cortex/ants/ant_colony.py) · [`cortex/ants/ant_server.py`](../cortex/ants/ant_server.py)
+
 ### Knowledge & memory
 
 #### Blueprint Store

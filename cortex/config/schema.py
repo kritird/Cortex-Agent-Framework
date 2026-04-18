@@ -397,6 +397,21 @@ class BlueprintConfig(BaseModel):
     staleness_warning_days: int = 90  # days since last successful run before blueprint is stale
 
 
+class AntColonyConfig(BaseModel):
+    """Configuration for the self-spawning ant agent subsystem."""
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = False
+    base_port: int = 8100
+    max_ants: int = 20
+    auto_restart: bool = True
+    # Hatch ants automatically when CapabilityScout finds unresolved gaps
+    auto_hatch_on_gap: bool = False
+    # LLM profile the ant agents use (defaults to the parent's default provider)
+    llm_provider: str = "default"
+    llm_model: str = "claude-haiku-4-5-20251001"
+    api_key_env_var: str = "ANTHROPIC_API_KEY"
+
+
 class CortexConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     agent: AgentConfig
@@ -416,3 +431,4 @@ class CortexConfig(BaseModel):
     code_sandbox: CodeSandboxConfig = Field(default_factory=CodeSandboxConfig)
     blueprint: BlueprintConfig = Field(default_factory=BlueprintConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    ant_colony: AntColonyConfig = Field(default_factory=AntColonyConfig)

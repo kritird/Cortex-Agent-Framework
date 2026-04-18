@@ -585,6 +585,18 @@ def _generate_config(data: dict) -> str:
         _only_if(sb_cfg, "auto_add_to_yaml", data.get("code_sandbox_auto_add_to_yaml"), False)
         config["code_sandbox"] = sb_cfg
 
+    # Ant Colony
+    if data.get("ant_colony_enabled"):
+        ant_cfg = {"enabled": True}
+        _only_if(ant_cfg, "base_port", data.get("ant_colony_base_port"), 8100)
+        _only_if(ant_cfg, "max_ants", data.get("ant_colony_max_ants"), 20)
+        _only_if(ant_cfg, "auto_restart", data.get("ant_colony_auto_restart"), True)
+        _only_if(ant_cfg, "auto_hatch_on_gap", data.get("ant_colony_auto_hatch_on_gap"), False)
+        _only_if(ant_cfg, "llm_provider", data.get("ant_colony_llm_provider"), "default")
+        _only_if(ant_cfg, "llm_model", data.get("ant_colony_llm_model"), "claude-haiku-4-5-20251001")
+        _only_if(ant_cfg, "api_key_env_var", data.get("ant_colony_api_key_env_var"), "ANTHROPIC_API_KEY")
+        config["ant_colony"] = ant_cfg
+
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
 
@@ -625,6 +637,7 @@ def _load_existing_config(config_path: str) -> dict:
     file_input_raw = raw.get("file_input", {}) or {}
     ui_raw = raw.get("ui", {}) or {}
     ui_auth_raw = ui_raw.get("auth", {}) or {}
+    ant_colony_raw = raw.get("ant_colony", {}) or {}
 
     def _kv_to_text(d):
         if not isinstance(d, dict):
@@ -739,6 +752,15 @@ def _load_existing_config(config_path: str) -> dict:
         "code_sandbox_allow_network": sandbox_raw.get("allow_network", False),
         "code_sandbox_ask_persist_consent": sandbox_raw.get("ask_persist_consent", True),
         "code_sandbox_auto_add_to_yaml": sandbox_raw.get("auto_add_to_yaml", False),
+        # ── Ant Colony ──
+        "ant_colony_enabled": ant_colony_raw.get("enabled", False),
+        "ant_colony_base_port": ant_colony_raw.get("base_port", 8100),
+        "ant_colony_max_ants": ant_colony_raw.get("max_ants", 20),
+        "ant_colony_auto_restart": ant_colony_raw.get("auto_restart", True),
+        "ant_colony_auto_hatch_on_gap": ant_colony_raw.get("auto_hatch_on_gap", False),
+        "ant_colony_llm_provider": ant_colony_raw.get("llm_provider", "default"),
+        "ant_colony_llm_model": ant_colony_raw.get("llm_model", "claude-haiku-4-5-20251001"),
+        "ant_colony_api_key_env_var": ant_colony_raw.get("api_key_env_var", "ANTHROPIC_API_KEY"),
         # ── Chat UI ──
         "ui_enabled": ui_raw.get("enabled", False),
         "ui_host": ui_raw.get("host", "0.0.0.0"),

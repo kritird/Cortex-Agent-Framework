@@ -1536,6 +1536,64 @@
         </div>
       </details>
 
+      <!-- ═══ Ant Colony ═══ -->
+      <details class="advanced">
+        <summary>Ant Colony <span class="sum-desc">— self-spawning specialist agent mesh</span></summary>
+        <div class="advanced-body">
+          <div class="toggle-row">
+            <div>
+              <label>Enable Ant Colony</label>
+              <div class="hint">Allow this agent to spawn specialist <em>ant</em> agents — independent Cortex agents running as MCP servers (trust_tier: ant). Ants fill capability gaps automatically and are supervised for automatic restarts.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="ant_colony_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Auto-hatch on capability gap</label>
+              <div class="hint">When CapabilityScout finds a gap that neither internal servers nor external discovery can fill, automatically hatch a new ant agent for that capability. Off means ants are only spawned via <code>cortex ants hatch</code> or the framework API.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="ant_colony_auto_hatch_on_gap"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Base port</label>
+              <input id="ant_colony_base_port" type="number" value="8100" min="1024" max="65000">
+              <div class="hint">First port to try when allocating a port for a new ant. Ports are scanned upward from here.</div>
+            </div>
+            <div class="field">
+              <label>Max ants</label>
+              <input id="ant_colony_max_ants" type="number" value="20" min="1" max="200">
+              <div class="hint">Maximum number of ants that may run simultaneously. New hatches fail once this limit is reached.</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Auto-restart on crash</label>
+              <div class="hint">The colony supervisor watches ant processes and restarts them automatically on crash. Off means crashed ants remain stopped until manually re-hatched.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="ant_colony_auto_restart" checked><span class="slider"></span></label>
+          </div>
+          <div class="section-head">Ant LLM profile</div>
+          <div class="row">
+            <div class="field">
+              <label>LLM provider</label>
+              <input id="ant_colony_llm_provider" type="text" value="default" placeholder="default">
+              <div class="hint">Provider alias for ants (must match a key in <code>llm_access</code>). Use <code>default</code> to inherit the parent's default provider.</div>
+            </div>
+            <div class="field">
+              <label>LLM model</label>
+              <input id="ant_colony_llm_model" type="text" value="claude-haiku-4-5-20251001" placeholder="claude-haiku-4-5-20251001">
+              <div class="hint">Model for ant agents. Haiku is recommended — ants are specialists, not orchestrators.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>API key env var</label>
+            <input id="ant_colony_api_key_env_var" type="text" value="ANTHROPIC_API_KEY" placeholder="ANTHROPIC_API_KEY">
+            <div class="hint">Environment variable containing the API key for ant agents.</div>
+          </div>
+        </div>
+      </details>
+
     </div>
     <div class="nav-buttons">
       <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
@@ -1835,6 +1893,14 @@ async function loadExistingConfig() {
     setVal('code_sandbox_allow_network', d.code_sandbox_allow_network);
     setVal('code_sandbox_ask_persist_consent', d.code_sandbox_ask_persist_consent);
     setVal('code_sandbox_auto_add_to_yaml', d.code_sandbox_auto_add_to_yaml);
+    setVal('ant_colony_enabled', d.ant_colony_enabled);
+    setVal('ant_colony_base_port', d.ant_colony_base_port);
+    setVal('ant_colony_max_ants', d.ant_colony_max_ants);
+    setVal('ant_colony_auto_restart', d.ant_colony_auto_restart);
+    setVal('ant_colony_auto_hatch_on_gap', d.ant_colony_auto_hatch_on_gap);
+    setVal('ant_colony_llm_provider', d.ant_colony_llm_provider);
+    setVal('ant_colony_llm_model', d.ant_colony_llm_model);
+    setVal('ant_colony_api_key_env_var', d.ant_colony_api_key_env_var);
 
     // Tool servers
     if (d.tool_servers && d.tool_servers.length) {
@@ -2863,6 +2929,14 @@ function collectFormData() {
     code_sandbox_allow_network: getBool('code_sandbox_allow_network'),
     code_sandbox_ask_persist_consent: getBool('code_sandbox_ask_persist_consent'),
     code_sandbox_auto_add_to_yaml: getBool('code_sandbox_auto_add_to_yaml'),
+    ant_colony_enabled: getBool('ant_colony_enabled'),
+    ant_colony_base_port: getInt('ant_colony_base_port', 8100),
+    ant_colony_max_ants: getInt('ant_colony_max_ants', 20),
+    ant_colony_auto_restart: getBool('ant_colony_auto_restart'),
+    ant_colony_auto_hatch_on_gap: getBool('ant_colony_auto_hatch_on_gap'),
+    ant_colony_llm_provider: document.getElementById('ant_colony_llm_provider')?.value || 'default',
+    ant_colony_llm_model: document.getElementById('ant_colony_llm_model')?.value || 'claude-haiku-4-5-20251001',
+    ant_colony_api_key_env_var: document.getElementById('ant_colony_api_key_env_var')?.value || 'ANTHROPIC_API_KEY',
   };
 
   const baseUrl = document.getElementById('base_url').value;

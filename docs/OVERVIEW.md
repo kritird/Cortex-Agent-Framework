@@ -74,6 +74,7 @@ The **Learning Engine** observes task patterns across sessions. When the same de
 | **Task orchestration** | LLM-generated DAG with parallel fan-out/fan-in | Sequential chain or hand-coded state machine |
 | **Tool protocol** | Native MCP (SSE, stdio, streamable-HTTP) | Custom tool wrappers per integration |
 | **Multi-agent** | Any agent becomes an MCP tool in one command | Bespoke inter-agent protocols |
+| **Self-expanding mesh** | Ant Colony — orchestrator hatches specialist agents at runtime to fill capability gaps | Static tool lists, no self-expansion |
 | **Quality gates** | Built-in validation agent with scoring + remediation | Manual testing or nothing |
 | **Learning** | Delta proposals + blueprints with human review | Prompt tweaking by hand |
 | **LLM providers** | 8 built-in (Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, Bedrock, Azure) | Usually 1–2, hard-coded |
@@ -115,6 +116,7 @@ You write a YAML file describing your agent. Cortex reads it and gives you:
 - **Streaming events** — typed, structured events for any UI (SSE, WebSocket, CLI)
 - **Session persistence** — resume timed-out sessions, replay history, encrypt at rest
 - **Built-in chat UI** — professional web frontend with file uploads and conversation history
+- **Ant Colony** — orchestrator self-spawns specialist agents at runtime; fills capability gaps automatically
 - **4 deployment targets** — Docker, Python package, MCP server, chat UI
 - **Visual setup wizard** — configure everything from a browser, no docs required
 - **Security built-in** — input sanitisation, credential scrubbing, sandboxed code execution

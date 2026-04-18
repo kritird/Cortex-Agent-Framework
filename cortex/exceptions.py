@@ -139,3 +139,10 @@ class CortexDeltaError(CortexException):
 class CortexInvalidUserError(CortexException):
     """Raised when user_id is missing, empty, or invalid."""
     pass
+
+
+class CortexAntError(CortexException):
+    """Error in the ant colony subsystem."""
+    def __init__(self, message: str, ant_name: str = ""):
+        self.ant_name = ant_name
+        super().__init__(message)

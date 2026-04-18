@@ -16,6 +16,8 @@ class EventType(str, Enum):
     SESSION_START = "session_start"
     SESSION_END = "session_end"
     EXTERNAL_MCP_AUTH_REQUIRED = "external_mcp_auth_required"  # auth-gated MCP found during session
+    ANT_HATCHED = "ant_hatched"    # ant agent spawned and registered
+    ANT_STOPPED = "ant_stopped"    # ant agent stopped or crashed
 
 
 @dataclass

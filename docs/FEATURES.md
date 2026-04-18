@@ -55,6 +55,7 @@ A complete feature matrix of everything Cortex ships with.
 | **Independent lifecycles** | Each agent has its own config, storage, concurrency, LLM routing |
 | **Port conventions** | Standard port allocation (wizard `7799+N`, MCP `8080+N`) for multi-agent hosts |
 | **No custom protocol** | Uses MCP end-to-end — no bespoke inter-agent RPC |
+| **Ant Colony** | Orchestrator self-spawns specialist Cortex agents as MCP servers at runtime; supervised, health-checked, auto-restarted |
 
 ## Streaming
 

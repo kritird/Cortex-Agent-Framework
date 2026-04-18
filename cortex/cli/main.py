@@ -8,6 +8,7 @@ from cortex.cli.migrate import migrate_command
 from cortex.cli.publish import publish_group
 from cortex.cli.spec import spec_command
 from cortex.cli.setup_wizard import setup_command
+from cortex.cli.ants import ants_group
 
 
 @click.group()
@@ -25,6 +26,7 @@ cli.add_command(delta_group, name="delta")
 cli.add_command(migrate_command, name="migrate")
 cli.add_command(publish_group, name="publish")
 cli.add_command(spec_command, name="spec")
+cli.add_command(ants_group, name="ants")
 
 
 if __name__ == "__main__":

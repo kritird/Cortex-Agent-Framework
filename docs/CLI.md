@@ -175,6 +175,68 @@ Outputs a structured description of task types, tool servers, LLM configuration,
 
 ---
 
+## `cortex ants`
+
+Manage the Ant Colony — self-spawning specialist Cortex agents that run as MCP servers.
+
+```bash
+cortex ants --help
+```
+
+### `cortex ants list`
+
+List all ants in the colony with their current status.
+
+```bash
+cortex ants list [--config cortex.yaml]
+```
+
+Displays a table of name, capability, port, status (running / stopped / crashed), PID, and restart count.
+
+### `cortex ants status <name>`
+
+Show detailed status of a specific ant.
+
+```bash
+cortex ants status <ant-name> [--config cortex.yaml]
+```
+
+### `cortex ants hatch <name>`
+
+Manually hatch a new specialist ant agent.
+
+```bash
+cortex ants hatch <name> --capability <cap> [--description <desc>] [--config cortex.yaml]
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--capability` | Yes | Capability hint the ant will serve (e.g. `web_search`) |
+| `--description` | No | Human-readable description of what this ant does |
+| `--config` | No | Path to cortex.yaml (default: `cortex.yaml`) |
+
+The colony must have `ant_colony.enabled: true` in `cortex.yaml`. A port is allocated automatically starting from `ant_colony.base_port`.
+
+### `cortex ants stop <name>`
+
+Stop a running ant by name.
+
+```bash
+cortex ants stop <ant-name> [--config cortex.yaml]
+```
+
+The ant process is terminated. The ant's state is saved as `stopped` in `ants.yaml`. The supervisor will not restart a manually stopped ant.
+
+### `cortex ants stop-all`
+
+Stop all running ants in the colony (prompts for confirmation).
+
+```bash
+cortex ants stop-all [--config cortex.yaml]
+```
+
+---
+
 ## Global environment variables
 
 | Variable | Effect |

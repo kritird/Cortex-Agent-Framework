@@ -660,6 +660,57 @@ class ToolServerRegistry:
         )
         return info
 
+    async def register_ant_server(
+        self,
+        name: str,
+        url: str,
+        capability: str,
+    ) -> ToolServerInfo:
+        """Register a self-spawned ant agent MCP server.
+
+        Differences from :meth:`register_tool_server` (internal):
+        - ``trust_tier`` is set to ``"ant"``
+        - No auth required (same process namespace, localhost only)
+        - Write tools are NOT stripped (ant is a trusted Cortex agent)
+        - Output guard is NOT applied (same as internal)
+
+        Differences from :meth:`register_external_server`:
+        - Write tools are allowed
+        - No output guard
+        """
+        from cortex.config.schema import (
+            ToolServerConfig, ToolServerAuthConfig, ToolServerDiscoveryConfig,
+        )
+        srv_config = ToolServerConfig(
+            url=url,
+            name=name,
+            transport="sse",
+            auth=ToolServerAuthConfig(type="none"),
+            discovery=ToolServerDiscoveryConfig(
+                auto=True,
+                capability_hints=[capability],
+            ),
+        )
+        info = await self._init_server(name, srv_config)
+        info.trust_tier = "ant"
+        info.scope = "permanent"
+
+        if capability:
+            info.capabilities = list({capability, *info.capabilities})
+
+        self._servers[name] = info
+        self._configs[name] = srv_config
+        for cap in info.capabilities:
+            self._capability_map.setdefault(cap, [])
+            if name not in self._capability_map[cap]:
+                self._capability_map[cap].append(name)
+        await self._save_capability_registry()
+        logger.info(
+            "AntMCP '%s' registered (trust_tier=ant, url=%s, caps=%s)",
+            name, url, info.capabilities,
+        )
+        return info
+
     @staticmethod
     def _filter_write_tools(tools: List[ToolInfo]) -> List[ToolInfo]:
         """Return only tools that have no write-semantic indicators.

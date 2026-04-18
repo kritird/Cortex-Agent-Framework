@@ -56,6 +56,9 @@ class DeltaProposal:
     script_path: Optional[str] = None           # filesystem path once persisted
     script_requirements: List[str] = field(default_factory=list)
     is_adhoc: bool = False                       # True when learned from a runtime ad-hoc task
+    # Optional tool_servers entries to merge into cortex.yaml on apply
+    # {server_name: {url: ..., transport: ..., ...}}
+    tool_servers_config: Optional[dict] = None
 
     def compute_confidence(self) -> str:
         if self.confirmations >= 5:
@@ -425,6 +428,12 @@ class LearningEngine:
             applied_names.append(new_task["name"])
 
         cortex_data["task_types"] = list(existing_map.values())
+
+        # Also persist any new tool_servers entries (e.g. from ant colony)
+        for new_task in to_apply:
+            ts_config = new_task.get("tool_servers_config")
+            if ts_config and isinstance(ts_config, dict):
+                cortex_data.setdefault("tool_servers", {}).update(ts_config)
 
         with open(cortex_path, "w") as f:
             yaml.dump(cortex_data, f, default_flow_style=False, sort_keys=False)

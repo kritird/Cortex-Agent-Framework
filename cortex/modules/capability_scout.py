@@ -143,6 +143,8 @@ class CapabilityScout:
         no_probe_capabilities: Optional[set] = None,
         external_registry: Optional["ExternalMCPRegistry"] = None,
         discovery_config: Optional["ExternalMCPDiscoveryConfig"] = None,
+        ant_colony=None,
+        auto_hatch_on_gap: bool = False,
     ) -> ScoutResult:
         """
         Returns a ScoutResult with matched capabilities, their tool descriptions,
@@ -159,6 +161,12 @@ class CapabilityScout:
         discovery_config:
             ExternalMCPDiscoveryConfig from cortex.yaml.  Controls whether
             internet discovery is attempted and which registry sources are used.
+        ant_colony:
+            AntColony instance. When provided and auto_hatch_on_gap is True,
+            unresolved gaps trigger hatching a new specialist ant agent.
+        auto_hatch_on_gap:
+            If True and ant_colony is provided, automatically hatch ants for
+            any capability gap that external discovery could not fill.
         """
         code_utils = self._collect_code_utils(code_store)
 
@@ -203,6 +211,19 @@ class CapabilityScout:
             covered = {t.capability for t in tools}
 
         unresolved = [c for c in probe_caps if c not in covered]
+
+        # Last resort: hatch ant agents for unresolved gaps
+        if unresolved and ant_colony is not None and auto_hatch_on_gap:
+            ant_tools = await self._hatch_ants_for_gaps(
+                gaps=unresolved,
+                registry=registry,
+                ant_colony=ant_colony,
+                llm_client=llm_client,
+            )
+            tools.extend(ant_tools)
+            covered = {t.capability for t in tools}
+            unresolved = [c for c in unresolved if c not in covered]
+
         if unresolved:
             logger.info("Scout: unresolved capability gap(s): %s", unresolved)
 
@@ -212,6 +233,45 @@ class CapabilityScout:
             code_utils=code_utils,
             unresolved_gaps=unresolved,
         )
+
+    async def _hatch_ants_for_gaps(
+        self,
+        gaps: List[str],
+        registry: ToolServerRegistry,
+        ant_colony,
+        llm_client: LLMClient,
+    ) -> List[ScoutedTool]:
+        """Hatch specialist ant agents for unresolved capability gaps."""
+        tools: List[ScoutedTool] = []
+        for capability in gaps:
+            ant_name = f"ant_{capability.replace(' ', '_').replace('-', '_')}"
+            description = f"Specialist agent for {capability} capability"
+            try:
+                logger.info("Scout: hatching ant '%s' for capability '%s'", ant_name, capability)
+                info = await ant_colony.hatch(
+                    name=ant_name,
+                    capability=capability,
+                    description=description,
+                    llm_client=llm_client,
+                )
+                await registry.register_ant_server(
+                    name=ant_name,
+                    url=info.url,
+                    capability=capability,
+                )
+                # Surface a generic run_session tool for the ant
+                tools.append(ScoutedTool(
+                    name="run_session",
+                    description=description,
+                    capability=capability,
+                    server_name=ant_name,
+                ))
+                logger.info("Scout: ant '%s' hatched and registered for '%s'", ant_name, capability)
+            except Exception as exc:
+                logger.warning(
+                    "Scout: failed to hatch ant for capability '%s': %s", capability, exc
+                )
+        return tools
 
     async def discover_for_task(
         self,
