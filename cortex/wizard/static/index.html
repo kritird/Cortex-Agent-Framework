@@ -447,9 +447,11 @@
         2. LLM provider — which model powers your agent<br>
         3. Tool servers — MCP integrations for capabilities<br>
         4. Task types — define what your agent can do<br>
-        5. Storage &amp; options — persistence and advanced settings<br>
-        6. Publish mode — how you want to deploy your agent<br>
-        7. Review &amp; finish — save config and get started
+        5. Storage &amp; persistence — backend, quotas, history<br>
+        6. Adaptive behavior — capability scout, learning, validation, blueprints<br>
+        7. Runtime &amp; delivery — timeouts, concurrency, chat UI, sandbox, security<br>
+        8. Publish mode — how you want to deploy your agent<br>
+        9. Review &amp; finish — save config and get started
       </div></div>
       <div class="tip-box warn"><div class="tip-content">
         <strong>Before you start</strong> — make sure you have an API key for your chosen LLM provider set as an environment variable.
@@ -479,7 +481,7 @@
       </div>
 
       <details class="advanced">
-        <summary>Advanced <span class="sum-desc">— synthesis guidance, streaming, concurrency, capability scout</span></summary>
+        <summary>Advanced <span class="sum-desc">— synthesis guidance, streaming, clarification</span></summary>
         <div class="advanced-body">
 
           <div class="section-head">Synthesis</div>
@@ -549,61 +551,10 @@
             <label class="toggle"><input type="checkbox" id="agent_clarification_enabled"><span class="slider"></span></label>
           </div>
 
-          <div class="section-head">Capability scout</div>
-          <div class="toggle-row">
-            <div>
-              <label>Enable capability scout</label>
-              <div class="hint">Before planning, probe connected MCP servers to learn what tools they expose. Feeds capabilities into the planner so it can use tools it wasn't explicitly told about.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="scout_enabled" checked><span class="slider"></span></label>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Max capabilities</label>
-              <input id="scout_max_capabilities" type="number" value="30" min="1" max="500">
-              <div class="hint">Probe at most this many tools per request. Prevents planning-context bloat on servers with hundreds of tools.</div>
-            </div>
-            <div class="field">
-              <label>Scout timeout (s)</label>
-              <input id="scout_timeout_seconds" type="number" value="10" min="1" max="120">
-              <div class="hint">Give up scouting if it exceeds this. Scout is best-effort — timing out is safe, planning continues without the missing info.</div>
-            </div>
-          </div>
-
-          <div class="toggle-row">
-            <div>
-              <label>External MCP discovery</label>
-              <div class="hint">Let the scout query public MCP registries (Smithery, PulseMCP, etc.) to propose new tool servers it could connect to. Off keeps the agent fully offline.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="scout_ext_enabled" checked><span class="slider"></span></label>
-          </div>
-          <div class="field">
-            <label>Auto-discovery file</label>
-            <input id="scout_ext_auto_discovery_file" value="cortex_auto_mcps.yaml">
-            <div class="hint">Where auto-discovered MCP records are cached. Relative paths resolve against <code>storage.base_path</code>.</div>
-          </div>
-          <div class="field">
-            <label>Registry sources (one per line)</label>
-            <textarea id="scout_ext_registry_sources" rows="4" placeholder="https://registry.smithery.ai&#10;https://www.pulsemcp.com&#10;https://glama.ai&#10;https://mcp.so"></textarea>
-            <div class="hint">Curated pool of public MCP registries the scout may query, tried in order. Leave blank to use the defaults.</div>
-          </div>
-          <div class="row-3">
-            <div class="field">
-              <label>Max new per session</label>
-              <input id="scout_ext_max_new_per_session" type="number" value="5" min="0" max="100">
-              <div class="hint">Cap on how many new external MCPs may be registered during one session. Prevents runaway discovery.</div>
-            </div>
-            <div class="field">
-              <label>Max stale days</label>
-              <input id="scout_ext_max_stale_days" type="number" value="30" min="1" max="365">
-              <div class="hint">Re-verify a discovered server whose last verification is older than this.</div>
-            </div>
-            <div class="field">
-              <label>Search timeout (s)</label>
-              <input id="scout_ext_search_timeout_s" type="number" step="0.5" value="10" min="1" max="120">
-              <div class="hint">Per-registry HTTP request timeout. One slow registry won't block the others.</div>
-            </div>
-          </div>
+          <div class="tip-box info" style="margin-top:18px;"><div class="tip-content">
+            Capability Scout, Learning, Validation, and Blueprints now live in the
+            <strong>Adaptive behavior</strong> step later in the wizard.
+          </div></div>
 
         </div>
       </details>
@@ -632,24 +583,46 @@
           <option value="grok">Grok (xAI)</option>
           <option value="mistral">Mistral</option>
           <option value="deepseek">DeepSeek</option>
+          <option value="local">Local LLM (Ollama / LM Studio / vLLM)</option>
         </select>
       </div>
 
       <div class="field">
         <label>Model</label>
-        <select id="model"></select>
+        <input id="model" list="modelSuggestions" autocomplete="off">
+        <datalist id="modelSuggestions"></datalist>
+        <div class="hint" id="modelHint" style="display:none;"></div>
       </div>
 
       <div class="field" id="baseUrlGroup" style="display:none;">
         <label>Base URL</label>
         <input id="base_url" placeholder="https://your-proxy.example.com/v1">
-        <div class="hint">Required for proxy/gateway providers.</div>
+        <div class="hint" id="baseUrlHint">Required for proxy/gateway providers.</div>
       </div>
 
       <div class="field">
-        <label>API key environment variable</label>
+        <label id="apiKeyLabel">API key environment variable</label>
         <input id="api_key_env_var" value="ANTHROPIC_API_KEY">
-        <div class="hint">The env var name where your API key is stored (e.g. <code>ANTHROPIC_API_KEY</code>). Do not paste the key itself.</div>
+        <div class="hint" id="apiKeyHint">The env var name where your API key is stored (e.g. <code>ANTHROPIC_API_KEY</code>). Do not paste the key itself.</div>
+      </div>
+
+      <div class="card" id="gemmaQuickstart" style="display:none; background:#f6f9ff; border:1px solid #cfd8f7; margin-top:8px;">
+        <h3 style="margin-top:0;">Gemma 4 quickstart (Ollama)</h3>
+        <p class="subtitle" style="margin-bottom:10px;">Run Google's Gemma 4 locally — Apache 2.0, no API keys, OpenAI-compatible.</p>
+        <ol style="padding-left:18px; line-height:1.7; margin:0 0 10px;">
+          <li>Install Ollama: <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a></li>
+          <li>Pull a Gemma 4 variant — pick by available RAM/VRAM:
+            <ul style="margin-top:4px;">
+              <li><code>ollama pull gemma4:e2b</code> — ~1.6 GB, effective-2B, runs on almost anything</li>
+              <li><code>ollama pull gemma4:e4b</code> — ~3 GB, effective-4B, sweet spot for 16 GB Apple Silicon</li>
+              <li><code>ollama pull gemma4:26b</code> — ~16 GB, needs 32 GB+ unified RAM or a workstation GPU</li>
+              <li><code>ollama pull gemma4:31b</code> — ~19 GB, workstation-class GPU only</li>
+            </ul>
+          </li>
+          <li>Make sure <code>ollama serve</code> is running (the app starts it automatically on macOS/Windows).</li>
+          <li>Leave <strong>Base URL</strong> as <code>http://localhost:11434/v1</code> and pick a model above.</li>
+        </ol>
+        <div class="hint">Works with LM Studio (<code>http://localhost:1234/v1</code>) and vLLM (<code>http://localhost:8000/v1</code>) too — just change the base URL.</div>
       </div>
 
       <div class="row">
@@ -764,37 +737,37 @@
     </div>
     <div class="nav-buttons">
       <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
-      <button class="btn btn-primary" onclick="nextStep()">Next: Storage &amp; options →</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Storage &amp; persistence →</button>
     </div>
   </div>
 
-  <!-- ═══════════════ Step 5: Storage & Options ═══════════════ -->
+  <!-- ═══════════════ Step 5: Storage & persistence ═══════════════ -->
   <div class="step-panel" data-step="5">
     <div class="card">
-      <h2>Storage &amp; options</h2>
-      <p class="subtitle">Configure persistence, runtime limits, and optional agent features.</p>
+      <h2>Storage &amp; persistence</h2>
+      <p class="subtitle">Where the agent keeps its state — session data, uploaded files, session history, and disk quotas.</p>
 
       <div class="field">
         <label>Storage base path</label>
         <input id="storage_path" value="./cortex_storage">
-        <div class="hint">Root directory for all agent-managed files (sessions, blueprints, auto-discovered MCP cache).</div>
+        <div class="hint">Root directory for all agent-managed files — session state, blueprints, uploaded attachments, auto-discovered MCP cache. Relative paths resolve against the agent process's working directory.</div>
       </div>
 
       <div class="field">
         <label>Storage backend</label>
         <select id="storage_backend" onchange="onStorageBackendChange()">
-          <option value="memory">In-memory (development)</option>
+          <option value="memory">In-memory (development only)</option>
           <option value="sqlite">SQLite (recommended for single-instance)</option>
           <option value="redis">Redis (distributed / production)</option>
         </select>
-        <div class="hint">In-memory state is lost on restart. Pick SQLite or Redis for anything beyond local development.</div>
+        <div class="hint">In-memory state is lost on restart and can't be shared across processes. Pick SQLite for a single-instance agent, Redis when you plan to run multiple replicas.</div>
       </div>
 
       <div id="sqliteOptions" style="display:none;">
         <div class="field">
           <label>SQLite database path</label>
           <input id="sqlite_path" value="./cortex_storage/cortex.db">
-          <div class="hint">Absolute or relative path to the SQLite file. The directory will be created if missing.</div>
+          <div class="hint">Absolute or relative path to the SQLite database file. The parent directory is created automatically if missing.</div>
         </div>
       </div>
 
@@ -803,85 +776,475 @@
           <div class="field">
             <label>Redis host</label>
             <input id="redis_host" value="127.0.0.1">
+            <div class="hint">Hostname or IP of the Redis server. Use the service name when running in docker-compose / Kubernetes.</div>
           </div>
           <div class="field">
             <label>Redis port</label>
             <input id="redis_port" type="number" value="6379">
+            <div class="hint">TCP port Redis listens on. Default is 6379.</div>
           </div>
         </div>
       </div>
 
-      <div class="section-head">Session &amp; timeout settings</div>
-      <div class="row">
-        <div class="field">
-          <label>Session timeout (s)</label>
-          <input id="max_wait_seconds" type="number" value="120" min="10" max="3600">
-          <div class="hint">Max time an entire session can run before being terminated.</div>
+      <!-- ═══ Advanced storage options ═══ -->
+      <details class="advanced">
+        <summary>Advanced storage &amp; quotas <span class="sum-desc">— file thresholds, quotas, disk-health limits</span></summary>
+        <div class="advanced-body">
+          <div class="row">
+            <div class="field">
+              <label>Large file threshold (MB)</label>
+              <input id="storage_large_file_threshold_mb" type="number" value="5" min="1" max="10000">
+              <div class="hint">Task outputs larger than this are written to disk as files instead of returned inline in the result envelope. Prevents huge payloads from bloating the LLM context.</div>
+            </div>
+            <div class="field">
+              <label>Result envelope max (KB)</label>
+              <input id="storage_result_envelope_max_kb" type="number" value="64" min="1" max="100000">
+              <div class="hint">Hard cap on the inline JSON envelope size for a single task result. Payloads exceeding this are offloaded to a file and referenced by path.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Session quota (MB)</label>
+              <input id="storage_session_quota_mb" type="number" value="500" min="1" max="100000">
+              <div class="hint">Per-session disk quota. New outputs are rejected once a session exceeds this total — old sessions are not auto-deleted, they're just capped.</div>
+            </div>
+            <div class="field">
+              <label>Atomic cleanup</label>
+              <div class="toggle-row" style="padding:0; border:none;">
+                <div class="hint" style="margin:0;">Delete session files by renaming them into a trash directory in one atomic move, then sweeping that. Turn off on exotic filesystems that reject cross-directory renames (some FUSE mounts).</div>
+                <label class="toggle"><input type="checkbox" id="storage_atomic_cleanup" checked><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Disk health — warning (GB free)</label>
+              <input id="storage_health_warning_free_gb" type="number" step="0.1" value="10" min="0">
+              <div class="hint">Emit a warning in the logs when free disk on the storage volume drops below this threshold. Sessions still run.</div>
+            </div>
+            <div class="field">
+              <label>Disk health — critical (GB free)</label>
+              <input id="storage_health_critical_free_gb" type="number" step="0.1" value="2" min="0">
+              <div class="hint">Refuse to start new sessions once free disk drops below this — protects against corrupting an in-flight session when the disk fills up.</div>
+            </div>
+          </div>
         </div>
-        <div class="field">
-          <label>Default task timeout (s)</label>
-          <input id="default_task_timeout" type="number" value="40" min="5" max="600">
-          <div class="hint">Default timeout per individual task. Can be overridden per task type.</div>
-        </div>
-      </div>
+      </details>
 
-      <div class="section-head">Concurrency limits</div>
-      <div class="row">
-        <div class="field">
-          <label>Max concurrent sessions</label>
-          <input id="max_concurrent_sessions" type="number" value="50" min="1" max="1000">
-          <div class="hint">Global cap on simultaneous sessions.</div>
+      <!-- ═══ Advanced SQLite ═══ -->
+      <details class="advanced">
+        <summary>Advanced SQLite <span class="sum-desc">— WAL mode, connection timeout, TTLs</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when the storage backend is set to <strong>SQLite</strong>.
+          </div></div>
+          <div class="toggle-row">
+            <div>
+              <label>WAL mode</label>
+              <div class="hint">Write-Ahead Logging — readers and writers don't block each other, so throughput is much higher under concurrent load. Safe default. Turn off only for filesystems that forbid it (rare — some network mounts).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="sqlite_wal_mode" checked><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Connection timeout (s)</label>
+            <input id="sqlite_connection_timeout_seconds" type="number" value="5" min="1" max="300">
+            <div class="hint">SQLite "busy timeout" — how long a write will wait for a concurrent lock before failing. Raise this if you see <code>database is locked</code> errors under load.</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Session data TTL (s)</label>
+              <input id="sqlite_ttl_session_data_seconds" type="number" value="3600" min="60">
+              <div class="hint">Active in-flight session state expires after this many seconds of inactivity. Safety net for abandoned sessions.</div>
+            </div>
+            <div class="field">
+              <label>Session index TTL (s)</label>
+              <input id="sqlite_ttl_session_index_seconds" type="number" value="86400" min="60">
+              <div class="hint">Lookup metadata for a session is kept this long even after full state is gone — lets history queries still resolve the session id.</div>
+            </div>
+          </div>
         </div>
-        <div class="field">
-          <label>Max sessions per user</label>
-          <input id="max_sessions_per_user" type="number" value="3" min="1" max="50">
-          <div class="hint">Per-user concurrency limit.</div>
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Max parallel tasks</label>
-          <input id="max_parallel_tasks" type="number" value="5" min="1" max="50">
-          <div class="hint">Max tasks executing simultaneously in a single session.</div>
-        </div>
-        <div class="field">
-          <label>Max tasks per session</label>
-          <input id="max_tasks_per_session" type="number" value="20" min="1" max="100">
-          <div class="hint">Upper limit on tasks in one session's task graph.</div>
-        </div>
-      </div>
+      </details>
 
-      <div class="section-head">Features</div>
+      <!-- ═══ Advanced Redis ═══ -->
+      <details class="advanced">
+        <summary>Advanced Redis <span class="sum-desc">— auth, TLS, pool, TTLs, key prefix</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when the storage backend is set to <strong>Redis</strong>.
+          </div></div>
+          <div class="row-3">
+            <div class="field">
+              <label>Database</label>
+              <input id="redis_db" type="number" value="1" min="0" max="15">
+              <div class="hint">Logical DB index (0–15) on the Redis instance. Use a non-zero DB to keep agent keys away from other apps sharing the server.</div>
+            </div>
+            <div class="field">
+              <label>Username</label>
+              <input id="redis_username" placeholder="(blank for default user)">
+              <div class="hint">Redis 6+ ACL username. Leave blank to use the default user (the one authenticated by a plain password).</div>
+            </div>
+            <div class="field">
+              <label>Password env var</label>
+              <input id="redis_password_env_var" placeholder="REDIS_PASSWORD">
+              <div class="hint">Name of the env var that holds the password. Never paste the password itself — it would get written into cortex.yaml.</div>
+            </div>
+          </div>
+
+          <div class="section-head">TLS</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable TLS</label>
+              <div class="hint">Connect using TLS. Required by managed Redis providers (AWS ElastiCache in-transit encryption, Redis Cloud, Upstash, etc.).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="redis_tls_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Verify peer certificate</label>
+              <div class="hint">Validate the Redis server's TLS certificate against your CA bundle. Turn off only for self-signed dev setups.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="redis_tls_verify_peer" checked><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>CA cert file</label>
+              <input id="redis_tls_ca_cert_file" placeholder="/path/to/ca.pem">
+              <div class="hint">Optional custom CA bundle — only needed if your Redis uses a private CA that isn't in the system trust store.</div>
+            </div>
+            <div class="field">
+              <label>Client cert file</label>
+              <input id="redis_tls_cert_file" placeholder="/path/to/client.crt">
+              <div class="hint">For mutual TLS (mTLS) — path to the client certificate the agent presents to Redis.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Client key file</label>
+            <input id="redis_tls_key_file" placeholder="/path/to/client.key">
+            <div class="hint">Private key matching the client certificate above. File permissions should be <code>0600</code>.</div>
+          </div>
+
+          <div class="section-head">Connection pool</div>
+          <div class="row">
+            <div class="field">
+              <label>Pool max connections</label>
+              <input id="redis_pool_max_connections" type="number" value="20" min="1" max="1000">
+              <div class="hint">Upper bound on concurrent TCP connections to Redis. Size this roughly alongside your <em>Max concurrent sessions</em> in the Runtime step.</div>
+            </div>
+            <div class="field">
+              <label>Pool min idle</label>
+              <input id="redis_pool_min_idle" type="number" value="5" min="0" max="1000">
+              <div class="hint">Keep at least this many connections warm even when idle — avoids cold-start latency on the first request after quiet periods.</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Connection timeout (ms)</label>
+              <input id="redis_connection_timeout_ms" type="number" value="2000" min="100" max="60000">
+              <div class="hint">Timeout for establishing a new Redis TCP connection. Bump this if Redis is far away (cross-region) or slow to accept connections.</div>
+            </div>
+            <div class="field">
+              <label>Socket timeout (ms)</label>
+              <input id="redis_socket_timeout_ms" type="number" value="1000" min="100" max="60000">
+              <div class="hint">Per-command read timeout on an already-established connection. Slow commands beyond this abort.</div>
+            </div>
+          </div>
+
+          <div class="section-head">Key namespace &amp; TTLs</div>
+          <div class="field">
+            <label>Key prefix</label>
+            <input id="redis_key_prefix" value="cortex">
+            <div class="hint">All keys written by this agent are namespaced under <code>{prefix}:…</code>. Lets multiple agents share a Redis instance without colliding.</div>
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label>Session data TTL (s)</label>
+              <input id="redis_ttl_session_data_seconds" type="number" value="3600" min="60">
+              <div class="hint">TTL applied to active session-state keys. Expired keys are cleaned up by Redis automatically.</div>
+            </div>
+            <div class="field">
+              <label>Session index TTL (s)</label>
+              <input id="redis_ttl_session_index_seconds" type="number" value="86400" min="60">
+              <div class="hint">TTL on index rows that map a session id to its state location — outlives the state TTL so history queries can still resolve stale sessions.</div>
+            </div>
+            <div class="field">
+              <label>Pub/Sub TTL (s)</label>
+              <input id="redis_ttl_pubsub_seconds" type="number" value="300" min="10">
+              <div class="hint">How long published streaming events stay replayable for late-joining subscribers.</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ File input ═══ -->
+      <details class="advanced">
+        <summary>File input <span class="sum-desc">— uploaded attachment limits</span></summary>
+        <div class="advanced-body">
+          <div class="field">
+            <label>Max file size (MB)</label>
+            <input id="file_input_max_size_mb" type="number" value="50" min="1" max="10000">
+            <div class="hint">Largest single attachment a user may upload to a session. Uploads above this size are rejected before any LLM call.</div>
+          </div>
+          <div class="field">
+            <label>Allowed MIME types (one per line)</label>
+            <textarea id="file_input_allowed_mime_types" rows="5" placeholder="text/plain&#10;application/pdf&#10;image/png"></textarea>
+            <div class="hint">Whitelist of accepted upload content types. Leave blank to use the safe default set (plain text, PDF, Office docs, common images, audio).</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Session history ═══ -->
+      <div class="section-head" style="margin-top:24px;">Session history</div>
       <div class="toggle-row">
         <div>
-          <label>Response validation</label>
-          <div class="hint">Score agent responses for quality before returning them to the user.</div>
+          <label>Enable session history</label>
+          <div class="hint">Persist the conversation across sessions so the agent can recall past exchanges ("what did we decide about X last week?"). Uses the storage backend configured above.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="history_enabled"><span class="slider"></span></label>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced history <span class="sum-desc">— retention, context window, encryption</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when <strong>Session history</strong> is enabled above.
+          </div></div>
+          <div class="row">
+            <div class="field">
+              <label>Retention (days)</label>
+              <input id="history_retention_days" type="number" value="90" min="1" max="3650">
+              <div class="hint">Sessions older than this are pruned on the next maintenance pass. Set higher for compliance workflows that need long retention.</div>
+            </div>
+            <div class="field">
+              <label>Max sessions in context</label>
+              <input id="history_max_sessions_in_context" type="number" value="5" min="0" max="100">
+              <div class="hint">How many of the user's most recent sessions are summarized back into the prompt when answering a follow-up. Higher = more continuity, more tokens.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Persist task outputs (comma-separated task names)</label>
+            <input id="history_persist_task_outputs" placeholder="e.g. research_summary, meeting_notes">
+            <div class="hint">By default history only stores the final answer text. List specific task type names here to also keep their raw structured outputs queryable later.</div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable full-text search</label>
+              <div class="hint">Build a search index over past sessions so users can query "what did we decide about X?" in natural language. Small extra storage cost.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="history_search_enabled" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Encrypt at rest</label>
+              <div class="hint">Encrypt history records with a key from the env var below. Off stores them as plaintext inside the storage backend (no disk-level protection).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="history_encryption_enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Encryption key env var</label>
+            <input id="history_encryption_key_env_var" placeholder="CORTEX_HISTORY_KEY">
+            <div class="hint">Env var holding a base64-encoded 32-byte key (AES-256-GCM). Losing this env var makes previously-encrypted history unreadable — back it up safely.</div>
+          </div>
+        </div>
+      </details>
+
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Adaptive behavior →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 6: Adaptive behavior ═══════════════ -->
+  <div class="step-panel" data-step="6">
+    <div class="card">
+      <h2>Adaptive behavior</h2>
+      <p class="subtitle">Features that let the agent discover capabilities, improve over time, and guard its own output quality.</p>
+
+      <!-- ═══ Capability Scout ═══ -->
+      <div class="section-head">Capability Scout</div>
+      <div class="toggle-row">
+        <div>
+          <label>Enable capability scout</label>
+          <div class="hint">Before planning, probe each connected MCP tool server to learn what tools it exposes. The planner can then use capabilities you didn't explicitly list. Off freezes the agent to only the capabilities you hard-code in task types.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="scout_enabled" checked><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Max capabilities</label>
+          <input id="scout_max_capabilities" type="number" value="30" min="1" max="500">
+          <div class="hint">Probe at most this many tools per request. Prevents planning-context bloat on servers that expose hundreds of tools — the planner stays focused on the most relevant ones.</div>
+        </div>
+        <div class="field">
+          <label>Scout timeout (s)</label>
+          <input id="scout_timeout_seconds" type="number" value="10" min="1" max="120">
+          <div class="hint">Give up scouting after this many seconds. Scout is best-effort — if probing takes too long, planning continues with whatever was learned so far.</div>
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <label>External MCP discovery</label>
+          <div class="hint">Allow the scout to query public MCP registries (Smithery, PulseMCP, Glama, mcp.so) to propose new tool servers the agent could connect to. Off keeps the agent fully offline — it won't reach out to any registry.</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="scout_ext_enabled" checked><span class="slider"></span></label>
+      </div>
+      <div class="field">
+        <label>Auto-discovery file</label>
+        <input id="scout_ext_auto_discovery_file" value="cortex_auto_mcps.yaml">
+        <div class="hint">Where discovered MCP records are cached so we don't keep hitting the registries. Relative paths resolve against <code>storage.base_path</code>.</div>
+      </div>
+      <div class="field">
+        <label>Registry sources (one per line)</label>
+        <textarea id="scout_ext_registry_sources" rows="4" placeholder="https://registry.smithery.ai&#10;https://www.pulsemcp.com&#10;https://glama.ai&#10;https://mcp.so"></textarea>
+        <div class="hint">Curated pool of public MCP registries the scout may query, tried in order until one answers. Leave blank to use the defaults.</div>
+      </div>
+      <div class="row-3">
+        <div class="field">
+          <label>Max new per session</label>
+          <input id="scout_ext_max_new_per_session" type="number" value="5" min="0" max="100">
+          <div class="hint">Cap on how many brand-new external MCPs may be registered during one user session. Prevents runaway discovery on very broad requests.</div>
+        </div>
+        <div class="field">
+          <label>Max stale days</label>
+          <input id="scout_ext_max_stale_days" type="number" value="30" min="1" max="365">
+          <div class="hint">Re-verify a previously-discovered server whose last verification is older than this. Keeps stale/broken servers out of planning.</div>
+        </div>
+        <div class="field">
+          <label>Search timeout (s)</label>
+          <input id="scout_ext_search_timeout_s" type="number" step="0.5" value="10" min="1" max="120">
+          <div class="hint">Per-registry HTTP request timeout. One slow registry won't block the others — the scout just skips it and moves on.</div>
+        </div>
+      </div>
+
+      <!-- ═══ Response validation ═══ -->
+      <div class="section-head" style="margin-top:28px;">Response validation (wave gates)</div>
+      <div class="toggle-row">
+        <div>
+          <label>Enable response validation</label>
+          <div class="hint">After each "wave" of tasks, score the outputs against their <code>validation_notes</code> before they reach the user. Low-scoring waves are either flagged or rejected depending on the thresholds below.</div>
         </div>
         <label class="toggle"><input type="checkbox" id="validation_enabled"><span class="slider"></span></label>
       </div>
       <div class="field" style="margin-top:14px;">
         <label>Wave-gate judge LLM provider</label>
         <input type="text" id="wave_gate_llm_provider" placeholder="default">
-        <div class="hint">LLM used to validate each task output against its <code>validation_notes</code>. Leave as <b>default</b> unless you want a cheaper/faster model for the judge.</div>
+        <div class="hint">Named provider from <code>llm_access.providers</code> used to run validation scoring. Leave as <b>default</b> unless you want a cheaper/faster model to judge — a typical setup is a small Haiku or Gemini Flash judging a bigger main model.</div>
       </div>
-      <div class="toggle-row">
-        <div>
-          <label>Session history</label>
-          <div class="hint">Persist conversation history across sessions.</div>
+
+      <details class="advanced">
+        <summary>Advanced validation <span class="sum-desc">— thresholds, weights, reporting</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when <strong>Response validation</strong> is enabled above.
+          </div></div>
+          <div class="row">
+            <div class="field">
+              <label>Pass threshold</label>
+              <input id="validation_threshold" type="number" step="0.05" value="0.75" min="0" max="1">
+              <div class="hint">Minimum overall score (0–1) required for a wave output to be accepted. Below this the agent retries or flags the result as low-quality.</div>
+            </div>
+            <div class="field">
+              <label>Critical threshold</label>
+              <input id="validation_critical_threshold" type="number" step="0.05" value="0.40" min="0" max="1">
+              <div class="hint">Below this score the response is rejected outright instead of merely flagged — a strong signal that something is badly wrong.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Validator timeout (s)</label>
+            <input id="validation_timeout_seconds" type="number" value="15" min="1" max="300">
+            <div class="hint">Max time the LLM judge may take per task output. If the judge times out the task is treated as unvalidated (not failed).</div>
+          </div>
+          <div class="section-head">Score weights (must sum to 1.0)</div>
+          <div class="row-3">
+            <div class="field">
+              <label>Intent match</label>
+              <input id="validation_weights_intent_match" type="number" step="0.05" value="0.50" min="0" max="1">
+              <div class="hint">Weight for "did this actually answer the user's request?" — usually the dominant signal.</div>
+            </div>
+            <div class="field">
+              <label>Completeness</label>
+              <input id="validation_weights_completeness" type="number" step="0.05" value="0.30" min="0" max="1">
+              <div class="hint">Weight for "did it cover every subtask that was asked for?"</div>
+            </div>
+            <div class="field">
+              <label>Coherence</label>
+              <input id="validation_weights_coherence" type="number" step="0.05" value="0.20" min="0" max="1">
+              <div class="hint">Weight for internal consistency and fluency — catches self-contradictions and garbled output.</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Expose full report to user</label>
+              <div class="hint">Attach the validator's written critique to the response the user sees. Off keeps it internal (still written to logs for debugging).</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="validation_expose_report_to_user" checked><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Expose numeric score</label>
+              <div class="hint">Show the 0–1 score to the user. Off by default — raw scores out of context tend to be noisy and misleading.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="validation_expose_score_to_user"><span class="slider"></span></label>
+          </div>
         </div>
-        <label class="toggle"><input type="checkbox" id="history_enabled"><span class="slider"></span></label>
-      </div>
+      </details>
+
+      <!-- ═══ Learning engine ═══ -->
+      <div class="section-head" style="margin-top:28px;">Learning engine</div>
       <div class="toggle-row">
         <div>
-          <label>Learning engine</label>
-          <div class="hint">Auto-discover new task types from usage patterns (with user consent).</div>
+          <label>Enable learning engine</label>
+          <div class="hint">Auto-discover new task types and refinements from usage patterns. After consented runs the engine proposes config "deltas" (new task types, better validation notes, clarifications) that you can review and apply.</div>
         </div>
         <label class="toggle"><input type="checkbox" id="learning_enabled"><span class="slider"></span></label>
       </div>
+
+      <details class="advanced">
+        <summary>Advanced learning <span class="sum-desc">— auto-apply thresholds, notifications</span></summary>
+        <div class="advanced-body">
+          <div class="tip-box info"><div class="tip-content">
+            These only apply when the <strong>Learning engine</strong> is enabled above.
+          </div></div>
+          <div class="toggle-row">
+            <div>
+              <label>Auto-apply delta (runtime toggle)</label>
+              <div class="hint">When the learning engine proposes a change, apply it automatically if confidence meets the bar below, instead of waiting for human review. Use with caution in production.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="auto_apply_delta"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Min confidence</label>
+              <select id="learning_auto_apply_min_confidence">
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high" selected>high</option>
+              </select>
+              <div class="hint">Minimum confidence level the engine must assign to a proposal before it's eligible for auto-apply.</div>
+            </div>
+            <div class="field">
+              <label>Min confirmations</label>
+              <input id="learning_auto_apply_min_confirmations" type="number" value="3" min="1" max="100">
+              <div class="hint">The same proposal must appear this many times across different runs before it's auto-applied. Guards against one-off flukes.</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <label>Notify on apply</label>
+              <div class="hint">Emit a structured log event whenever a delta is applied, so you can audit what changed and roll back if needed.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="learning_notify_on_apply" checked><span class="slider"></span></label>
+          </div>
+        </div>
+      </details>
+
+      <!-- ═══ Task blueprints ═══ -->
+      <div class="section-head" style="margin-top:28px;">Task blueprints</div>
       <div class="toggle-row">
         <div>
-          <label>Task blueprints</label>
-          <div class="hint">Per-task markdown guidance (dos/don'ts, clarifications, lessons) auto-updated after each run with user consent. Leave off to skip entirely.</div>
+          <label>Enable task blueprints</label>
+          <div class="hint">Per-task markdown guidance (dos, don'ts, clarifications, lessons learned) that the agent reads before each run and updates afterwards with user consent. Leave off to skip blueprints entirely.</div>
         </div>
         <label class="toggle"><input type="checkbox" id="blueprint_enabled"><span class="slider"></span></label>
       </div>
@@ -893,222 +1256,93 @@
               <option value="filesystem">Filesystem (.md files)</option>
               <option value="backend">Storage backend (Redis/SQLite)</option>
             </select>
-            <div class="hint">Filesystem is editable in a text editor; backend stores blueprints alongside session data.</div>
+            <div class="hint">Filesystem mode stores each blueprint as an editable .md file — great for git-tracking. Backend mode keeps them alongside session data.</div>
           </div>
           <div class="field">
             <label>Blueprint directory</label>
             <input id="blueprint_dir" placeholder="defaults to {storage.base_path}/blueprints">
-            <div class="hint">Filesystem mode only — override the default blueprint folder.</div>
+            <div class="hint">Filesystem mode only — override where blueprint files live. Leave blank to use <code>{storage.base_path}/blueprints</code>.</div>
           </div>
         </div>
         <div class="toggle-row" style="border-bottom:none;">
           <div>
             <label>Auto-update after runs</label>
-            <div class="hint">Append lessons learned and bump version after each consented run.</div>
+            <div class="hint">After each consented run, append lessons learned and bump the blueprint's version. Off means blueprints stay frozen until you edit them by hand.</div>
           </div>
           <label class="toggle"><input type="checkbox" id="blueprint_auto_update" checked><span class="slider"></span></label>
         </div>
       </div>
 
-      <!-- ═══ Advanced storage options ═══ -->
       <details class="advanced">
-        <summary>Advanced storage &amp; quotas <span class="sum-desc">— file thresholds, quotas, health limits</span></summary>
+        <summary>Advanced blueprints <span class="sum-desc">— prompt injection cap, staleness</span></summary>
         <div class="advanced-body">
           <div class="row">
             <div class="field">
-              <label>Large file threshold (MB)</label>
-              <input id="storage_large_file_threshold_mb" type="number" value="5" min="1" max="10000">
-              <div class="hint">Outputs larger than this are written to disk as files instead of returned inline in task results.</div>
+              <label>Inject max chars</label>
+              <input id="blueprint_inject_max_chars" type="number" value="4000" min="100" max="100000">
+              <div class="hint">Cap on how much of a blueprint is injected into the system prompt. Large blueprints are truncated to this many characters to keep the prompt bounded.</div>
             </div>
             <div class="field">
-              <label>Result envelope max (KB)</label>
-              <input id="storage_result_envelope_max_kb" type="number" value="64" min="1" max="100000">
-              <div class="hint">Cap on the inline JSON envelope for a task result. Larger payloads are offloaded to a file.</div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Session quota (MB)</label>
-              <input id="storage_session_quota_mb" type="number" value="500" min="1" max="100000">
-              <div class="hint">Per-session disk quota. New outputs rejected once exceeded — old sessions are not auto-deleted.</div>
-            </div>
-            <div class="field">
-              <label>Atomic cleanup</label>
-              <div class="toggle-row" style="padding:0; border:none;">
-                <div class="hint" style="margin:0;">Delete session files in a single atomic move. Turn off on exotic filesystems that reject renames.</div>
-                <label class="toggle"><input type="checkbox" id="storage_atomic_cleanup" checked><span class="slider"></span></label>
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Disk health — warning (GB free)</label>
-              <input id="storage_health_warning_free_gb" type="number" step="0.1" value="10" min="0">
-              <div class="hint">Log a warning when free disk drops below this amount.</div>
-            </div>
-            <div class="field">
-              <label>Disk health — critical (GB free)</label>
-              <input id="storage_health_critical_free_gb" type="number" step="0.1" value="2" min="0">
-              <div class="hint">Reject new sessions once free disk drops below this amount.</div>
+              <label>Staleness warning (days)</label>
+              <input id="blueprint_staleness_warning_days" type="number" value="90" min="1" max="3650">
+              <div class="hint">Blueprints untouched for longer than this are flagged stale — the LLM is told to re-discover subtasks rather than blindly follow outdated guidance.</div>
             </div>
           </div>
         </div>
       </details>
 
-      <!-- ═══ Advanced SQLite ═══ -->
-      <details class="advanced">
-        <summary>Advanced SQLite <span class="sum-desc">— WAL, connection timeout, TTLs</span></summary>
-        <div class="advanced-body">
-          <div class="toggle-row">
-            <div>
-              <label>WAL mode</label>
-              <div class="hint">Write-Ahead Logging — better concurrency between readers and writers. Safe default; turn off only for filesystems that don't support it.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="sqlite_wal_mode" checked><span class="slider"></span></label>
-          </div>
-          <div class="field">
-            <label>Connection timeout (s)</label>
-            <input id="sqlite_connection_timeout_seconds" type="number" value="5" min="1" max="300">
-            <div class="hint">SQLite "busy timeout" — how long a write will wait for a concurrent lock before failing.</div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Session data TTL (s)</label>
-              <input id="sqlite_ttl_session_data_seconds" type="number" value="3600" min="60">
-              <div class="hint">In-flight session state expires after this. Safety net for abandoned sessions.</div>
-            </div>
-            <div class="field">
-              <label>Session index TTL (s)</label>
-              <input id="sqlite_ttl_session_index_seconds" type="number" value="86400" min="60">
-              <div class="hint">The index row (lookup metadata) lives longer than the full state so history still resolves.</div>
-            </div>
-          </div>
+    </div>
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" onclick="nextStep()">Next: Runtime &amp; delivery →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Step 7: Runtime & delivery ═══════════════ -->
+  <div class="step-panel" data-step="7">
+    <div class="card">
+      <h2>Runtime &amp; delivery</h2>
+      <p class="subtitle">Operational limits, boot-time behavior, and the surfaces that deliver the agent to end users (chat UI, code sandbox, per-user overrides).</p>
+
+      <div class="section-head">Session &amp; timeout settings</div>
+      <div class="row">
+        <div class="field">
+          <label>Session timeout (s)</label>
+          <input id="max_wait_seconds" type="number" value="120" min="10" max="3600">
+          <div class="hint">Max wall-clock time a single user session may run before being forcefully terminated. Covers the full plan-execute-synthesize cycle.</div>
         </div>
-      </details>
-
-      <!-- ═══ Advanced Redis ═══ -->
-      <details class="advanced">
-        <summary>Advanced Redis <span class="sum-desc">— auth, TLS, pool, TTLs, key prefix</span></summary>
-        <div class="advanced-body">
-          <div class="row-3">
-            <div class="field">
-              <label>Database</label>
-              <input id="redis_db" type="number" value="1" min="0" max="15">
-              <div class="hint">Logical DB index on the Redis instance.</div>
-            </div>
-            <div class="field">
-              <label>Username</label>
-              <input id="redis_username" placeholder="(blank for default user)">
-              <div class="hint">Redis ACL username. Leave blank for the default user.</div>
-            </div>
-            <div class="field">
-              <label>Password env var</label>
-              <input id="redis_password_env_var" placeholder="REDIS_PASSWORD">
-              <div class="hint">Env var name holding the password. Never paste the password itself.</div>
-            </div>
-          </div>
-
-          <div class="section-head">TLS</div>
-          <div class="toggle-row">
-            <div>
-              <label>Enable TLS</label>
-              <div class="hint">Connect using TLS. Required by managed Redis providers (AWS ElastiCache in-transit, Redis Cloud, etc.).</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="redis_tls_enabled"><span class="slider"></span></label>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Verify peer certificate</label>
-              <div class="hint">Validate the server's TLS cert against your CA bundle. Turn off only for self-signed dev setups.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="redis_tls_verify_peer" checked><span class="slider"></span></label>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>CA cert file</label>
-              <input id="redis_tls_ca_cert_file" placeholder="/path/to/ca.pem">
-              <div class="hint">Optional custom CA bundle, if your Redis uses a private CA.</div>
-            </div>
-            <div class="field">
-              <label>Client cert file</label>
-              <input id="redis_tls_cert_file" placeholder="/path/to/client.crt">
-              <div class="hint">For mutual TLS, point to the client certificate.</div>
-            </div>
-          </div>
-          <div class="field">
-            <label>Client key file</label>
-            <input id="redis_tls_key_file" placeholder="/path/to/client.key">
-            <div class="hint">Private key matching the client certificate. Permissions should be 0600.</div>
-          </div>
-
-          <div class="section-head">Connection pool</div>
-          <div class="row">
-            <div class="field">
-              <label>Pool max connections</label>
-              <input id="redis_pool_max_connections" type="number" value="20" min="1" max="1000">
-              <div class="hint">Upper bound on concurrent Redis connections. Size this with your <em>max concurrent sessions</em>.</div>
-            </div>
-            <div class="field">
-              <label>Pool min idle</label>
-              <input id="redis_pool_min_idle" type="number" value="5" min="0" max="1000">
-              <div class="hint">Keep this many warm connections even when idle to avoid cold-start latency.</div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Connection timeout (ms)</label>
-              <input id="redis_connection_timeout_ms" type="number" value="2000" min="100" max="60000">
-              <div class="hint">Timeout for establishing a new Redis connection.</div>
-            </div>
-            <div class="field">
-              <label>Socket timeout (ms)</label>
-              <input id="redis_socket_timeout_ms" type="number" value="1000" min="100" max="60000">
-              <div class="hint">Per-command socket read timeout.</div>
-            </div>
-          </div>
-
-          <div class="section-head">Key namespace &amp; TTLs</div>
-          <div class="field">
-            <label>Key prefix</label>
-            <input id="redis_key_prefix" value="cortex">
-            <div class="hint">All keys are namespaced under this prefix — lets multiple agents share a Redis instance safely.</div>
-          </div>
-          <div class="row-3">
-            <div class="field">
-              <label>Session data TTL (s)</label>
-              <input id="redis_ttl_session_data_seconds" type="number" value="3600" min="60">
-              <div class="hint">TTL on active session-state keys.</div>
-            </div>
-            <div class="field">
-              <label>Session index TTL (s)</label>
-              <input id="redis_ttl_session_index_seconds" type="number" value="86400" min="60">
-              <div class="hint">TTL on index rows that let history queries resolve a session id.</div>
-            </div>
-            <div class="field">
-              <label>Pub/Sub TTL (s)</label>
-              <input id="redis_ttl_pubsub_seconds" type="number" value="300" min="10">
-              <div class="hint">How long published streaming events stay replayable.</div>
-            </div>
-          </div>
+        <div class="field">
+          <label>Default task timeout (s)</label>
+          <input id="default_task_timeout" type="number" value="40" min="5" max="600">
+          <div class="hint">Default timeout applied to an individual task. Can be overridden per-task-type back in Step 4.</div>
         </div>
-      </details>
+      </div>
 
-      <!-- ═══ File input ═══ -->
-      <details class="advanced">
-        <summary>File input <span class="sum-desc">— max size, allowed MIME types</span></summary>
-        <div class="advanced-body">
-          <div class="field">
-            <label>Max file size (MB)</label>
-            <input id="file_input_max_size_mb" type="number" value="50" min="1" max="10000">
-            <div class="hint">Largest single attachment a user may upload to a session.</div>
-          </div>
-          <div class="field">
-            <label>Allowed MIME types (one per line)</label>
-            <textarea id="file_input_allowed_mime_types" rows="5" placeholder="text/plain&#10;application/pdf&#10;image/png"></textarea>
-            <div class="hint">Whitelist of accepted upload types. Leave blank to use the safe default set (text, PDF, Office docs, common images, audio).</div>
-          </div>
+      <div class="section-head">Concurrency limits</div>
+      <div class="row">
+        <div class="field">
+          <label>Max concurrent sessions</label>
+          <input id="max_concurrent_sessions" type="number" value="50" min="1" max="1000">
+          <div class="hint">Global cap on simultaneous sessions across all users. New requests above the cap get rejected with a 429 response.</div>
         </div>
-      </details>
+        <div class="field">
+          <label>Max sessions per user</label>
+          <input id="max_sessions_per_user" type="number" value="3" min="1" max="50">
+          <div class="hint">Per-user limit — prevents one user from monopolizing capacity by opening many parallel sessions.</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Max parallel tasks</label>
+          <input id="max_parallel_tasks" type="number" value="5" min="1" max="50">
+          <div class="hint">Within a single session, how many tasks may execute simultaneously. Higher = faster but more expensive (more parallel LLM and tool calls).</div>
+        </div>
+        <div class="field">
+          <label>Max tasks per session</label>
+          <input id="max_tasks_per_session" type="number" value="20" min="1" max="100">
+          <div class="hint">Upper limit on tasks in one session's task graph. Protects against runaway decompositions that balloon into hundreds of tasks.</div>
+        </div>
+      </div>
 
       <!-- ═══ Chat UI ═══ -->
       <details class="advanced">
@@ -1116,9 +1350,9 @@
         <div class="advanced-body">
           <div class="tip-box info"><div class="tip-content">
             Enables <code>cortex publish ui</code>: a clean chat interface with streaming responses,
-            file attachments, and per-user session history. History is stored via the configured
-            history backend above. File uploads are validated against the <strong>File input</strong>
-            MIME and size settings.
+            file attachments, and per-user session history. History is stored via the history
+            backend configured in the Storage step. File uploads are validated against the
+            <strong>File input</strong> MIME and size settings there.
           </div></div>
           <div class="field">
             <label><input id="ui_enabled" type="checkbox"> Enable chat UI</label>
@@ -1128,7 +1362,7 @@
             <div class="field">
               <label>Host</label>
               <input id="ui_host" type="text" value="0.0.0.0">
-              <div class="hint">Bind address. Use <code>127.0.0.1</code> for local-only.</div>
+              <div class="hint">Bind address. Use <code>0.0.0.0</code> to accept connections from any interface, <code>127.0.0.1</code> to restrict to the local machine.</div>
             </div>
             <div class="field">
               <label>Port</label>
@@ -1139,7 +1373,7 @@
           <div class="field">
             <label>UI title</label>
             <input id="ui_title" type="text" value="Cortex Agent">
-            <div class="hint">Shown in the browser tab and the sidebar header.</div>
+            <div class="hint">Shown in the browser tab and the sidebar header of the chat UI.</div>
           </div>
           <div class="field">
             <label>Auth mode</label>
@@ -1148,187 +1382,23 @@
               <option value="token">token (Authorization: Bearer …)</option>
               <option value="basic">basic (HTTP Basic)</option>
             </select>
-            <div class="hint"><code>none</code> assigns each browser an anonymous id so history persists per-device. <code>token</code>/<code>basic</code> gate the whole UI behind a shared credential.</div>
+            <div class="hint"><code>none</code> assigns each browser an anonymous id so history persists per-device. <code>token</code> / <code>basic</code> gate the whole UI behind a shared credential.</div>
           </div>
           <div class="field">
             <label>Token (for token mode)</label>
             <input id="ui_auth_token" type="text" placeholder="shared secret for Bearer auth">
-            <div class="hint">Clients must send <code>Authorization: Bearer &lt;token&gt;</code>.</div>
+            <div class="hint">Clients must send <code>Authorization: Bearer &lt;token&gt;</code>. Only used when auth mode is <code>token</code>.</div>
           </div>
           <div class="row">
             <div class="field">
               <label>Basic auth username</label>
               <input id="ui_auth_username" type="text">
+              <div class="hint">Shared username for HTTP Basic auth. Only used when auth mode is <code>basic</code>.</div>
             </div>
             <div class="field">
               <label>Basic auth password</label>
               <input id="ui_auth_password" type="password">
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <!-- ═══ Validation advanced ═══ -->
-      <details class="advanced">
-        <summary>Advanced validation <span class="sum-desc">— thresholds, weights, reporting</span></summary>
-        <div class="advanced-body">
-          <div class="tip-box info"><div class="tip-content">
-            These only apply when <strong>Response validation</strong> is enabled above.
-          </div></div>
-          <div class="row">
-            <div class="field">
-              <label>Pass threshold</label>
-              <input id="validation_threshold" type="number" step="0.05" value="0.75" min="0" max="1">
-              <div class="hint">Minimum overall score (0–1) required for a response to be considered valid.</div>
-            </div>
-            <div class="field">
-              <label>Critical threshold</label>
-              <input id="validation_critical_threshold" type="number" step="0.05" value="0.40" min="0" max="1">
-              <div class="hint">Below this the response is rejected outright instead of being flagged as low-quality.</div>
-            </div>
-          </div>
-          <div class="field">
-            <label>Validator timeout (s)</label>
-            <input id="validation_timeout_seconds" type="number" value="15" min="1" max="300">
-            <div class="hint">Max time the LLM judge may take per task output.</div>
-          </div>
-          <div class="section-head">Score weights (must sum to 1.0)</div>
-          <div class="row-3">
-            <div class="field">
-              <label>Intent match</label>
-              <input id="validation_weights_intent_match" type="number" step="0.05" value="0.50" min="0" max="1">
-              <div class="hint">Weight for "did this actually answer the user's request?"</div>
-            </div>
-            <div class="field">
-              <label>Completeness</label>
-              <input id="validation_weights_completeness" type="number" step="0.05" value="0.30" min="0" max="1">
-              <div class="hint">Weight for "did it cover every subtask?"</div>
-            </div>
-            <div class="field">
-              <label>Coherence</label>
-              <input id="validation_weights_coherence" type="number" step="0.05" value="0.20" min="0" max="1">
-              <div class="hint">Weight for internal consistency and fluency.</div>
-            </div>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Expose full report to user</label>
-              <div class="hint">Attach the validator's written critique to the response. Off keeps it internal (still logged).</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="validation_expose_report_to_user" checked><span class="slider"></span></label>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Expose numeric score</label>
-              <div class="hint">Show the 0–1 score to the user. Off by default because raw scores are noisy.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="validation_expose_score_to_user"><span class="slider"></span></label>
-          </div>
-        </div>
-      </details>
-
-      <!-- ═══ History advanced ═══ -->
-      <details class="advanced">
-        <summary>Advanced history <span class="sum-desc">— retention, context window, encryption</span></summary>
-        <div class="advanced-body">
-          <div class="tip-box info"><div class="tip-content">
-            These only apply when <strong>Session history</strong> is enabled above.
-          </div></div>
-          <div class="row">
-            <div class="field">
-              <label>Retention (days)</label>
-              <input id="history_retention_days" type="number" value="90" min="1" max="3650">
-              <div class="hint">Sessions older than this are pruned on the next maintenance pass.</div>
-            </div>
-            <div class="field">
-              <label>Max sessions in context</label>
-              <input id="history_max_sessions_in_context" type="number" value="5" min="0" max="100">
-              <div class="hint">How many recent sessions are surfaced back into the prompt when answering follow-ups.</div>
-            </div>
-          </div>
-          <div class="field">
-            <label>Persist task outputs (comma-separated task names)</label>
-            <input id="history_persist_task_outputs" placeholder="e.g. research_summary, meeting_notes">
-            <div class="hint">By default history stores the final answer only. Name specific task types here to keep their raw outputs queryable too.</div>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Enable full-text search</label>
-              <div class="hint">Build a search index over past sessions so users can query "what did we decide about X?".</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="history_search_enabled" checked><span class="slider"></span></label>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Encrypt at rest</label>
-              <div class="hint">Encrypt history records with a key from the env var below. Off uses plaintext storage.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="history_encryption_enabled"><span class="slider"></span></label>
-          </div>
-          <div class="field">
-            <label>Encryption key env var</label>
-            <input id="history_encryption_key_env_var" placeholder="CORTEX_HISTORY_KEY">
-            <div class="hint">Env var holding a base64-encoded 32-byte key. Losing this env var makes old history unreadable.</div>
-          </div>
-        </div>
-      </details>
-
-      <!-- ═══ Learning advanced ═══ -->
-      <details class="advanced">
-        <summary>Advanced learning <span class="sum-desc">— auto-apply thresholds, notifications</span></summary>
-        <div class="advanced-body">
-          <div class="tip-box info"><div class="tip-content">
-            These only apply when the <strong>Learning engine</strong> is enabled above.
-          </div></div>
-          <div class="row">
-            <div class="field">
-              <label>Auto-apply delta (runtime toggle)</label>
-              <div class="toggle-row" style="padding:0;border:none;">
-                <div class="hint" style="margin:0;">When the learning engine proposes a change, apply it automatically instead of waiting for review.</div>
-                <label class="toggle"><input type="checkbox" id="auto_apply_delta"><span class="slider"></span></label>
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field">
-              <label>Min confidence</label>
-              <select id="learning_auto_apply_min_confidence">
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high" selected>high</option>
-              </select>
-              <div class="hint">Only auto-apply proposals with at least this confidence level.</div>
-            </div>
-            <div class="field">
-              <label>Min confirmations</label>
-              <input id="learning_auto_apply_min_confirmations" type="number" value="3" min="1" max="100">
-              <div class="hint">Require the same proposal this many times before auto-applying it.</div>
-            </div>
-          </div>
-          <div class="toggle-row">
-            <div>
-              <label>Notify on apply</label>
-              <div class="hint">Emit a structured log event whenever a delta is applied, so you can audit changes.</div>
-            </div>
-            <label class="toggle"><input type="checkbox" id="learning_notify_on_apply" checked><span class="slider"></span></label>
-          </div>
-        </div>
-      </details>
-
-      <!-- ═══ Blueprint advanced ═══ -->
-      <details class="advanced">
-        <summary>Advanced blueprints <span class="sum-desc">— prompt injection cap, staleness</span></summary>
-        <div class="advanced-body">
-          <div class="row">
-            <div class="field">
-              <label>Inject max chars</label>
-              <input id="blueprint_inject_max_chars" type="number" value="4000" min="100" max="100000">
-              <div class="hint">Cap on the blueprint snippet injected into the system prompt. Large blueprints are truncated to this many characters.</div>
-            </div>
-            <div class="field">
-              <label>Staleness warning (days)</label>
-              <input id="blueprint_staleness_warning_days" type="number" value="90" min="1" max="3650">
-              <div class="hint">Blueprints untouched for longer than this are flagged stale — the LLM is told to re-discover subtasks rather than blindly follow them.</div>
+              <div class="hint">Shared password for HTTP Basic auth. Sent over the wire on every request — serve the UI over TLS.</div>
             </div>
           </div>
         </div>
@@ -1341,12 +1411,12 @@
           <div class="field">
             <label>Max input tokens</label>
             <input id="security_max_input_tokens" type="number" value="4000" min="100" max="200000">
-            <div class="hint">Hard cap on user-supplied input tokens per request. Rejects prompt-bomb attacks that try to blow out the context window.</div>
+            <div class="hint">Hard cap on user-supplied input tokens per request. Rejects prompt-bomb attacks that try to blow out the context window or drive up cost.</div>
           </div>
           <div class="field">
             <label>Secret scrub patterns (one regex per line)</label>
             <textarea id="security_secret_scrub_patterns" rows="4" placeholder="Bearer \S+&#10;api[_-]?key[_-]?=\S+&#10;password[_-]?=\S+&#10;token[_-]?=\S+"></textarea>
-            <div class="hint">Regex patterns matched against logs and LLM inputs; matches are replaced with <code>[REDACTED]</code>. Leave blank for the default set.</div>
+            <div class="hint">Regex patterns matched against logs and LLM inputs; matches are replaced with <code>[REDACTED]</code> before the text leaves the process. Leave blank to use the sensible default set.</div>
           </div>
         </div>
       </details>
@@ -1358,28 +1428,28 @@
           <div class="toggle-row">
             <div>
               <label>Require all tool servers at startup</label>
-              <div class="hint">Fail fast if any configured MCP server is unreachable. Off means the agent boots in a degraded state and retries later.</div>
+              <div class="hint">Fail fast at boot if any configured MCP server is unreachable. Off means the agent starts in a degraded state and retries the missing servers on demand.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="startup_require_all_servers"><span class="slider"></span></label>
           </div>
           <div class="toggle-row">
             <div>
               <label>Eager discovery</label>
-              <div class="hint">Probe every tool server at boot so the first request doesn't pay discovery latency. Slower startup, faster first response.</div>
+              <div class="hint">Probe every tool server at boot so the first user request doesn't pay discovery latency. Slower startup, faster first response — good for long-running production agents.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="startup_eager_discovery"><span class="slider"></span></label>
           </div>
           <div class="toggle-row">
             <div>
               <label>Log discovered tools</label>
-              <div class="hint">Print every discovered tool name at boot. Useful during setup, chatty in production.</div>
+              <div class="hint">Print every discovered tool name at boot. Useful during setup and when debugging capability issues; chatty in production.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="startup_log_discovered_tools" checked><span class="slider"></span></label>
           </div>
           <div class="toggle-row">
             <div>
               <label>Verify auth at startup</label>
-              <div class="hint">Test each tool server's credentials before marking it healthy.</div>
+              <div class="hint">Make a test call against each tool server's credentials before marking it healthy. Catches bad tokens at boot instead of on the first user request.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="startup_verify_auth" checked><span class="slider"></span></label>
           </div>
@@ -1387,18 +1457,18 @@
             <div class="field">
               <label>Discovery timeout (s)</label>
               <input id="startup_discovery_timeout_seconds" type="number" value="15" min="1" max="600">
-              <div class="hint">Overall time budget for boot-time discovery. Servers that don't respond are marked degraded.</div>
+              <div class="hint">Overall time budget for boot-time discovery across all tool servers. Servers that don't respond in time are marked degraded and retried later.</div>
             </div>
             <div class="field">
               <label>Background discovery concurrency</label>
               <input id="startup_background_discovery_concurrency" type="number" value="10" min="1" max="100">
-              <div class="hint">Max parallel probes when discovery runs in the background (non-eager mode).</div>
+              <div class="hint">Max parallel probes when discovery runs in the background (i.e. eager discovery is off). Higher finishes faster but hits your tool servers harder.</div>
             </div>
           </div>
           <div class="field">
             <label>Capability registry path</label>
             <input id="startup_capability_registry_path" placeholder="(auto-derived from storage.base_path)">
-            <div class="hint">Path to the persisted capability cache. Leave blank to use the default location under <code>storage.base_path</code>.</div>
+            <div class="hint">Where the persisted capability cache lives so the agent doesn't re-discover every boot. Leave blank to use the default location under <code>storage.base_path</code>.</div>
           </div>
         </div>
       </details>
@@ -1410,14 +1480,14 @@
           <div class="toggle-row">
             <div>
               <label>Allow user-supplied Cortex MCPs</label>
-              <div class="hint">Let end users plug in their own Cortex-branded MCP servers at runtime. Safe by default.</div>
+              <div class="hint">Let end users plug in their own Cortex-branded MCP servers at runtime (agents built with this framework). Safe default — they run in the same trust zone as your agent.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="user_allow_user_cortex_mcp" checked><span class="slider"></span></label>
           </div>
           <div class="toggle-row">
             <div>
               <label>Allow user-supplied tool servers</label>
-              <div class="hint">Let end users add arbitrary third-party MCP servers. Off by default — opening this means any user can connect any tool.</div>
+              <div class="hint">Let end users register arbitrary third-party MCP servers. Off by default — turning this on means any user can attach any tool, which is powerful but broadens the trust boundary.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="user_allow_user_tool_servers"><span class="slider"></span></label>
           </div>
@@ -1431,7 +1501,7 @@
           <div class="toggle-row">
             <div>
               <label>Enable sandbox</label>
-              <div class="hint">Allow task types with <code>capability_hint: code_exec</code> to run Python inside a sandbox. Off disables all code execution.</div>
+              <div class="hint">Allow task types with <code>capability_hint: code_exec</code> to run generated Python inside a sandboxed subprocess. Off disables all code execution regardless of task config.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="code_sandbox_enabled"><span class="slider"></span></label>
           </div>
@@ -1439,12 +1509,12 @@
             <div class="field">
               <label>Sandbox timeout (s)</label>
               <input id="code_sandbox_timeout_seconds" type="number" value="60" min="1" max="3600">
-              <div class="hint">Max wall-clock time for a single code execution.</div>
+              <div class="hint">Max wall-clock time for a single sandboxed code run. The subprocess is killed when this elapses.</div>
             </div>
             <div class="field">
               <label>Allow network</label>
               <div class="toggle-row" style="padding:0;border:none;">
-                <div class="hint" style="margin:0;">Grant the sandbox outbound network access. Off blocks all sockets — strongly recommended.</div>
+                <div class="hint" style="margin:0;">Grant the sandbox outbound network access. Off blocks all sockets — strongly recommended unless a specific task genuinely needs to fetch data from the web.</div>
                 <label class="toggle"><input type="checkbox" id="code_sandbox_allow_network"><span class="slider"></span></label>
               </div>
             </div>
@@ -1452,14 +1522,14 @@
           <div class="toggle-row">
             <div>
               <label>Ask before persisting scripts</label>
-              <div class="hint">After execution, prompt the developer before saving the generated script. Off means scripts are discarded silently.</div>
+              <div class="hint">After a successful execution, prompt the developer before saving the generated script to disk. Off means scripts are discarded silently once the run finishes.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="code_sandbox_ask_persist_consent" checked><span class="slider"></span></label>
           </div>
           <div class="toggle-row">
             <div>
               <label>Auto-add to cortex.yaml on consent</label>
-              <div class="hint">When the developer consents to save a script, also register it as a task type in cortex.yaml automatically. Off leaves YAML edits manual.</div>
+              <div class="hint">When the developer agrees to save a script, also register it as a new task type in cortex.yaml automatically. Off leaves the YAML edit for you to do manually.</div>
             </div>
             <label class="toggle"><input type="checkbox" id="code_sandbox_auto_add_to_yaml"><span class="slider"></span></label>
           </div>
@@ -1473,8 +1543,8 @@
     </div>
   </div>
 
-  <!-- ═══════════════ Step 6: Publish Mode ═══════════════ -->
-  <div class="step-panel" data-step="6">
+  <!-- ═══════════════ Step 8: Publish Mode ═══════════════ -->
+  <div class="step-panel" data-step="8">
     <div class="card">
       <h2>Publish mode</h2>
       <p class="subtitle">Choose how you want to deploy and run your agent.</p>
@@ -1511,8 +1581,8 @@
     </div>
   </div>
 
-  <!-- ═══════════════ Step 7: Review ═══════════════ -->
-  <div class="step-panel" data-step="7">
+  <!-- ═══════════════ Step 9: Review ═══════════════ -->
+  <div class="step-panel" data-step="9">
     <div class="card">
       <h2>Review &amp; finish</h2>
       <p class="subtitle">Review your generated configuration, then save and publish.</p>
@@ -1542,7 +1612,7 @@
 
 <script>
 // ─── State ───
-const STEPS = ['Welcome','Agent','LLM','Tools','Tasks','Storage','Publish','Review'];
+const STEPS = ['Welcome','Agent','LLM','Tools','Tasks','Storage','Adaptive','Runtime','Publish','Review'];
 let currentStep = 0;
 let selectedMode = null;
 let toolServers = [];
@@ -1563,6 +1633,10 @@ const PROVIDER_FALLBACK = {
   grok:                   { models: ['grok-3','grok-3-mini'], env: 'XAI_API_KEY' },
   mistral:                { models: ['mistral-large-latest'], env: 'MISTRAL_API_KEY' },
   deepseek:               { models: ['deepseek-chat','deepseek-reasoner'], env: 'DEEPSEEK_API_KEY' },
+  local:                  {
+    models: ['gemma4','gemma4:e2b','gemma4:e4b','gemma4:26b','gemma4:31b','llama3.1','llama3.2','qwen2.5','mistral','phi4'],
+    env: '', baseUrl: true, defaultBaseUrl: 'http://localhost:11434/v1', apiKeyOptional: true,
+  },
 };
 
 // Helper: set a field value only if it exists in the DOM (Advanced expanders
@@ -1885,7 +1959,7 @@ function showStep(idx) {
   currentStep = idx;
   updateProgressBar();
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  if (idx === 7) generateConfig();
+  if (idx === 9) generateConfig();
 }
 function nextStep() { if (currentStep < STEPS.length - 1) showStep(currentStep + 1); }
 function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
@@ -1893,17 +1967,69 @@ function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
 // ─── Provider ───
 function getProviderInfo(val) {
   const fromServer = providers.find(p => p.value === val);
-  if (fromServer) return { models: fromServer.models, env: fromServer.default_env, baseUrl: fromServer.needs_base_url };
+  if (fromServer) {
+    return {
+      models: fromServer.models,
+      env: fromServer.default_env,
+      baseUrl: fromServer.needs_base_url,
+      defaultBaseUrl: fromServer.default_base_url || '',
+      apiKeyOptional: !!fromServer.api_key_optional,
+    };
+  }
   return PROVIDER_FALLBACK[val] || PROVIDER_FALLBACK.anthropic;
 }
 
 function onProviderChange() {
   const val = document.getElementById('provider').value;
   const info = getProviderInfo(val);
-  const modelSelect = document.getElementById('model');
-  modelSelect.innerHTML = info.models.map(m => `<option value="${m}">${m}</option>`).join('');
-  document.getElementById('api_key_env_var').value = info.env;
-  document.getElementById('baseUrlGroup').style.display = info.baseUrl ? 'block' : 'none';
+  const modelInput = document.getElementById('model');
+  const datalist = document.getElementById('modelSuggestions');
+  const models = info.models || [];
+  datalist.innerHTML = models.map(m => `<option value="${m}"></option>`).join('');
+  // Pre-fill the first suggestion only if the user hasn't entered anything yet,
+  // or if the current value isn't valid for the newly selected provider.
+  if (!modelInput.value || !models.includes(modelInput.value)) {
+    modelInput.value = models[0] || '';
+  }
+  modelInput.placeholder = val === 'local'
+    ? 'e.g. gemma4:e4b — any tag you have pulled locally'
+    : 'Model name';
+
+  // API key field — optional for local providers.
+  const apiKeyInput = document.getElementById('api_key_env_var');
+  const apiKeyHint = document.getElementById('apiKeyHint');
+  const apiKeyLabel = document.getElementById('apiKeyLabel');
+  apiKeyInput.value = info.env || '';
+  if (info.apiKeyOptional) {
+    apiKeyLabel.textContent = 'API key environment variable (optional)';
+    apiKeyInput.placeholder = 'Leave blank for Ollama / LM Studio';
+    apiKeyHint.innerHTML = 'Local servers (Ollama, LM Studio, vLLM) ignore the <code>Authorization</code> header — leave this blank. Set it only if your proxy (e.g. LiteLLM) requires a key.';
+  } else {
+    apiKeyLabel.textContent = 'API key environment variable';
+    apiKeyInput.placeholder = '';
+    apiKeyHint.innerHTML = 'The env var name where your API key is stored (e.g. <code>ANTHROPIC_API_KEY</code>). Do not paste the key itself.';
+  }
+
+  // Base URL — show for proxy providers and local. Pre-fill when provider
+  // advertises a default, but don't clobber a value the user already typed.
+  const baseUrlGroup = document.getElementById('baseUrlGroup');
+  const baseUrlInput = document.getElementById('base_url');
+  const baseUrlHint = document.getElementById('baseUrlHint');
+  baseUrlGroup.style.display = info.baseUrl ? 'block' : 'none';
+  if (info.baseUrl) {
+    if (val === 'local') {
+      baseUrlInput.placeholder = 'http://localhost:11434/v1';
+      if (!baseUrlInput.value) baseUrlInput.value = info.defaultBaseUrl || 'http://localhost:11434/v1';
+      baseUrlHint.innerHTML = 'OpenAI-compatible endpoint on your machine. Ollama: <code>http://localhost:11434/v1</code>, LM Studio: <code>http://localhost:1234/v1</code>, vLLM: <code>http://localhost:8000/v1</code>.';
+    } else {
+      baseUrlInput.placeholder = 'https://your-proxy.example.com/v1';
+      baseUrlHint.textContent = 'Required for proxy/gateway providers.';
+    }
+  }
+
+  // Gemma 4 quickstart card — only visible when provider is local.
+  const quickstart = document.getElementById('gemmaQuickstart');
+  if (quickstart) quickstart.style.display = val === 'local' ? 'block' : 'none';
 }
 
 // ─── Named LLM providers ───
@@ -1923,7 +2049,7 @@ function renderLlmProviders() {
   const list = document.getElementById('llmProviderList');
   if (!list) return;
   if (llmProviders.length === 0) { list.innerHTML = ''; return; }
-  const opts = (providers.length ? providers.map(p => p.value) : ['anthropic','anthropic_compatible','openai','gemini','bedrock','azure_ai','grok','mistral','deepseek']);
+  const opts = (providers.length ? providers.map(p => p.value) : ['anthropic','anthropic_compatible','openai','gemini','bedrock','azure_ai','grok','mistral','deepseek','local']);
   list.innerHTML = llmProviders.map(p => `
     <div class="list-item">
       <button class="remove-btn" onclick="removeLlmProvider(${p.id})">&times;</button>

@@ -157,6 +157,18 @@ def _get_providers():
         {"value": "grok", "label": "Grok (xAI)", "models": ["grok-3", "grok-3-mini"], "default_env": "XAI_API_KEY"},
         {"value": "mistral", "label": "Mistral", "models": ["mistral-large-latest"], "default_env": "MISTRAL_API_KEY"},
         {"value": "deepseek", "label": "DeepSeek", "models": ["deepseek-chat", "deepseek-reasoner"], "default_env": "DEEPSEEK_API_KEY"},
+        {
+            "value": "local",
+            "label": "Local LLM (Ollama / LM Studio / vLLM)",
+            "models": [
+                "gemma4", "gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b",
+                "llama3.1", "llama3.2", "qwen2.5", "mistral", "phi4",
+            ],
+            "default_env": "",
+            "default_base_url": "http://localhost:11434/v1",
+            "needs_base_url": True,
+            "api_key_optional": True,
+        },
     ]
 
 

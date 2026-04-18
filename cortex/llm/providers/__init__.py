@@ -8,6 +8,7 @@ from cortex.llm.providers.gemini_provider import GeminiProvider
 from cortex.llm.providers.grok_provider import GrokProvider
 from cortex.llm.providers.mistral_provider import MistralProvider
 from cortex.llm.providers.deepseek_provider import DeepSeekProvider
+from cortex.llm.providers.local_provider import LocalProvider
 from cortex.llm.providers.custom_provider import CustomProvider
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "GrokProvider",
     "MistralProvider",
     "DeepSeekProvider",
+    "LocalProvider",
     "CustomProvider",
 ]

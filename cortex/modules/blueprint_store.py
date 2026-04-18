@@ -20,7 +20,6 @@ Blueprint file format:
     ---
     name: <unique file name, no extension>
     task_name: <task_type.name this blueprint steers>
-    deterministic: true|false
     version: 3
     updated_at: 2026-04-10T12:00:00Z
     last_successful_run_at: 2026-04-10T11:00:00Z
@@ -114,12 +113,10 @@ class Blueprint:
     def to_markdown(self) -> str:
         if not self.updated_at:
             self.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        det_str = "true" if self.deterministic else "false"
         lines = [
             "---",
             f"name: {self.name}",
             f"task_name: {self.task_name}",
-            f"deterministic: {det_str}",
             f"version: {self.version}",
             f"updated_at: {self.updated_at}",
             f"last_successful_run_at: {self.last_successful_run_at or ''}",
@@ -194,11 +191,9 @@ class Blueprint:
                 k, v = line.split(":", 1)
                 meta[k.strip()] = v.strip()
 
-        det_raw = meta.get("deterministic", "false").lower()
         bp = cls(
             name=meta.get("name", ""),
             task_name=meta.get("task_name", ""),
-            deterministic=det_raw in ("true", "1", "yes"),
             version=int(meta.get("version", "1") or 1),
             updated_at=meta.get("updated_at", ""),
             last_successful_run_at=meta.get("last_successful_run_at", ""),
@@ -450,9 +445,10 @@ class BlueprintStore:
 
     async def load_or_create(self, name: str, task_name: str, deterministic: bool = False) -> Blueprint:
         bp = await self.load(name)
-        if bp is not None:
-            return bp
-        return Blueprint(name=name, task_name=task_name, deterministic=deterministic, version=1)
+        if bp is None:
+            bp = Blueprint(name=name, task_name=task_name, version=1)
+        bp.deterministic = deterministic
+        return bp
 
     async def append_lesson(
         self,
