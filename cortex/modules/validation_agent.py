@@ -1,12 +1,11 @@
 """ValidationAgent — hardened isolated validation of final responses."""
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from cortex.config.schema import ValidationConfig
-from cortex.exceptions import CortexConfigError, CortexValidationError
+from cortex.exceptions import CortexConfigError
 from cortex.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)

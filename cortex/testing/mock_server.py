@@ -1,7 +1,6 @@
 """MockToolServer — lightweight HTTP server for testing tool server integrations."""
 import asyncio
-import json
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict, Optional
 from aiohttp import web
 
 

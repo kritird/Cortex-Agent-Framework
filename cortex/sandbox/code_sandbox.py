@@ -3,7 +3,6 @@ import asyncio
 import logging
 import os
 import re
-import shutil
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -386,7 +385,7 @@ class CodeSandbox:
         if source_code.startswith("```"):
             lines = source_code.splitlines()
             source_code = "\n".join(
-                l for l in lines if not l.strip().startswith("```")
+                line for line in lines if not line.strip().startswith("```")
             )
 
         result = await self.execute(

@@ -347,7 +347,7 @@ class Blueprint:
             )
         if self.lessons_learned:
             parts.append(
-                "Lessons learned:\n" + "\n".join(f"  - {l}" for l in self.lessons_learned)
+                "Lessons learned:\n" + "\n".join(f"  - {lesson}" for lesson in self.lessons_learned)
             )
 
         block = "\n".join(parts)

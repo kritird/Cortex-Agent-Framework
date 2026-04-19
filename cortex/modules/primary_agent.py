@@ -3,12 +3,10 @@ import asyncio
 import json
 import logging
 import re
-import time
-from typing import TYPE_CHECKING, AsyncIterator, Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
-from cortex.config.schema import CortexConfig, TaskTypeConfig
+from cortex.config.schema import CortexConfig
 from cortex.llm.client import LLMClient
-from cortex.llm.context import TokenUsage
 from cortex.modules.blueprint_store import BlueprintStore
 from cortex.modules.capability_scout import ScoutResult
 from cortex.modules.history_store import HistoryRecord
@@ -212,6 +210,11 @@ class PrimaryAgent:
         self._blueprint_store = blueprint_store
         self._clarification_events: Dict[str, asyncio.Event] = {}
         self._clarification_answers: Dict[str, str] = {}
+        self._scratchpad: str = ""  # session-scoped reasoning trace, reset each session
+
+    def reset_session_state(self) -> None:
+        """Clear per-session state so a reused PrimaryAgent starts fresh."""
+        self._scratchpad = ""
 
     async def _load_blueprint_blocks(
         self,
@@ -245,6 +248,81 @@ class PrimaryAgent:
                 continue
             blocks.append(bp.to_prompt_block(max_chars=max_chars, is_stale=tt.name in stale))
         return blocks
+
+    async def converse(
+        self,
+        session_id: str,
+        request: str,
+        history_context: List[HistoryRecord],
+        available_capabilities: List[str],
+        event_queue: asyncio.Queue,
+        task_type_names: Optional[List[str]] = None,
+    ) -> str:
+        """Streaming direct reply for chat-mode turns.
+
+        Used when IntentGate routes a turn as pure conversation — no scout,
+        no decomposition, no envelopes. The system prompt is derived from
+        ``agent.description`` plus the agent's declared capabilities so the
+        model can answer capability questions ("what can you do?") truthfully
+        without inventing tools it doesn't have.
+        """
+        caps = sorted(set(available_capabilities or []))
+        task_names = sorted(set(task_type_names or []))
+
+        system_parts = [
+            f"You are {self._config.agent.name}.",
+            self._config.agent.description,
+            "",
+            "You are replying to a conversational turn from the user. "
+            "Answer directly and concisely. Do not pretend to execute a task. "
+            "If the user asks what you can do, describe the capabilities and "
+            "task types listed below in plain language.",
+        ]
+        if caps:
+            system_parts.append("")
+            system_parts.append("Available capabilities: " + ", ".join(caps))
+        if task_names:
+            system_parts.append("Declared task types: " + ", ".join(task_names))
+        system_prompt = "\n".join(system_parts)
+
+        messages: List[Dict] = []
+        for rec in (history_context or [])[-self._config.history.max_sessions_in_context:]:
+            if rec.original_request:
+                messages.append({"role": "user", "content": rec.original_request[:1000]})
+            if rec.response_summary:
+                messages.append({"role": "assistant", "content": rec.response_summary[:1000]})
+        messages.append({"role": "user", "content": request})
+
+        await event_queue.put(StatusEvent(
+            message="Responding...",
+            session_id=session_id,
+            event_type=EventType.STATUS,
+        ))
+
+        full_response = ""
+        async for token in self._llm.stream(
+            messages=messages,
+            system=system_prompt,
+            provider_name="default",
+        ):
+            full_response += token
+            await event_queue.put(ResultEvent(
+                content=token,
+                session_id=session_id,
+                partial=True,
+            ))
+
+        await event_queue.put(ResultEvent(
+            content=full_response,
+            session_id=session_id,
+            partial=False,
+        ))
+
+        logger.info(
+            "Converse complete for session %s (%d chars)",
+            session_id, len(full_response),
+        )
+        return full_response
 
     async def decompose(
         self,
@@ -429,12 +507,10 @@ class PrimaryAgent:
         # Merge auto excerpts with provided bash_excerpts
         all_excerpts = {**auto_excerpts, **bash_excerpts}
 
-        context_parts = [
-            f"Original user request:\n{original_request}",
-            "",
-            "Task results summary:",
-            summary_text,
-        ]
+        has_envelopes = bool(result_envelopes)
+        context_parts = [f"Original user request:\n{original_request}"]
+        if has_envelopes:
+            context_parts += ["", "Task results summary:", summary_text]
         if all_excerpts:
             excerpt_lines = ["", "Additional file content:"]
             for label, excerpt in all_excerpts.items():
@@ -452,11 +528,20 @@ class PrimaryAgent:
         if self._config.agent.synthesis_guidance:
             context_parts.append(f"\n{self._config.agent.synthesis_guidance}")
 
-        synthesis_system = (
-            f"You are {self._config.agent.name}. "
-            f"Synthesise the task results into a complete, coherent response for the user. "
-            f"Use the task summaries provided — do not invent information not present in the summaries."
-        )
+        if has_envelopes:
+            synthesis_system = (
+                f"You are {self._config.agent.name}. "
+                f"Synthesise the task results into a complete, coherent response for the user. "
+                f"Use the task summaries provided — do not invent information not present in the summaries."
+            )
+        else:
+            # No tasks ran — respond directly. Avoids the "I need task summaries"
+            # meta-reply when this path is hit (e.g. RPC caller sent a
+            # non-actionable input, or IntentGate is disabled).
+            synthesis_system = (
+                f"You are {self._config.agent.name}. {self._config.agent.description} "
+                f"Respond directly and concisely to the user's request below."
+            )
 
         await event_queue.put(StatusEvent(
             message="Synthesising final response...",
@@ -801,6 +886,11 @@ class PrimaryAgent:
             for tt in self._config.task_types
         ]
 
+        scratchpad_block = (
+            f"\n\n## Reasoning Scratchpad (accumulated this session)\n{self._scratchpad}"
+            if self._scratchpad else ""
+        )
+
         system = (
             "You are a session replanner for an AI agent framework. "
             "Given the results of completed tasks and the remaining pending tasks, "
@@ -820,13 +910,19 @@ class PrimaryAgent:
             "- For add ops: 'task_type' MUST be one of the types listed below — "
             "  you cannot invent new types. 'depends_on' is a list of task_name "
             "  strings. Never re-add work that is already pending or completed.\n\n"
+            "You must also update the reasoning scratchpad: a concise structured note "
+            "(max 300 words) accumulating what has been confirmed, what is still open, "
+            "and any strategy adjustments. This replaces the previous scratchpad entirely.\n\n"
             "Respond with EXACTLY one JSON object and nothing else:\n"
             "  {\"changes\": [\n"
             "    {\"op\": \"remove\", \"task_name\": \"...\"},\n"
             "    {\"op\": \"modify\", \"task_name\": \"...\", \"instruction\": \"...\"},\n"
             "    {\"op\": \"add\", \"task_name\": \"...\", \"task_type\": \"...\", "
             "\"instruction\": \"...\", \"depends_on\": [\"...\"]}\n"
-            "  ]}\n"
+            "  ],\n"
+            "  \"scratchpad\": \"### Confirmed:\\n...\\n### Open:\\n...\\n### Strategy:\\n...\"\n"
+            "  }\n"
+            + scratchpad_block
         )
 
         user_msg = (
@@ -843,7 +939,7 @@ class PrimaryAgent:
                 messages=[{"role": "user", "content": user_msg}],
                 system=system,
                 provider_name="default",
-                max_tokens=600,
+                max_tokens=1000,
             )
             raw = (response.content or "").strip()
             if raw.startswith("```"):
@@ -853,6 +949,13 @@ class PrimaryAgent:
                 raw = raw.strip()
             parsed = json.loads(raw)
             changes = parsed.get("changes") or []
+
+            # Persist the updated scratchpad regardless of whether there are changes.
+            updated_scratchpad = (parsed.get("scratchpad") or "").strip()
+            if updated_scratchpad:
+                self._scratchpad = updated_scratchpad
+                logger.debug("Replan: scratchpad updated (%d chars)", len(self._scratchpad))
+
             if not changes:
                 logger.debug("Replan: no changes needed")
                 return

@@ -1,11 +1,10 @@
 """ObservabilityEmitter — dual-stream emitter for operational logs and audit log."""
 import json
 import logging
-import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Optional
 
 from cortex.modules.history_store import HistoryRecord
 from cortex.modules.result_envelope_store import ResultEnvelope

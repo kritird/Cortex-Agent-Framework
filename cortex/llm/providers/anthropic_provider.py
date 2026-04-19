@@ -97,7 +97,7 @@ class AnthropicProvider:
         try:
             response = await self._client.messages.create(
                 model=self._config.model,
-                max_tokens=5,
+                max_tokens=200,
                 messages=[{"role": "user", "content": "Hi"}],
             )
             return bool(response.content)

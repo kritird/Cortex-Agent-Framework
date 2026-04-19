@@ -2,11 +2,10 @@
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 import yaml
 
 from cortex.framework import CortexFramework, SessionResult
-from cortex.modules.result_envelope_store import ResultEnvelope
 from cortex.streaming.status_events import StatusEvent
 
 

@@ -1,13 +1,41 @@
 agent:
   name: MyTestAgent
   description: An intelligent AI agent
+  # "interactive" — chat UI, CLI, dev mode. Chat-shaped turns get a direct
+  # conversational reply; task-shaped turns run the full decompose path.
+  # "rpc" — agent-as-callable (e.g. published MCP server). Every turn is
+  # treated as a task and no interactive clarifications are emitted.
+  # The `CORTEX_INTERACTION_MODE` env var overrides this field at runtime
+  # (cortex publish mcp sets it to "rpc" automatically).
+  interaction_mode: interactive
+  time:
+    default_max_wait_seconds: 1000
+    default_task_timeout_seconds: 500
+  concurrency:
+    max_concurrent_sessions: 5
+  intent_gate:
+    enabled: true
+    # Heuristic confidence at/above which Stage 2 LLM classifier is skipped.
+    heuristic_confidence_threshold: 0.7
+    # LLM provider for Stage 2. "default" reuses the main provider.
+    llm_provider: default
+    timeout_seconds: 5.0
 llm_access:
   default:
-    provider: anthropic
-    model: claude-sonnet-4-20250514
-    api_key_env_var: ANTHROPIC_API_KEY
+    provider: local
+    model: gemma4
+    api_key_env_var: ''
     max_tokens: 4096
+    base_url: http://localhost:11434/v1
+    temperature: 1
 storage:
   base_path: ./cortex_storage
-task_types: []
-tool_servers: {}
+ui:
+  enabled: true
+blueprint:
+  enabled: true
+history:
+  enabled: true
+  retention_days: 90
+ant_colony:
+  enabled: true

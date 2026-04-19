@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cortex-agent-framework"
-version = "1.1.0"
+version = "1.2.0"
 description = "Fan-Out/Fan-In agentic orchestration framework with multi-provider LLM support and MCP tool integration."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -85,3 +85,7 @@ asyncio_mode = "auto"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cortex*"]
+
+[tool.setuptools.package-data]
+"cortex.ui" = ["static/*"]
+"cortex.wizard" = ["static/*"]

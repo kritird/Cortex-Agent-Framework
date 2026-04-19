@@ -2,7 +2,6 @@
 import mimetypes
 import os
 from pathlib import Path
-from typing import Optional
 
 from cortex.exceptions import CortexSecurityError
 

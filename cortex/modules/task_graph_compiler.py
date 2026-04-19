@@ -1,12 +1,11 @@
 """TaskGraphCompiler — compiles task_types into a DAG and instantiates runtime graphs."""
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 from cortex.config.schema import TaskTypeConfig
-from cortex.exceptions import CortexCycleError, CortexConfigError, CortexMissingDependencyError
+from cortex.exceptions import CortexCycleError, CortexMissingDependencyError
 from cortex.identity import Principal
-from cortex.modules.result_envelope_store import TaskEnvelope
 
 logger = logging.getLogger(__name__)
 

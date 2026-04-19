@@ -3,7 +3,7 @@ from typing import AsyncIterator, Dict, List, Optional
 
 from cortex.config.schema import LLMAccessConfig, LLMProviderConfig
 from cortex.exceptions import CortexProviderError
-from cortex.llm.context import LLMResponse, TokenUsage
+from cortex.llm.context import LLMResponse
 
 
 def _build_provider(config: LLMProviderConfig):

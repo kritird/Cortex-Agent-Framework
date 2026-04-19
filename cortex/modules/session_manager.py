@@ -3,15 +3,15 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from cortex.config.schema import AgentConfig, StorageConfig, HistoryConfig
-from cortex.exceptions import CortexSessionLimitError, ActiveSessionInfo, CortexStorageError
-from cortex.modules.history_store import HistoryRecord, HistoryStore, TaskCompletion, TokenUsageByRole
+from cortex.exceptions import CortexSessionLimitError, ActiveSessionInfo
+from cortex.modules.history_store import HistoryRecord, HistoryStore
 
 logger = logging.getLogger(__name__)
 

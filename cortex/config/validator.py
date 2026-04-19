@@ -1,7 +1,6 @@
 """Schema validation with detailed error messages."""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from cortex.exceptions import CortexConfigError
 
 
 def validate_config(data: Dict[str, Any]) -> List[str]:
@@ -54,7 +53,6 @@ def validate_config(data: Dict[str, Any]) -> List[str]:
         for i, task in enumerate(data["task_types"]):
             if not isinstance(task, dict):
                 continue
-            task_name = task.get("name", f"[{i}]")
             for dep in task.get("depends_on", []):
                 if dep not in task_names:
                     errors.append(

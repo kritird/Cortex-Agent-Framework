@@ -1,5 +1,4 @@
 """cortex ui — launch the monitoring dashboard."""
-import asyncio
 import webbrowser
 import click
 

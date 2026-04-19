@@ -1,7 +1,6 @@
 """In-process memory storage backend (default)."""
 import asyncio
 import fnmatch
-import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 

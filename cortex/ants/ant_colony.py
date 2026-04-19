@@ -5,12 +5,9 @@ The colony hatches ants on demand, persists their state to ants.yaml,
 supervises their processes, and restarts crashed ants automatically.
 """
 import asyncio
-import json
 import logging
 import os
-import signal
 import sys
-import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path

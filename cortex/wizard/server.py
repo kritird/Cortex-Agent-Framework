@@ -1,5 +1,4 @@
 """Local HTTP server for the setup wizard at localhost:7799."""
-import json
 import os
 import subprocess
 import sys
@@ -47,18 +46,23 @@ class WizardServer:
         async def handle_validate(request):
             data = await request.json()
             config_text = data.get("config", "")
+            mode = (data.get("mode") or "").strip()
             config_path = "_cortex_wizard_tmp.yaml"
             try:
                 with open(config_path, "w") as f:
                     f.write(config_text)
                 from cortex.config.loader import load_config
                 load_config(config_path)
-                return web.json_response({"valid": True, "errors": []})
             except Exception as e:
                 return web.json_response({"valid": False, "errors": [str(e)]})
             finally:
                 if os.path.exists(config_path):
                     os.unlink(config_path)
+
+            mode_errors = _validate_publish_mode(config_text, mode) if mode else []
+            if mode_errors:
+                return web.json_response({"valid": False, "errors": mode_errors})
+            return web.json_response({"valid": True, "errors": []})
 
         async def handle_save(request):
             data = await request.json()
@@ -146,6 +150,65 @@ class WizardServer:
             await self._runner.cleanup()
 
 
+def _validate_publish_mode(config_text: str, mode: str) -> list:
+    """Check that the YAML has the mandatory fields for the chosen publish target.
+
+    The base schema load already covers framework-wide requirements. This only
+    catches gaps that matter for a specific ``cortex publish <mode>`` command —
+    e.g. publishing a Chat UI with ``ui.enabled: false``.
+    """
+    import yaml
+    try:
+        raw = yaml.safe_load(config_text) or {}
+    except Exception as e:
+        return [f"YAML parse failed: {e}"]
+
+    errors: list = []
+
+    if mode == "ui":
+        ui = raw.get("ui") or {}
+        if not ui.get("enabled"):
+            errors.append(
+                "Chat UI publish target requires `ui.enabled: true`. "
+                "Enable the Chat UI step in the wizard before publishing as UI."
+            )
+        auth = (ui.get("auth") or {})
+        auth_mode = auth.get("mode", "none")
+        if auth_mode == "token" and not auth.get("token"):
+            errors.append(
+                "Chat UI auth.mode is 'token' but no `ui.auth.token` is set. "
+                "Set a token in the Chat UI step or switch auth to 'none'."
+            )
+        if auth_mode == "basic" and (not auth.get("username") or not auth.get("password")):
+            errors.append(
+                "Chat UI auth.mode is 'basic' but `ui.auth.username` and/or "
+                "`ui.auth.password` are missing. Fill both in the Chat UI step."
+            )
+
+    if mode == "mcp":
+        if not raw.get("task_types"):
+            errors.append(
+                "MCP publish target needs at least one entry under `task_types` — "
+                "that's what the MCP server exposes to callers. Add a task type "
+                "in the Task Types step before publishing as MCP."
+            )
+
+    if mode == "docker":
+        # Docker containerises whatever dev mode runs, so the baseline schema
+        # is enough. Only flag the single gotcha: a local LLM base_url pointing
+        # at the host's loopback will not be reachable from inside the container.
+        llm_default = ((raw.get("llm_access") or {}).get("default") or {})
+        base_url = (llm_default.get("base_url") or "").strip()
+        if base_url and ("localhost" in base_url or "127.0.0.1" in base_url):
+            errors.append(
+                "Docker publish target: `llm_access.default.base_url` points at "
+                f"'{base_url}', which won't resolve inside a container. Use "
+                "'host.docker.internal' (macOS/Windows) or the host's LAN IP."
+            )
+
+    return errors
+
+
 def _get_providers():
     return [
         {"value": "anthropic", "label": "Anthropic (Direct)", "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-5-20251001"], "default_env": "ANTHROPIC_API_KEY"},
@@ -161,7 +224,7 @@ def _get_providers():
             "value": "local",
             "label": "Local LLM (Ollama / LM Studio / vLLM)",
             "models": [
-                "gemma4", "gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b",
+                "gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b",
                 "llama3.1", "llama3.2", "qwen2.5", "mistral", "phi4",
             ],
             "default_env": "",

@@ -10,10 +10,7 @@ The server is started by AntColony._spawn_ant() as a subprocess using
 the bootstrap script generated in the ant's working directory.
 """
 import asyncio
-import json
 import logging
-import sys
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +68,6 @@ async def run_ant_server(cortex_yaml_path: str, name: str, port: int, host: str 
         return web.json_response({"tools": tools})
 
     async def handle_invoke(request):
-        tool_name = request.match_info["tool_name"]
         try:
             body = await request.json()
         except Exception:

@@ -19,7 +19,7 @@ async def _dry_run(config_path: str, request: str):
     click.echo()
     try:
         cfg = load_config(config_path)
-        click.echo(f"✓ Config valid")
+        click.echo("✓ Config valid")
         click.echo(f"  Agent: {cfg.agent.name}")
         click.echo(f"  Task types ({len(cfg.task_types)}):")
         for t in cfg.task_types:

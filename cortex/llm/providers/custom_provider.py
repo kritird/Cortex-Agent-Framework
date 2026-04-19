@@ -80,7 +80,7 @@ class CustomProvider:
     async def verify(self) -> bool:
         try:
             tokens = []
-            async for t in self.stream([{"role": "user", "content": "Hi"}], system="", max_tokens=5):
+            async for t in self.stream([{"role": "user", "content": "Hi"}], system="", max_tokens=200):
                 tokens.append(t)
                 if len(tokens) > 0:
                     return True

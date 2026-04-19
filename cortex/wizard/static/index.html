@@ -3090,13 +3090,19 @@ async function validateConfig() {
   try {
     const res = await fetch('/api/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: generatedConfig }),
+      body: JSON.stringify({ config: generatedConfig, mode: selectedMode || '' }),
     });
     const result = await res.json();
     if (result.valid) {
-      status.innerHTML = '<div class="tip-box success"><div class="tip-content"><strong>Valid.</strong> Your configuration passed all schema checks.</div></div>';
+      const suffix = selectedMode
+        ? ' Mandatory fields for <strong>' + selectedMode + '</strong> publish mode are present.'
+        : '';
+      status.innerHTML = '<div class="tip-box success"><div class="tip-content"><strong>Valid.</strong> Your configuration passed all schema checks.' + suffix + '</div></div>';
     } else {
-      status.innerHTML = '<div class="tip-box warn"><div class="tip-content"><strong>Validation errors:</strong><br>' + result.errors.join('<br>') + '</div></div>';
+      const header = selectedMode
+        ? 'Validation errors for <strong>' + selectedMode + '</strong> publish mode:'
+        : 'Validation errors:';
+      status.innerHTML = '<div class="tip-box warn"><div class="tip-content"><strong>' + header + '</strong><br>' + result.errors.join('<br>') + '</div></div>';
     }
   } catch(e) {
     status.innerHTML = '<div class="tip-box warn"><div class="tip-content">Validation failed: ' + e.message + '</div></div>';

@@ -3,19 +3,18 @@ import asyncio
 import importlib
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from cortex.config.schema import TaskTypeConfig
-from cortex.exceptions import CortexTaskError, CortexTaskTimeoutError, CortexToolUnavailableError
+from cortex.exceptions import CortexTaskError, CortexToolUnavailableError
 from cortex.llm.client import LLMClient
 from cortex.llm.context import TaskContext, TokenUsage
-from cortex.modules.result_envelope_store import ResultEnvelope, ResultEnvelopeStore, TaskEnvelope
+from cortex.modules.result_envelope_store import ResultEnvelope, ResultEnvelopeStore
 from cortex.modules.signal_registry import SignalRegistry
 from cortex.modules.task_graph_compiler import RuntimeTask
 from cortex.modules.tool_server_registry import ToolServerRegistry
 from cortex.security.bash_sandbox import BashSandbox
 from cortex.security.scrubber import CredentialScrubber
-from cortex.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -471,7 +470,6 @@ class GenericMCPAgent:
         while True:
             tokens: List[str] = []
             accumulated = ""
-            stop_streaming = False
             async for token in llm_client.stream(
                 messages=conversation,
                 system=system,
@@ -480,7 +478,6 @@ class GenericMCPAgent:
                 tokens.append(token)
                 accumulated += token
                 if hitl_enabled and "</ask_human>" in accumulated.lower():
-                    stop_streaming = True
                     break
 
             content = "".join(tokens)

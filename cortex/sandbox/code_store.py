@@ -1,6 +1,5 @@
 """AgentCodeStore — persists LLM-generated scripts at agent scope (not session scope)."""
 import hashlib
-import json
 import logging
 import shutil
 from dataclasses import asdict, dataclass, field

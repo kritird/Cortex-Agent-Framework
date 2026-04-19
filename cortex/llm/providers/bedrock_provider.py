@@ -104,7 +104,7 @@ class BedrockProvider:
 
     async def verify(self) -> bool:
         try:
-            await self.complete([{"role": "user", "content": "Hi"}], system="", max_tokens=5)
+            await self.complete([{"role": "user", "content": "Hi"}], system="", max_tokens=200)
             return True
         except Exception:
             return False

@@ -17,6 +17,7 @@ redis:          # (optional) Redis backend settings
 history:        # (optional) Session history settings
 validation:     # (optional) Quality validation settings
 learning:       # (optional) Delta learning settings
+ant_colony:     # (optional) Self-spawning specialist agent mesh
 ```
 
 ---
@@ -29,6 +30,7 @@ agent:
   description: A helpful AI assistant   # Required.
   system_prompt_extra: |                # Optional. Appended to system prompt.
     Always respond in British English.
+  interaction_mode: interactive         # "interactive" | "rpc" — see below.
   time:
     default_max_wait_seconds: 120       # Session-level timeout
     default_task_timeout_seconds: 40    # Per-task timeout
@@ -37,7 +39,30 @@ agent:
     max_concurrent_sessions_per_user: 3 # Per-user session cap
     max_parallel_tasks: 5               # Tasks running simultaneously per session
     max_tasks_per_session: 20           # Total tasks allowed in a single session
+  intent_gate:                          # Pre-scout turn classifier (see below)
+    enabled: true
+    heuristic_confidence_threshold: 0.7
+    llm_provider: default
+    timeout_seconds: 5.0
 ```
+
+### `interaction_mode`
+
+- `interactive` (default) — chat UIs, CLI, dev mode. The Intent Gate routes conversational turns (greetings, acknowledgements, "what can you do?") directly to a streaming reply via `PrimaryAgent.converse()`, skipping scout + decomposition. Task-shaped turns run the full pipeline. Interactive clarifications are allowed.
+- `rpc` — agent is exposed as a callable (e.g. `cortex publish mcp`). Every turn is forced to the task path and no interactive clarifications are emitted, because an automated caller cannot answer them. If the decomposer returns no tasks for an rpc turn, the framework returns a structured empty response instead of hanging.
+
+Override at runtime with the `CORTEX_INTERACTION_MODE` env var (`interactive` | `rpc`). `cortex publish mcp` sets this to `rpc` automatically.
+
+### `intent_gate`
+
+Cheap pre-scout classifier that decides whether a turn needs the full task pipeline. Stage 1 is a pure heuristic (greeting lexicon, task verbs, known task-type names, file attachments) — most turns resolve here for zero LLM cost. Stage 2 is a small LLM call that only fires when the heuristic is under-confident.
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Master switch. `false` treats every turn as a task (legacy behaviour). |
+| `heuristic_confidence_threshold` | Stage 1 confidence at/above which Stage 2 is skipped. Raise to force more LLM classifications; lower to trust heuristics more. |
+| `llm_provider` | LLM provider key used for Stage 2. Default reuses the framework's `default` provider. Point this at a cheap/fast model to minimise per-turn latency. |
+| `timeout_seconds` | Upper bound on Stage 2 latency before falling back to task routing. |
 
 ---
 
@@ -256,6 +281,45 @@ learning:
 ```
 
 When enabled, the agent observes task patterns and stages delta proposals. Review with `cortex delta review` and apply with `cortex delta apply`.
+
+---
+
+## `ant_colony`
+
+Enables the self-spawning specialist agent mesh. When active, the Capability Scout can automatically hatch independent Cortex agents as MCP servers to fill capability gaps at runtime.
+
+```yaml
+ant_colony:
+  enabled: false                        # Set true to activate the colony
+  base_port: 8100                       # First port tried when allocating a new ant
+  max_ants: 20                          # Maximum simultaneously running ants
+  auto_restart: true                    # Supervisor restarts crashed ants automatically
+  auto_hatch_on_gap: false              # Hatch ants automatically when CapabilityScout
+                                        # finds a gap no configured server can fill
+  llm_provider: default                 # Provider alias ants use (must match llm_access key)
+  llm_model: claude-haiku-4-5-20251001  # Model for ant agents (Haiku recommended)
+  api_key_env_var: ANTHROPIC_API_KEY    # Env var holding the API key for ant agents
+```
+
+### How it works
+
+1. A capability gap is detected by the Capability Scout (or you call `cortex ants hatch`).
+2. The colony allocates a port starting from `base_port`, writes a `cortex.yaml` for the ant, spawns a subprocess running `AntServer`, and polls `/health` until ready (30 s timeout).
+3. The ant is registered in the Tool Server Registry with `trust_tier: ant` — write tools allowed, no output guard.
+4. The supervisor monitors PIDs and restarts crashed ants when `auto_restart: true`.
+5. On framework shutdown, all ant subprocesses are terminated.
+
+Ant state (name, capability, port, PID, restart count) is persisted to `ants.yaml` in `storage.base_path` and reloaded on the next startup.
+
+### Managing ants via CLI
+
+```bash
+cortex ants list                                  # Show all ants and status
+cortex ants hatch my-ant --capability web_search  # Manually spawn a specialist ant
+cortex ants stop my-ant                           # Stop a specific ant
+cortex ants stop-all                              # Stop all running ants
+cortex ants status my-ant                         # Detailed status for one ant
+```
 
 ---
 

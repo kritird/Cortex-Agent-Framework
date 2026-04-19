@@ -1,5 +1,4 @@
 """Azure AI endpoints provider."""
-import json
 import os
 from typing import AsyncIterator, Dict, List, Optional
 
@@ -84,7 +83,7 @@ class AzureProvider:
 
     async def verify(self) -> bool:
         try:
-            await self.complete([{"role": "user", "content": "Hi"}], system="", max_tokens=5)
+            await self.complete([{"role": "user", "content": "Hi"}], system="", max_tokens=200)
             return True
         except Exception:
             return False

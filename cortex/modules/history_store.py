@@ -1,11 +1,9 @@
 """HistoryStore — manages persistent user session history."""
 import json
 import logging
-import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import time
 
 logger = logging.getLogger(__name__)
 

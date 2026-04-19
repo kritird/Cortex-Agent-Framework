@@ -1,6 +1,6 @@
 """Credential scrubbing from logs, streams, and LLM responses."""
 import re
-from typing import List, Optional, Any
+from typing import List, Optional
 
 
 DEFAULT_SCRUB_PATTERNS = [

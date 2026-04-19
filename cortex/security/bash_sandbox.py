@@ -4,7 +4,6 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import List, Optional
 
 from cortex.exceptions import CortexSecurityError
 

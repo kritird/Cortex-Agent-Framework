@@ -59,8 +59,18 @@ def publish_package(output_dir: str):
 @click.option("--config", default="cortex.yaml")
 @click.option("--port", default=8080)
 def publish_mcp(config: str, port: int):
-    """Export this agent as an MCP server."""
+    """Export this agent as an MCP server.
+
+    Automatically forces ``agent.interaction_mode=rpc`` via the
+    ``CORTEX_INTERACTION_MODE`` environment variable so the agent treats
+    every request as a task and never emits interactive clarifications.
+    An MCP client cannot answer interactive prompts, so running in the
+    default ``interactive`` mode would hang on chat-shaped payloads.
+    """
+    import os
+    os.environ["CORTEX_INTERACTION_MODE"] = "rpc"
     click.echo(f"Generating MCP server wrapper (port {port})...")
+    click.echo("  interaction_mode forced to 'rpc' (via CORTEX_INTERACTION_MODE)")
     click.echo("  This agent can be accessed by other Cortex instances as a tool server.")
     click.echo(f"  Run: cortex publish mcp --port {port}")
     click.echo(f"  Configure in other cortex.yaml as tool_server with url: http://host:{port}")

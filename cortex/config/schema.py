@@ -1,7 +1,7 @@
 """Pydantic schema models for cortex.yaml configuration."""
 from __future__ import annotations
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AgentTimeConfig(BaseModel):
@@ -36,6 +36,24 @@ class AgentStreamingConfig(BaseModel):
 class AgentClarificationConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     enabled: bool = False
+
+
+class IntentGateConfig(BaseModel):
+    """Pre-scout intent classifier that routes a turn as chat / task / hybrid.
+
+    Stage 1 is a cheap heuristic; Stage 2 is an LLM classifier that only fires
+    when the heuristic is under-confident. When disabled, every turn is routed
+    through the full decomposition path (legacy behaviour).
+    """
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = True
+    # Heuristic confidence at/above this threshold skips the LLM classifier.
+    heuristic_confidence_threshold: float = 0.7
+    # LLM provider key used for Stage 2. When falsy, the PrimaryAgent's
+    # "default" provider is used — matches existing framework convention.
+    llm_provider: str = "default"
+    # Hard upper bound on classifier latency before we fall back to task mode.
+    timeout_seconds: float = 5.0
 
 
 class ExternalMCPDiscoveryConfig(BaseModel):
@@ -77,12 +95,18 @@ class AgentConfig(BaseModel):
     name: str
     description: str
     synthesis_guidance: str = ""
+    # "interactive" — chat UIs, CLI, dev mode. Intent gate may route a turn to
+    # a conversational reply or to task decomposition. "rpc" — agent is a
+    # callable (e.g. published as MCP server); every turn is treated as a task
+    # and no interactive clarification is emitted.
+    interaction_mode: str = "interactive"
     time: AgentTimeConfig = Field(default_factory=AgentTimeConfig)
     performance: AgentPerformanceConfig = Field(default_factory=AgentPerformanceConfig)
     concurrency: AgentConcurrencyConfig = Field(default_factory=AgentConcurrencyConfig)
     streaming: AgentStreamingConfig = Field(default_factory=AgentStreamingConfig)
     clarification: AgentClarificationConfig = Field(default_factory=AgentClarificationConfig)
     capability_scout: CapabilityScoutConfig = Field(default_factory=CapabilityScoutConfig)
+    intent_gate: IntentGateConfig = Field(default_factory=IntentGateConfig)
 
 
 class TaskRetryConfig(BaseModel):

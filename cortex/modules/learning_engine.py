@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 
 import yaml
 
-from cortex.config.schema import LearningConfig, TaskTypeConfig
+from cortex.config.schema import LearningConfig
 from cortex.exceptions import CortexDeltaError
 from cortex.modules.history_store import TaskCompletion
 from cortex.modules.validation_agent import ValidationReport

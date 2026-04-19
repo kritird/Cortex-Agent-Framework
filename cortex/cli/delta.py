@@ -53,7 +53,6 @@ async def _delta_apply(config_path: str, min_confidence: str):
     from pathlib import Path
     from cortex.config.loader import load_config
     from cortex.modules.learning_engine import LearningEngine
-    from cortex.config.schema import LearningConfig
     cfg = load_config(config_path)
     delta_path = str(Path(cfg.storage.base_path) / "cortex_delta")
     engine = LearningEngine(delta_path=delta_path, config=cfg.learning)

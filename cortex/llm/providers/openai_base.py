@@ -178,7 +178,7 @@ class OpenAICompatibleBase:
             response = await self.complete(
                 [{"role": "user", "content": "Hi"}],
                 system="",
-                max_tokens=5,
+                max_tokens=200,
             )
             return bool(response.content)
         except Exception:

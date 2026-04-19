@@ -3,17 +3,15 @@ import asyncio
 import base64
 import json
 import logging
-import mimetypes
 import secrets
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from aiohttp import web
 
 from cortex.framework import CortexFramework
-from cortex.streaming.status_events import EventType
 
 
 logger = logging.getLogger(__name__)
@@ -360,7 +358,6 @@ async def handle_history_delete(request: web.Request) -> web.Response:
         if files_dir.exists():
             import shutil
             shutil.rmtree(files_dir, ignore_errors=True)
-    upload_dir = _uploads_dir(framework) / user_id
     # Upload dirs are keyed by ui_session_id, not by real session_id, so we
     # don't have a direct mapping. Best-effort: leave them to retention cleanup.
     return web.json_response({"deleted": True})

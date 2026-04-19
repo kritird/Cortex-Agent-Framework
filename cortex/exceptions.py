@@ -1,6 +1,6 @@
 """All framework exceptions for the Cortex Agent Framework."""
-from dataclasses import dataclass, field
-from typing import List, Optional, Any
+from dataclasses import dataclass
+from typing import List, Optional
 
 
 class CortexException(Exception):
