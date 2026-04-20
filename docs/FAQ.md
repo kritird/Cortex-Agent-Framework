@@ -121,6 +121,55 @@ Yes, via `cortex dry-run "your request"` (which decomposes without executing) or
 
 ---
 
+## Intent Gate & interaction modes
+
+### Why did my "hi" no longer trigger a full task pipeline?
+
+That's the **Intent Gate** doing its job. It classifies each turn (heuristic first, LLM cascade only when the heuristic is under-confident) and sends chat-shaped turns through `PrimaryAgent.converse()` — which streams a direct reply and skips scout, decomposition, execution, validation, and evolution. Turn it off with `agent.intent_gate.enabled: false` if you want every turn to decompose.
+
+### What's the difference between `interactive` and `rpc`?
+
+- **`interactive`** — for chat UIs, CLIs, dev mode. Conversational turns skip the full pipeline; clarifications (`ClarificationEvent`, evolution consent) are emitted and a human answers.
+- **`rpc`** — for agents exposed as callables (e.g. published MCP servers). Every turn is forced to the task path. Interactive clarifications are suppressed so automated callers never hang on a prompt they can't answer. `cortex publish mcp` sets this automatically via `CORTEX_INTERACTION_MODE=rpc`.
+
+### Can I override interaction mode at runtime?
+
+Yes. `CORTEX_INTERACTION_MODE=interactive|rpc` beats the value in `cortex.yaml`.
+
+---
+
+## Chat UI
+
+### How do I get the built-in chat UI?
+
+```bash
+cortex publish ui --port 8090
+```
+
+It serves a single-page web frontend with text + file uploads, SSE streaming, and persistent per-user history. Configure title, host, port, and auth (`none` / `token` / `basic`) under the `ui:` block in `cortex.yaml` or via the wizard.
+
+### Will chat history survive a restart?
+
+Only if `history.enabled: true` and your storage is SQLite or Redis. The Memory backend loses everything on restart.
+
+---
+
+## Ant Colony
+
+### What's an "ant"?
+
+An independent Cortex agent — with its own `cortex.yaml` — that the orchestrator spawns at runtime as an MCP server to fill a capability gap the Capability Scout couldn't fill from configured or discovered servers. Ants are supervised (PID watched, auto-restart on crash) and persisted to `ants.yaml` so they come back across framework restarts.
+
+### When do ants get hatched?
+
+When `ant_colony.enabled: true` **and** (a) `auto_hatch_on_gap: true` and the scout finds an unfillable gap, or (b) you explicitly call `cortex ants hatch <name> --capability <cap>` / `framework.hatch_ant(...)`.
+
+### Are ants trusted?
+
+They're registered with `trust_tier: ant` — treated like internal servers (write tools allowed, no output guard) but persisted separately from developer-configured servers so you can audit what got spawned.
+
+---
+
 ## Streaming & UI integration
 
 ### How do I stream to a web UI?

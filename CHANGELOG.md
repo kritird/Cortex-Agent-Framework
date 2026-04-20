@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-19
+
+### Added
+
+- **Synthesis Tier 1 — smart excerpt**: `assemble_context` now builds a keyword-grep excerpt from each file-output task (up to 8 000 chars) instead of blindly truncating to the first 2 000 chars. Keywords are derived from the task label and content summary; `head` is used as a fallback when grep returns nothing.
+- **Synthesis Tier 2 — iterative file summarisation**: When completed tasks produce file outputs, up to 3 concurrent LLM `complete()` calls summarise each file in the context of its task instruction before the final synthesis pass. Summaries replace the Tier 1 excerpt for those files. Fires automatically — no developer configuration required.
+- **Synthesis file output**: When file-output envelopes are present, the synthesised response is written to `synthesis_{session_id}.md` in the session storage path. A `ResultEvent` with `metadata.output_type="file"` carries the path to the caller. Falls back to text streaming on write failure.
+- **Scratchpad in synthesis**: `synthesise()` now accepts a `scratchpad` parameter. The accumulated session reasoning trace (confirmed facts, open questions, strategy) built up during replanning is injected as a `## Session Reasoning` block so the final response is informed by mid-session observations. All three `synthesise()` call sites in `framework.py` pass `primary._scratchpad`.
+
+### Internal
+
+- `_EXCERPT_MAX_CHARS = 8_000`, `_ITERATIVE_MAX_FILES = 3`, `_ITERATIVE_SUMMARY_TOKENS = 400` defined as module-level constants in `primary_agent.py` — not developer-configurable; derived and applied at runtime.
+
+---
+
 ## [1.2.0] - 2026-04-19
 
 ### Added
@@ -110,5 +125,7 @@ Initial public release of the Cortex Agent Framework.
 - PyPI metadata, classifiers, and project URLs.
 - GitHub Actions CI running pytest on Python 3.11 and 3.12 plus a ruff lint job.
 
+[1.3.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.3.0
+[1.2.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.2.0
 [1.1.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.0.0

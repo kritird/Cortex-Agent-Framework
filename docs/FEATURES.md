@@ -14,7 +14,14 @@ A complete feature matrix of everything Cortex ships with.
 | **Cycle detection** | Task graph compiler rejects cyclic graphs before execution starts |
 | **Topological execution** | Tasks run as soon as their dependencies complete — no fixed pipeline stages |
 | **Capability-aware decomposition** | Decomposer sees currently-available MCP tools and plans around them |
+| **Intent Gate** | Pre-scout classifier (heuristic → LLM cascade) routes chat-shaped turns directly to a streaming reply; only task-shaped turns run the full decompose pipeline |
+| **`interaction_mode`** | `interactive` (chat/CLI/dev) or `rpc` (MCP/automation) — `rpc` forces every turn to the task path and suppresses interactive clarifications |
+| **Replan with scratchpad** | Mid-session re-entry into the Primary Agent grows the DAG; a session-scoped reasoning trace (confirmed facts, open questions, strategy) is carried forward across replans and into synthesis |
+| **Clean-wave replan skip** | Replanning is skipped when every task in a wave passed first attempt with no validator feedback — avoids unnecessary LLM calls |
 | **Synthesis step** | Primary agent stitches task outputs into a coherent final response |
+| **Smart synthesis excerpts (Tier 1)** | File-output tasks contribute a keyword-grep excerpt (up to 8 KB) instead of a blind 2 KB head truncation |
+| **Iterative file summarisation (Tier 2)** | Up to 3 concurrent LLM summaries of file outputs run before final synthesis — richer context with no developer configuration |
+| **File output on large results** | When tasks produce file outputs, synthesis is written to `synthesis_{session_id}.md` and streamed as a `ResultEvent` with `metadata.output_type="file"` |
 | **Clarification support** | Agent can pause mid-session and ask follow-up questions via `ClarificationEvent` |
 
 ## LLM providers (8 built-in)
@@ -30,6 +37,7 @@ A complete feature matrix of everything Cortex ships with.
 | AWS Bedrock | `bedrock` | AWS credentials | Claude via Bedrock |
 | Azure AI | `azure_ai` | `AZURE_AI_API_KEY` | Claude via Azure |
 | Anthropic-compatible proxy | `anthropic_compatible` | `ANTHROPIC_API_KEY` | Set `base_url` for gateways |
+| Local runtime | `local` | `LOCAL_LLM_API_KEY` (optional) | Ollama / LM Studio / vLLM; defaults `base_url` to `http://localhost:11434/v1`. Gemma 4 quickstart in the wizard |
 | Custom | `custom` | — | Provide a Python dotted path |
 
 **Per-task model routing**: override the default model for specific task types — e.g. run decomposition on a cheap fast model and synthesis on the flagship.
@@ -62,10 +70,10 @@ A complete feature matrix of everything Cortex ships with.
 | Event class | Fields | Use |
 |---|---|---|
 | `StatusEvent` | `message`, `session_id`, `event_type`, `metadata` | Progress updates for the UI |
-| `ResultEvent` | `content`, `partial`, `validation_score`, `metadata` | Final or streaming response content |
+| `ResultEvent` | `content`, `partial`, `validation_score`, `metadata` | Final or streaming response content — `metadata.output_type="file"` when synthesis is written to disk |
 | `ClarificationEvent` | `question`, `options`, `clarification_id` | Agent is asking a follow-up question |
 
-Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`.
+Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`, `ANT_HATCHED`, `ANT_STOPPED`.
 
 Wires into FastAPI SSE, WebSockets, or any async consumer pattern.
 
@@ -126,22 +134,34 @@ All three implement the same interface — swap via `storage` config, no code ch
 
 | Tool | What it does |
 |---|---|
-| **Setup wizard** | Browser-based `cortex.yaml` generator at `localhost:7799` |
+| **Setup wizard** | Browser-based `cortex.yaml` generator at `localhost:7799` — multi-step flow for identity, LLM, storage, adaptive behaviour, runtime, and chat-UI config |
 | **Dry-run validation** | `cortex dry-run` validates config and compiles task graph without LLM calls |
 | **Hot-reload dev mode** | `cortex dev --watch` applies config changes live |
 | **Session replay** | `cortex replay` shows request, response, task outcomes, validation report |
 | **Config migration** | `cortex migrate` checks `cortex.yaml` against the target schema version |
 | **Capability manifest** | `cortex spec` emits a JSON/YAML description of the agent's capabilities |
+| **Ant Colony CLI** | `cortex ants list / hatch / stop / stop-all / status` — inspect and manage the self-spawning specialist mesh |
+| **Delta CLI** | `cortex delta review / apply / reject / history / rollback` — human-gated application of learned config changes |
 | **Mock LLM client** | `cortex.testing.MockLLMClient` for unit tests without API calls |
 | **Test config factory** | `cortex.testing.make_test_config()` for in-memory test configs |
+
+## Identity & delegation
+
+| Feature | Description |
+|---|---|
+| **`Principal` model** | First-class identity on every session and task — `user`, `system`, or `agent` |
+| **Delegation chain** | `agent` principals carry a full chain recording every hop back to the originating user |
+| **Origin-keyed storage** | `storage_key` always resolves to the originating user, so history / blueprints / learning stay attributed to the human across agent hops |
+| **Audit provenance** | Operational stream and audit log record `principal_type` and full chain on every event |
 
 ## Deployment targets
 
 | Target | Command | Use for |
 |---|---|---|
-| **Docker image** | `cortex publish docker` | Containerised service deployment |
+| **Docker image** | `cortex publish docker` | Containerised service deployment (`--with-ui` to bundle the chat UI) |
 | **Python wheel** | `cortex publish package` | Library distribution via pip/internal PyPI |
-| **MCP server** | `cortex publish mcp` | Expose agent as a tool for other agents |
+| **MCP server** | `cortex publish mcp` | Expose agent as a tool for other agents — auto-sets `CORTEX_INTERACTION_MODE=rpc` |
+| **Chat UI** | `cortex publish ui` | Built-in web frontend: file uploads, SSE streaming, per-user history |
 
 ## Observability
 

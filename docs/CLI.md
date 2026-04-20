@@ -121,12 +121,12 @@ cortex migrate [--config cortex.yaml] [--from-version 0.9] [--to-version 1.0]
 
 ## `cortex publish`
 
-Publishes your agent as a Docker image, Python package, or MCP server.
+Publishes your agent as a Docker image, Python package, MCP server, or Chat UI.
 
 ### `cortex publish docker`
 
 ```bash
-cortex publish docker [--tag cortex-agent:latest] [--config cortex.yaml]
+cortex publish docker [--tag cortex-agent:latest] [--with-ui] [--config cortex.yaml]
 ```
 
 Generates a `Dockerfile.cortex` next to your config. You then build it yourself:
@@ -135,6 +135,8 @@ Generates a `Dockerfile.cortex` next to your config. You then build it yourself:
 docker build -f Dockerfile.cortex -t my-agent:latest .
 docker run -p 8080:8080 --env-file .env my-agent:latest
 ```
+
+Pass `--with-ui` to generate a Dockerfile that starts the built-in chat UI (`cortex publish ui`) on port 8090 instead of the bare framework.
 
 ### `cortex publish package`
 
@@ -159,7 +161,24 @@ tool_servers:
     url: http://host:8080/sse
 ```
 
+**Interaction mode:** this command automatically sets `CORTEX_INTERACTION_MODE=rpc` in the child process so every turn runs the full task pipeline and never blocks on interactive clarifications. Override with an explicit export if you genuinely need interactive mode behind MCP.
+
 See [DEPLOYMENT.md](DEPLOYMENT.md) for multi-agent mesh setups.
+
+### `cortex publish ui`
+
+```bash
+cortex publish ui [--config cortex.yaml] [--host 0.0.0.0] [--port 8090]
+```
+
+Serves the built-in chat UI — a single-page web frontend backed by your agent. Features:
+
+- Text + file uploads (validated against `file_input` MIME / size limits)
+- SSE-streamed status and result events ("decomposing → running 3 tasks → synthesising")
+- Persistent per-user session history (backed by the existing History Store)
+- Auth modes: `none` (anonymous cookie), `token`, `basic` — configured under the `ui.auth` block in `cortex.yaml`
+
+CLI flags override `ui.host` and `ui.port` from config. Enable `history.enabled: true` so threads survive restarts. See [Deployment → Chat UI](DEPLOYMENT.md#option-d-chat-ui) for production tips.
 
 ---
 
@@ -243,5 +262,6 @@ cortex ants stop-all [--config cortex.yaml]
 |---|---|
 | `CORTEX_CONFIG` | Override default config path (`cortex.yaml`) for all commands |
 | `CORTEX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `CORTEX_INTERACTION_MODE` | Override `agent.interaction_mode` (`interactive` / `rpc`). Set automatically to `rpc` by `cortex publish mcp`. |
 
 Setting `CORTEX_CONFIG` in your shell is handy when you work on a specific agent for a while — `cortex dev` / `cortex dry-run` will target it without needing `--config` every time.

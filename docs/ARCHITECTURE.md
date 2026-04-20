@@ -110,15 +110,28 @@ The public entrypoint. `framework.run_session()` drives the entire lifecycle: sa
 **File:** [`cortex/framework.py`](../cortex/framework.py)
 
 #### Primary Agent
-The orchestrator. It is invoked in three modes:
+The orchestrator. It is invoked in four modes:
 
-1. **Decompose** — receives the sanitised request, relevant history, discovered tools, stale task hints, and any loaded blueprints; calls the LLM to emit a typed task list with dependency edges.
-2. **Replan** — called mid-session when an adaptive task completes, a mandatory task fails, or a stale-blueprint task finishes. Grows the existing DAG rather than starting over.
-3. **Synthesise** — after all tasks complete, combines the stored result envelopes into a final response.
+1. **Converse** — used when the Intent Gate classifies a turn as `chat`. Streams a direct reply using history, principal identity, and declared capabilities. Skips scout, decomposition, execution, validation, and evolution entirely.
+2. **Decompose** — receives the sanitised request, relevant history, discovered tools, stale task hints, and any loaded blueprints; calls the LLM to emit a typed task list with dependency edges.
+3. **Replan** — called mid-session when an adaptive task completes, a mandatory task fails, or a stale-blueprint task finishes. Grows the existing DAG rather than starting over. Maintains a session-scoped `_scratchpad` reasoning trace (≤ 300 words) of confirmed facts, open questions, and strategy adjustments that carries forward across waves.
+4. **Synthesise** — after all tasks complete, combines the stored result envelopes into a final response. Before the final LLM call, runs a Tier 1 smart-excerpt pass (keyword-grep) and a Tier 2 concurrent per-file summariser (up to 3 files) over file-output envelopes; injects `_scratchpad` as a **Session Reasoning** block. When file outputs are present the synthesis is written to `synthesis_{session_id}.md` and streamed as a `ResultEvent` with `metadata.output_type="file"`.
 
-**Why:** Pushing decomposition into the LLM gives you flexibility — you don't hand-write a state machine for every possible user intent. Re-entering the same agent for replan/synthesise keeps intent coherent across the session.
+**Why:** Pushing decomposition into the LLM gives you flexibility — you don't hand-write a state machine for every possible user intent. Re-entering the same agent for converse/replan/synthesise keeps intent coherent across the session.
 
 **File:** [`cortex/modules/primary_agent.py`](../cortex/modules/primary_agent.py)
+
+#### Intent Gate
+Pre-scout turn classifier that decides whether a turn needs the full task pipeline or should flow through `PrimaryAgent.converse()`. A two-stage cascade:
+
+1. **Heuristics** — greeting lexicon, task verbs, known task-type names, and file attachments resolve most turns for zero LLM cost.
+2. **LLM classifier** — fires only when the heuristic is under-confident (below `heuristic_confidence_threshold`). Uses a small/cheap model and a short timeout.
+
+Emits a `IntentDecision` with `chat` | `task` | `hybrid` and a confidence score. Disabled when `agent.intent_gate.enabled: false` (every turn is treated as a task). In `agent.interaction_mode: rpc` every turn is forced to the task path regardless.
+
+**Why:** Chat UIs need to answer "hi" without spinning up a DAG. RPC clients want the opposite — every call is work. A single classifier serves both deployment contracts.
+
+**File:** [`cortex/modules/intent_gate.py`](../cortex/modules/intent_gate.py)
 
 #### Task Graph Compiler
 Turns the raw task list emitted by the Primary Agent into an executable DAG. Validates that every `depends_on` reference points to a real task, detects cycles, registers per-task signals, and exposes `get_ready_tasks()` so the executor can drive waves.
@@ -299,24 +312,25 @@ Here's what actually happens when you call `framework.run_session()`, in the ord
 3. **Create session.** The Session Manager allocates a `session_id`, enforces concurrency limits, writes to WAL.
 4. **Clean expired history.** The History Store garbage-collects records older than the configured retention.
 5. **Emit `session_start`.**
-6. **Capability discovery.** The Capability Scout asks the LLM which configured tool servers are relevant, fetches real tool descriptions from them, and consults the External MCP Registry. Honours a timeout.
-7. **Blueprint staleness check.** For every task type with a blueprint reference, compare `last_successful_run_at` against the configured staleness window; flag stale task names to force re-discovery during decomposition.
-8. **LLM call #1 — decompose.** The Primary Agent receives history context, discovered tools, stale task hints, and any loaded blueprints. It emits a typed task list with dependency edges, streamed as `DecomposedTask` objects.
-9. **Instantiate the graph.** The Task Graph Compiler validates, detects cycles, registers signals, and exposes `get_ready_tasks()`.
-10. **Fan-out / fan-in wave loop.** While ready tasks exist:
+6. **Intent Gate classification.** The Intent Gate classifies the turn (heuristic → LLM cascade). In `interaction_mode: rpc`, this step is skipped and every turn is forced to the task path. If the decision is `chat`, the Primary Agent's `converse()` streams a reply directly and the pipeline exits after `session_end`. `task` and `hybrid` continue to step 7.
+7. **Capability discovery.** The Capability Scout asks the LLM which configured tool servers are relevant, fetches real tool descriptions from them, and consults the External MCP Registry. Honours a timeout. When the Ant Colony has `auto_hatch_on_gap: true`, unfilled gaps trigger ant spawning before decomposition.
+8. **Blueprint staleness check.** For every task type with a blueprint reference, compare `last_successful_run_at` against the configured staleness window; flag stale task names to force re-discovery during decomposition.
+9. **LLM call #1 — decompose.** The Primary Agent receives history context, discovered tools, stale task hints, and any loaded blueprints. It emits a typed task list with dependency edges, streamed as `DecomposedTask` objects.
+10. **Instantiate the graph.** The Task Graph Compiler validates, detects cycles, registers signals, and exposes `get_ready_tasks()`.
+11. **Fan-out / fan-in wave loop.** While ready tasks exist:
     - Grab all dependency-free tasks.
     - Dispatch them in parallel under a `max_parallel_tasks` semaphore.
     - Each Generic MCP Agent runs its tool-use loop, calls MCP servers via the Tool Server Registry, optionally runs code in the Sandbox, and stores its envelope in the Result Envelope Store (scrubbed of credentials).
     - Per-task validation gate: if the task declared an `output_schema` or `validation_notes`, validate and retry up to three times with feedback.
-    - Conditional replan: if a stale-blueprint task completed, a mandatory task failed, or an adaptive task completed, call the Primary Agent's `replan()` to grow the DAG before the next wave.
+    - Conditional replan: if a stale-blueprint task completed, a mandatory task failed, or an adaptive task completed, call the Primary Agent's `replan()` to grow the DAG before the next wave. Replanning is skipped when every task in the wave passed on first attempt with no validator feedback (clean-wave skip). Replan updates the session-scoped `_scratchpad` reasoning trace which carries forward into synthesis.
     - Check the session deadline; extend it if the user grants an extension.
-11. **LLM call #2 — synthesise.** The Primary Agent combines the stored result envelopes into a final response.
-12. **Final validation.** The Validation Agent scores the response on intent / completeness / coherence and applies remediation if below threshold.
-13. **Evolution consent.** If ad-hoc tasks produced reusable scripts and validation passed, prompt the user. On consent, the Learning Engine stages new task types and the Agent Code Store persists the scripts.
-14. **Blueprint auto-update.** If the user consented and `blueprint.auto_update` is enabled, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
-15. **Session complete.** The Session Manager marks done and cleans up result envelopes (kept only if the session timed out, for resume).
-16. **Surface auth-required external MCPs.** Any server discovered mid-run that needs credentials is reported to the caller.
-17. **Emit `session_end`** and queue the SSE sentinel.
+12. **LLM call #2 — synthesise.** The Primary Agent assembles context (Tier 1 smart excerpts + Tier 2 concurrent per-file LLM summaries) from the stored result envelopes, injects the `_scratchpad` as a **Session Reasoning** block, and streams the final response. When tasks produced file outputs the synthesis is also written to `synthesis_{session_id}.md` and announced via a `ResultEvent` with `metadata.output_type="file"`.
+13. **Final validation.** The Validation Agent scores the response on intent / completeness / coherence and applies remediation if below threshold.
+14. **Evolution consent.** If ad-hoc tasks produced reusable scripts and validation passed, prompt the user (skipped in `rpc` mode). On consent, the Learning Engine stages new task types and the Agent Code Store persists the scripts.
+15. **Blueprint auto-update.** If the user consented and `blueprint.auto_update` is enabled, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
+16. **Session complete.** The Session Manager marks done and cleans up result envelopes (kept only if the session timed out, for resume).
+17. **Surface auth-required external MCPs.** Any server discovered mid-run that needs credentials is reported to the caller.
+18. **Emit `session_end`** and queue the SSE sentinel.
 
 Throughout all of this, the Observability Emitter writes operational telemetry and audit-log entries on a side channel, and typed events are streamed to the caller via `event_queue`.
 
@@ -349,6 +363,15 @@ Each sub-agent:
 - Can itself call other MCP servers as tools
 
 There's no custom inter-agent protocol. It's all MCP, all the way down.
+
+## Interaction modes
+
+The framework supports two deployment contracts, selected via `agent.interaction_mode`:
+
+- **`interactive`** — chat UIs, CLI, dev mode. The Intent Gate routes conversational turns directly to `converse()`. Task-shaped turns run the full pipeline. Interactive clarifications (`ClarificationEvent` / evolution consent prompts) are permitted because a human is on the other end.
+- **`rpc`** — agent is exposed as a callable (e.g. via `cortex publish mcp`). Every turn is forced to the task path and interactive clarifications are suppressed so automated callers never hang on a prompt they can't answer. If the decomposer returns zero tasks for an `rpc` turn, the synthesiser returns a structured direct response instead of waiting.
+
+Runtime override: `CORTEX_INTERACTION_MODE=interactive|rpc`. `cortex publish mcp` auto-injects `rpc`.
 
 ## Chat UI
 

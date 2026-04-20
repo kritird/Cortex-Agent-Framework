@@ -75,9 +75,11 @@ The **Learning Engine** observes task patterns across sessions. When the same de
 | **Tool protocol** | Native MCP (SSE, stdio, streamable-HTTP) | Custom tool wrappers per integration |
 | **Multi-agent** | Any agent becomes an MCP tool in one command | Bespoke inter-agent protocols |
 | **Self-expanding mesh** | Ant Colony — orchestrator hatches specialist agents at runtime to fill capability gaps | Static tool lists, no self-expansion |
+| **Chat vs. task routing** | Intent Gate classifies each turn (heuristic → LLM cascade); small talk skips the full task pipeline | Same path for every turn, or hand-coded intent routing |
+| **Deployment contract** | `interaction_mode` distinguishes chat (clarifications allowed) from RPC (never blocks) — one code path, two contracts | Separate codebases for chat vs. MCP |
 | **Quality gates** | Built-in validation agent with scoring + remediation | Manual testing or nothing |
 | **Learning** | Delta proposals + blueprints with human review | Prompt tweaking by hand |
-| **LLM providers** | 8 built-in (Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, Bedrock, Azure) | Usually 1–2, hard-coded |
+| **LLM providers** | 8 cloud providers + local runtime (Ollama / LM Studio / vLLM) | Usually 1–2, hard-coded |
 | **Per-task routing** | Route decomposition to a fast model, synthesis to flagship | One model for everything |
 | **Streaming** | Typed event classes (StatusEvent, ResultEvent, ClarificationEvent) | Loose dicts or raw SSE strings |
 | **Session management** | Persistence, resume, per-user concurrency, WAL crash recovery | In-memory or DIY |
@@ -108,15 +110,19 @@ You write a YAML file describing your agent. Cortex reads it and gives you:
 
 - **Automatic task decomposition** — the LLM breaks requests into a typed dependency graph
 - **Parallel execution** — independent tasks run simultaneously, not sequentially
+- **Intent Gate** — chat-shaped turns (greetings, small talk) skip the full pipeline; only task-shaped turns decompose
 - **MCP tool servers** — connect any tool with three lines of YAML
-- **8 LLM providers** — switch models without code changes, route different tasks to different models
+- **8 cloud LLM providers + local runtime** — switch models without code changes, route different tasks to different models, or run fully offline on Ollama / LM Studio / vLLM
 - **Response validation** — every output scored; regressions caught automatically
 - **Delta learning** — agent proposes its own improvements; you review and approve
 - **Blueprints** — reusable workflow knowledge that makes the agent better over time
 - **Streaming events** — typed, structured events for any UI (SSE, WebSocket, CLI)
 - **Session persistence** — resume timed-out sessions, replay history, encrypt at rest
+- **Identity & delegation** — first-class `Principal` model with full delegation chains for agent-to-agent composition
 - **Built-in chat UI** — professional web frontend with file uploads and conversation history
 - **Ant Colony** — orchestrator self-spawns specialist agents at runtime; fills capability gaps automatically
+- **`interaction_mode`** — one agent, two contracts: `interactive` for chat / CLI, `rpc` for MCP / automated callers (never blocks on clarifications)
+- **Smart synthesis** — file-output tasks get grep-based excerpts and optional LLM per-file summaries before the final synthesis pass; large results are written to disk and streamed as a file `ResultEvent`
 - **4 deployment targets** — Docker, Python package, MCP server, chat UI
 - **Visual setup wizard** — configure everything from a browser, no docs required
 - **Security built-in** — input sanitisation, credential scrubbing, sandboxed code execution

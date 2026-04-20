@@ -744,6 +744,7 @@ class CortexFramework:
                         original_request=request,
                         event_queue=event_queue,
                         storage_base_path=session_path,
+                        scratchpad=primary._scratchpad,
                     )
             else:
                 # Instantiate runtime graph
@@ -983,6 +984,7 @@ class CortexFramework:
                     original_request=request,
                     event_queue=event_queue,
                     storage_base_path=session_path,
+                    scratchpad=primary._scratchpad,
                 )
 
             # ── Validation ───────────────────────────────────────────────────
@@ -1447,6 +1449,7 @@ class CortexFramework:
                 original_request=original_request,
                 event_queue=event_queue,
                 storage_base_path=session_path,
+                scratchpad=primary._scratchpad,
             )
 
             # ── Validation ─────────────────────────────────────────────────────

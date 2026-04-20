@@ -7,7 +7,7 @@ Every aspect of Cortex is driven by `cortex.yaml`. This page is the authoritativ
 ## Top-level structure
 
 ```yaml
-agent:          # Agent identity, concurrency, timeouts
+agent:          # Agent identity, concurrency, timeouts, intent gate, interaction mode
 llm_access:     # LLM provider routing
 task_types:     # Vocabulary of work the agent can do
 tool_servers:   # MCP tool server connections
@@ -18,6 +18,7 @@ history:        # (optional) Session history settings
 validation:     # (optional) Quality validation settings
 learning:       # (optional) Delta learning settings
 ant_colony:     # (optional) Self-spawning specialist agent mesh
+ui:             # (optional) Built-in chat UI served by `cortex publish ui`
 ```
 
 ---
@@ -100,6 +101,7 @@ llm_access:
 | AWS Bedrock | `bedrock` | AWS credentials | anthropic.claude-sonnet-4-* |
 | Azure AI | `azure_ai` | `AZURE_AI_API_KEY` | claude-sonnet-4 via Azure |
 | Anthropic proxy | `anthropic_compatible` | `ANTHROPIC_API_KEY` | any — set `base_url` |
+| Local runtime | `local` | `LOCAL_LLM_API_KEY` (optional) | Ollama / LM Studio / vLLM — e.g. `gemma4:e4b`. Default `base_url` is `http://localhost:11434/v1` |
 | Custom | `custom` | — | Provide `function` dotted path |
 
 ---
@@ -323,6 +325,33 @@ cortex ants status my-ant                         # Detailed status for one ant
 
 ---
 
+## `ui`
+
+Configures the built-in chat UI that `cortex publish ui` serves. Enable via the wizard's *Chat UI* step or by hand.
+
+```yaml
+ui:
+  enabled: true                  # Master switch
+  host: "0.0.0.0"                # Bind address
+  port: 8090                     # HTTP port
+  title: "Cortex Agent"          # Title shown in the UI header
+  auth:
+    mode: none                   # none | token | basic
+    # token: "s3cret"            # required when mode: token
+    # username: admin            # required when mode: basic
+    # password: changeme         # required when mode: basic
+```
+
+| Auth mode | What it does |
+|---|---|
+| `none` | Anonymous cookie identifies each browser session |
+| `token` | Client must send `Authorization: Bearer <token>` |
+| `basic` | Standard HTTP Basic auth |
+
+The UI streams `StatusEvent` / `ResultEvent` / `ClarificationEvent` over SSE and persists chats through the existing History Store (enable `history.enabled: true` to survive restarts).
+
+---
+
 ## Environment variable substitution
 
 Any string field in `cortex.yaml` can use `${VAR}` syntax:
@@ -346,6 +375,7 @@ Substitution happens at load time. Missing variables produce a clear error.
 |---|---|
 | `CORTEX_CONFIG` | Override default config path (defaults to `./cortex.yaml`) |
 | `CORTEX_LOG_LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
+| `CORTEX_INTERACTION_MODE` | Runtime override for `agent.interaction_mode` — `interactive` \| `rpc`. `cortex publish mcp` sets this to `rpc` automatically. |
 | `ANTHROPIC_API_KEY` | Default Anthropic provider key |
 | `OPENAI_API_KEY` | Default OpenAI provider key |
 | `GEMINI_API_KEY` | Default Gemini provider key |
@@ -354,6 +384,7 @@ Substitution happens at load time. Missing variables produce a clear error.
 | `DEEPSEEK_API_KEY` | Default DeepSeek provider key |
 | `AWS_DEFAULT_REGION` | Bedrock region |
 | `AZURE_AI_API_KEY` | Azure AI provider key |
+| `LOCAL_LLM_API_KEY` | Optional auth for the local provider (Ollama / LM Studio / vLLM) |
 
 ---
 

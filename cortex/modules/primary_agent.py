@@ -19,6 +19,11 @@ from cortex.streaming.status_events import (
 
 logger = logging.getLogger(__name__)
 
+# ── Synthesis internal constants (not developer-configurable) ─────────────────
+_EXCERPT_MAX_CHARS = 8_000       # Tier 1: per-file grep/head cap (was 2000)
+_ITERATIVE_MAX_FILES = 3         # Tier 2: max concurrent file-summarise LLM calls
+_ITERATIVE_SUMMARY_TOKENS = 400  # Tier 2: token budget per file summary
+
 
 def build_system_prompt(
     config: CortexConfig,
@@ -444,15 +449,53 @@ class PrimaryAgent:
         if event:
             event.set()
 
+    async def _smart_excerpt(
+        self,
+        file_path: str,
+        task_label: str,
+        content_summary: str,
+        storage_base_path: str,
+    ) -> str:
+        """Tier 1: extract a relevant excerpt from a file output.
+
+        Builds a keyword pattern from the task label and summary, then greps
+        the file for matching lines with context. Falls back to head if grep
+        returns nothing. Hard-capped at _EXCERPT_MAX_CHARS.
+        """
+        from cortex.security.bash_sandbox import BashSandbox
+        sandbox = BashSandbox(storage_base_path)
+
+        # Build keyword pattern from task label tokens + first 80 chars of summary
+        raw_keywords = re.sub(r"[^a-zA-Z0-9 ]", " ", task_label + " " + content_summary[:80])
+        keywords = [w for w in raw_keywords.lower().split() if len(w) > 3][:6]
+        excerpt = ""
+        if keywords:
+            pattern = "|".join(re.escape(k) for k in keywords)
+            try:
+                excerpt = await sandbox.execute(
+                    f"grep -m 40 -i -n -E '{pattern}' '{file_path}' 2>/dev/null | head -c {_EXCERPT_MAX_CHARS}"
+                )
+            except Exception:
+                excerpt = ""
+        if not excerpt:
+            try:
+                excerpt = await sandbox.execute(
+                    f"head -c {_EXCERPT_MAX_CHARS} '{file_path}'"
+                )
+            except Exception as e:
+                logger.debug("Excerpt failed for %s: %s", task_label, e)
+        return excerpt[:_EXCERPT_MAX_CHARS]
+
     async def assemble_context(
         self,
         result_envelopes: List[ResultEnvelope],
         storage_base_path: str = "",
     ) -> tuple[str, Dict[str, str]]:
-        """
-        Bash-assisted context assembly before synthesis.
+        """Bash-assisted context assembly before synthesis.
+
         Returns (summary_text, bash_excerpts_dict).
-        Primary agent only reads content_summary — never full files directly.
+        File-output tasks get a Tier 1 smart grep excerpt (up to
+        _EXCERPT_MAX_CHARS) instead of the old hard head -c 2000 truncation.
         """
         summaries = []
         bash_excerpts: Dict[str, str] = {}
@@ -465,18 +508,16 @@ class PrimaryAgent:
                 summaries.append(
                     f"## {task_label} [{status_icon}]\n{envelope.content_summary}"
                 )
-                # If output is a large file, read a section via bash
                 if envelope.output_type == "file" and envelope.output_value and storage_base_path:
-                    try:
-                        from cortex.security.bash_sandbox import BashSandbox
-                        sandbox = BashSandbox(storage_base_path)
-                        # Read first 2000 chars of the file
-                        file_path = envelope.output_value
-                        if file_path.startswith(storage_base_path):
-                            excerpt = await sandbox.execute(f"head -c 2000 '{file_path}'")
+                    if envelope.output_value.startswith(storage_base_path):
+                        excerpt = await self._smart_excerpt(
+                            file_path=envelope.output_value,
+                            task_label=task_label,
+                            content_summary=envelope.content_summary or "",
+                            storage_base_path=storage_base_path,
+                        )
+                        if excerpt:
                             bash_excerpts[task_label] = excerpt
-                    except Exception as e:
-                        logger.debug("Bash excerpt failed for %s: %s", task_label, e)
             elif envelope.status == "failed":
                 summaries.append(
                     f"## {task_label} [FAILED]\nError: {envelope.error or 'Unknown error'}"
@@ -488,6 +529,37 @@ class PrimaryAgent:
 
         return "\n\n".join(summaries), bash_excerpts
 
+    async def _summarise_file_for_synthesis(
+        self,
+        task_label: str,
+        file_path: str,
+        instruction: str,
+    ) -> str:
+        """Tier 2: LLM-based summary of a single file output.
+
+        Called concurrently for up to _ITERATIVE_MAX_FILES file-output envelopes
+        before the final synthesis pass. Falls back to an empty string on any
+        failure so it never blocks synthesis.
+        """
+        try:
+            user_msg = (
+                f"Task: {task_label}\n"
+                f"Instruction: {instruction[:300]}\n\n"
+                f"File path: {file_path}\n\n"
+                f"Summarise the content of this file in the context of the task above. "
+                f"Surface the most decision-relevant facts only. Be concise (≤150 words)."
+            )
+            response = await self._llm.complete(
+                messages=[{"role": "user", "content": user_msg}],
+                system="You are a precise summariser. Output only the summary, no preamble.",
+                provider_name="default",
+                max_tokens=_ITERATIVE_SUMMARY_TOKENS,
+            )
+            return (response.content or "").strip()
+        except Exception as e:
+            logger.debug("Tier 2 file summary failed for %s: %s", task_label, e)
+            return ""
+
     async def synthesise(
         self,
         session_id: str,
@@ -496,34 +568,67 @@ class PrimaryAgent:
         original_request: str,
         event_queue: asyncio.Queue,
         storage_base_path: str = "",
+        scratchpad: str = "",
     ) -> str:
-        """
-        Final LLM call — streaming synthesis.
-        Context composed from content_summary excerpts + bash excerpts only.
+        """Final LLM call — streaming synthesis.
+
+        Context: task summaries + Tier 1 smart excerpts for file outputs.
+        When multiple file-output envelopes exist, Tier 2 fires concurrently
+        (up to _ITERATIVE_MAX_FILES) to produce richer LLM summaries before
+        the synthesis pass. Output is written to a file when file-output
+        envelopes are present; otherwise returned as a text stream.
+        Scratchpad (accumulated session reasoning from replanning) is injected
+        when non-empty so the synthesis is aware of confirmed facts and strategy.
         """
         summary_text, auto_excerpts = await self.assemble_context(
             result_envelopes, storage_base_path
         )
-        # Merge auto excerpts with provided bash_excerpts
         all_excerpts = {**auto_excerpts, **bash_excerpts}
 
+        # ── Tier 2: concurrent LLM summaries for file outputs ─────────────────
+        file_envelopes = [
+            e for e in result_envelopes
+            if e.status == "complete"
+            and e.output_type == "file"
+            and e.output_value
+            and (not storage_base_path or e.output_value.startswith(storage_base_path))
+        ]
+        if file_envelopes:
+            tier2_targets = file_envelopes[:_ITERATIVE_MAX_FILES]
+            tier2_results = await asyncio.gather(*[
+                self._summarise_file_for_synthesis(
+                    task_label=e.task_id.split("_", 1)[-1] if "_" in e.task_id else e.task_id,
+                    file_path=e.output_value,
+                    instruction=e.content_summary or "",
+                )
+                for e in tier2_targets
+            ])
+            for envelope, summary in zip(tier2_targets, tier2_results):
+                if summary:
+                    label = envelope.task_id.split("_", 1)[-1] if "_" in envelope.task_id else envelope.task_id
+                    all_excerpts[label] = summary  # replaces Tier 1 excerpt for this file
+
         has_envelopes = bool(result_envelopes)
+        has_file_outputs = bool(file_envelopes)
+
         context_parts = [f"Original user request:\n{original_request}"]
         if has_envelopes:
             context_parts += ["", "Task results summary:", summary_text]
         if all_excerpts:
-            excerpt_lines = ["", "Additional file content:"]
+            excerpt_lines = ["", "File content:"]
             for label, excerpt in all_excerpts.items():
-                excerpt_lines.append(f"### {label}\n{excerpt[:2000]}")
+                excerpt_lines.append(f"### {label}\n{excerpt[:_EXCERPT_MAX_CHARS]}")
             context_parts.extend(excerpt_lines)
 
-        # Note failed/skipped tasks
         failed = [e for e in result_envelopes if e.status in ("failed", "timeout")]
         if failed:
             context_parts.append(
                 f"\nNote: {len(failed)} task(s) failed or timed out: "
                 f"{', '.join(e.task_id.split('_', 1)[-1] for e in failed)}"
             )
+
+        if scratchpad:
+            context_parts += ["", "## Session Reasoning", scratchpad]
 
         if self._config.agent.synthesis_guidance:
             context_parts.append(f"\n{self._config.agent.synthesis_guidance}")
@@ -535,9 +640,6 @@ class PrimaryAgent:
                 f"Use the task summaries provided — do not invent information not present in the summaries."
             )
         else:
-            # No tasks ran — respond directly. Avoids the "I need task summaries"
-            # meta-reply when this path is hit (e.g. RPC caller sent a
-            # non-actionable input, or IntentGate is disabled).
             synthesis_system = (
                 f"You are {self._config.agent.name}. {self._config.agent.description} "
                 f"Respond directly and concisely to the user's request below."
@@ -561,6 +663,25 @@ class PrimaryAgent:
                 session_id=session_id,
                 partial=True,
             ))
+
+        # ── File output: write synthesis to disk when tasks produced files ─────
+        if has_file_outputs and storage_base_path:
+            import aiofiles
+            import os
+            out_path = os.path.join(storage_base_path, f"synthesis_{session_id}.md")
+            try:
+                async with aiofiles.open(out_path, "w", encoding="utf-8") as fh:
+                    await fh.write(full_response)
+                await event_queue.put(ResultEvent(
+                    content=out_path,
+                    session_id=session_id,
+                    partial=False,
+                    metadata={"output_type": "file"},
+                ))
+                logger.info("Synthesis written to file %s", out_path)
+                return out_path
+            except Exception as e:
+                logger.warning("Could not write synthesis file %s: %s — returning text", out_path, e)
 
         await event_queue.put(ResultEvent(
             content=full_response,

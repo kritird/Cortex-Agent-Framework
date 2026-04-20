@@ -13,7 +13,7 @@
   <a href="https://pypi.org/project/cortex-agent-framework/"><img src="https://img.shields.io/pypi/v/cortex-agent-framework.svg" alt="PyPI version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+" /></a>
-  <img src="https://img.shields.io/badge/LLMs-8_providers-green.svg" alt="8 LLM providers" />
+  <img src="https://img.shields.io/badge/LLMs-8_providers_+_local-green.svg" alt="8 LLM providers + local" />
   <img src="https://img.shields.io/badge/MCP-native-purple.svg" alt="MCP native" />
 </p>
 
@@ -124,15 +124,19 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 
 | | |
 |---|---|
-| **8 LLM providers** | Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, AWS Bedrock, Azure AI — swap with one YAML line |
+| **8 cloud LLM providers + local** | Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, AWS Bedrock, Azure AI — plus local Ollama / LM Studio / vLLM with a Gemma 4 quickstart |
 | **Fan-out / fan-in** | LLM-generated DAG with parallel execution; independent tasks run simultaneously |
+| **Intent Gate** | Cheap heuristic + LLM cascade routes chat-shaped turns directly to a streaming reply; only task-shaped turns decompose |
+| **`interaction_mode`** | One agent, two contracts: `interactive` for chat / CLI, `rpc` for MCP / automation — never blocks on clarifications |
 | **MCP-native tools** | First-class SSE, stdio, and streamable-HTTP MCP tool servers |
 | **Multi-agent mesh** | Publish any agent as an MCP server — compose specialist agents into an orchestrator |
+| **Ant Colony** | Orchestrator self-spawns specialist Cortex agents as MCP servers at runtime; supervised, health-checked, auto-restarted |
 | **Identity & delegation** | First-class `Principal` model — human, system, or agent-to-agent calls with full delegation chains in audit logs |
 | **Quality validation** | Every response scored and gated; per-task validation inside the execution loop |
 | **Delta learning** | Agent proposes improvements; human-in-the-loop review before apply |
 | **Blueprints** | Reusable workflow knowledge loaded into context, auto-updated with consent |
 | **Streaming** | Typed event classes (`StatusEvent`, `ResultEvent`, `ClarificationEvent`) for any UI |
+| **Smart synthesis** | Keyword-grep excerpts + concurrent per-file LLM summaries; large results written to disk as a `file` ResultEvent |
 | **Per-task LLM routing** | Route decomposition to a fast model, synthesis to flagship |
 | **Session persistence** | Memory / SQLite / Redis with WAL replay and resumable sessions |
 | **Built-in chat UI** | Web frontend with file uploads, streaming, and conversation history |

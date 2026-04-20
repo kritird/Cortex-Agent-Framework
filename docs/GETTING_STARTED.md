@@ -42,7 +42,7 @@ pip install -e .
 Verify the install:
 
 ```bash
-cortex --help     # should list: setup, dev, dry-run, publish, spec, replay, delta, migrate
+cortex --help     # should list: setup, dev, dry-run, publish, spec, replay, delta, migrate, ants
 ```
 
 ### 2. Hello World (no external tools)
@@ -91,12 +91,14 @@ This opens an interactive browser-based wizard at `http://localhost:7799` that w
 
 | Step | What you configure |
 |---|---|
-| Agent Identity | Name and description |
-| LLM Provider | Model, API key env var (supports Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, Bedrock, Azure) |
+| Agent Identity | Name, description, interaction mode (interactive / rpc) |
+| LLM Provider | Model, API key env var — cloud (Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, Bedrock, Azure) or local runtime (Ollama / LM Studio / vLLM, with a Gemma 4 quickstart) |
 | Tool Servers | MCP integrations for external capabilities |
 | Task Types | What your agent can do (web search, code execution, document generation, etc.) |
-| Storage & Options | Persistence backend, session timeouts, concurrency limits, validation, history, learning |
-| Publish Mode | How you want to deploy (Docker, Python package, MCP server) |
+| Storage & Persistence | Backend (Memory / SQLite / Redis), retention, encryption |
+| Adaptive Behaviour | Capability Scout, wave-gate validation, learning engine, blueprints |
+| Runtime & Delivery | Session timeouts, concurrency limits, chat UI settings, Ant Colony |
+| Publish Mode | How you want to deploy (Docker, Python package, MCP server, Chat UI) |
 
 The wizard saves a validated `cortex.yaml` in your project root.
 
@@ -728,6 +730,17 @@ cortex publish mcp --port 8080
 #       transport: sse
 ```
 
+Automatically runs the agent with `CORTEX_INTERACTION_MODE=rpc` so MCP callers never hang on an interactive clarification.
+
+### Option D: Built-in Chat UI
+
+```bash
+cortex publish ui --port 8090
+# → http://localhost:8090
+```
+
+Serves a single-page chat frontend backed by your agent. Streams status and results over SSE, supports file uploads (validated against `file_input` MIME / size limits), and persists per-user threads through the existing History Store. Configure title, host, port, and auth (`none` / `token` / `basic`) in the `ui:` block of `cortex.yaml` or via the wizard's Chat UI step. See [Deployment → Chat UI](DEPLOYMENT.md#option-d-chat-ui).
+
 ---
 
 ## Configuration at a Glance
@@ -811,15 +824,17 @@ learning:
 | `cortex setup` | Interactive browser wizard to generate `cortex.yaml` |
 | `cortex dev --watch` | Dev mode with hot-reload on config changes |
 | `cortex dry-run "query"` | Validate config and task graph without LLM calls |
-| `cortex publish docker` | Generate `Dockerfile.cortex` |
+| `cortex publish docker` | Generate `Dockerfile.cortex` (pass `--with-ui` for a chat-UI image) |
 | `cortex publish package` | Build a distributable `.whl` |
-| `cortex publish mcp --port 8080` | Expose agent as an MCP tool server |
+| `cortex publish mcp --port 8080` | Expose agent as an MCP tool server (auto-sets `CORTEX_INTERACTION_MODE=rpc`) |
+| `cortex publish ui --port 8090` | Serve the built-in chat UI |
 | `cortex spec --format json` | Generate capability manifest |
 | `cortex replay SESSION_ID --user-id USER_ID` | Replay a historical session |
 | `cortex delta review` | Review auto-discovered task type proposals |
 | `cortex delta apply --min-confidence high` | Apply confirmed proposals to config |
 | `cortex delta rollback` | Restore previous config from backup |
 | `cortex migrate` | Validate config schema compatibility |
+| `cortex ants list / hatch / stop / status` | Manage the Ant Colony — self-spawning specialist agents |
 
 ---
 
@@ -879,6 +894,7 @@ event.options           # ["Last 7 days", "Last 30 days", "Last quarter"]
 | AWS Bedrock | `bedrock` | `AWS_ACCESS_KEY_ID` | anthropic.claude-sonnet-4-* |
 | Azure AI | `azure_ai` | `AZURE_API_KEY` | claude-sonnet-4 (via Azure) |
 | Anthropic Proxy | `anthropic_compatible` | `ANTHROPIC_API_KEY` | Any (set `base_url`) |
+| Local Runtime | `local` | `LOCAL_LLM_API_KEY` (optional) | `gemma4:e4b`, `gemma4:26b`, or any Ollama / LM Studio / vLLM tag |
 | Custom | `custom` | — | Provide `function` dotted path |
 
 ---
@@ -971,8 +987,10 @@ mock_llm = MockLLMClient(responses={"default": "Mock response"})
 | `DEEPSEEK_API_KEY` | DeepSeek provider API key |
 | `AWS_DEFAULT_REGION` | AWS region for Bedrock |
 | `AZURE_AI_API_KEY` | Azure AI provider API key |
+| `LOCAL_LLM_API_KEY` | Optional auth for the local provider (Ollama / LM Studio / vLLM) |
 | `CORTEX_CONFIG` | Override default config path |
 | `CORTEX_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `CORTEX_INTERACTION_MODE` | Override `agent.interaction_mode` — `interactive` or `rpc`. Set automatically by `cortex publish mcp`. |
 
 ---
 
