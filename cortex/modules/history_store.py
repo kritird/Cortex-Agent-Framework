@@ -50,10 +50,21 @@ class HistoryRecord:
     task_completion: TaskCompletion
     validation_score: Optional[float]
     validation_passed: Optional[bool]
-    user_consent: str  # "positive" | "negative" | "none"
+    # Retained for record-shape compatibility. Prior to v1.3.0 this tracked
+    # the user's answer to the end-of-session consent prompt; autonomic
+    # learning no longer asks, so new records are always written as "none".
+    user_consent: str
     token_usage: TokenUsageByRole
     persisted_files: List[PersistedFile]
     duration_seconds: float
+    # ── Autonomic learning telemetry (v1.3.0+) ────────────────────────────
+    # Populated by the framework after the learning gate fires. Omitting
+    # defaults keeps older records deserialisable without migration.
+    complexity_score: Optional[float] = None
+    # "staged" | "applied" | "blueprint_updated" | "skipped_chat"
+    # | "skipped_validation" | "skipped_complexity" | "skipped_rpc_anon"
+    # | "skipped_disabled" | None
+    learned_action: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

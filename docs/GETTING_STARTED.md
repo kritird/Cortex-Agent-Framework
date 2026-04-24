@@ -305,10 +305,10 @@ async def chat(body: dict):
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
-# Handle clarification answers (agent asked a follow-up question)
+# Handle clarification answers (intent-gate or HITL task prompts)
 @app.post("/clarify")
 async def clarify(body: dict):
-    resolved = framework.resolve_evolution_consent(
+    resolved = framework.resolve_task_clarification(
         body["clarification_id"], body["answer"]
     )
     return {"resolved": resolved}
@@ -812,7 +812,11 @@ history:
   retention_days: 90
 
 learning:
-  consent_enabled: true                # Auto-discover new task types from usage
+  enabled: true                        # Autonomic learning — signal-gated, no consent prompt
+  validation_threshold: 0.75           # Min composite validation score to learn
+  complexity_threshold: 0.6            # Min TaskComplexityScorer score to stage ad-hoc tasks
+  auto_apply_delta: true               # Auto-promote deltas once confidence accumulates
+  auto_apply_min_confidence: medium    # ≥ 3 distinct principals
 ```
 
 ---
@@ -873,10 +877,17 @@ event.content       # The response text
 event.partial       # True if streaming, False when complete
 event.validation_score
 
-# ClarificationEvent — agent needs more information
+# ClarificationEvent — agent needs more information (intent gate, HITL task prompts)
 event.question          # "Which time period should I analyse?"
-event.clarification_id  # Pass back to resolve_evolution_consent()
+event.clarification_id  # Pass back to resolve_task_clarification()
 event.options           # ["Last 7 days", "Last 30 days", "Last quarter"]
+
+# LearningEvent — autonomic learning gate decision (end of session)
+event.action            # "staged" | "applied" | "blueprint_updated" | "skipped_*"
+event.complexity_score  # TaskComplexityScorer output, or None if gate was skipped
+event.validation_score  # Composite validation score, or None
+event.staged_tasks      # Task names staged into cortex_delta/pending.yaml
+event.applied_tasks     # Task names auto-promoted into cortex.yaml
 ```
 
 ---

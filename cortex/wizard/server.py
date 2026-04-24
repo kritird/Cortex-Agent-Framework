@@ -593,15 +593,19 @@ def _generate_config(data: dict) -> str:
         _only_if(hist_cfg, "encryption_key_env_var", data.get("history_encryption_key_env_var"), "")
         config["history"] = hist_cfg
 
-    # Learning
+    # Learning (autonomic — signal-gated, no user consent)
     if data.get("learning_enabled"):
         learn_cfg = {
-            "consent_enabled": True,
-            "auto_apply_delta": data.get("auto_apply_delta", False),
+            "enabled": True,
+            "auto_apply_delta": data.get("auto_apply_delta", True),
         }
-        _only_if(learn_cfg, "auto_apply_min_confidence", data.get("learning_auto_apply_min_confidence"), "high")
+        _only_if(learn_cfg, "validation_threshold", data.get("learning_validation_threshold"), 0.75)
+        _only_if(learn_cfg, "complexity_threshold", data.get("learning_complexity_threshold"), 0.6)
+        _only_if(learn_cfg, "require_user_identity", data.get("learning_require_user_identity"), True)
+        _only_if(learn_cfg, "auto_apply_min_confidence", data.get("learning_auto_apply_min_confidence"), "medium")
         _only_if(learn_cfg, "auto_apply_min_confirmations", data.get("learning_auto_apply_min_confirmations"), 3)
         _only_if(learn_cfg, "notify_on_apply", data.get("learning_notify_on_apply"), True)
+        _only_if(learn_cfg, "max_lesson_chars", data.get("learning_max_lesson_chars"), 500)
         config["learning"] = learn_cfg
 
     # Security
@@ -644,7 +648,6 @@ def _generate_config(data: dict) -> str:
         sb_cfg = {"enabled": True}
         _only_if(sb_cfg, "timeout_seconds", data.get("code_sandbox_timeout_seconds"), 60)
         _only_if(sb_cfg, "allow_network", data.get("code_sandbox_allow_network"), False)
-        _only_if(sb_cfg, "ask_persist_consent", data.get("code_sandbox_ask_persist_consent"), True)
         _only_if(sb_cfg, "auto_add_to_yaml", data.get("code_sandbox_auto_add_to_yaml"), False)
         config["code_sandbox"] = sb_cfg
 
@@ -789,12 +792,16 @@ def _load_existing_config(config_path: str) -> dict:
         "history_search_enabled": history_raw.get("search_enabled", True),
         "history_encryption_enabled": history_raw.get("encryption_enabled", False),
         "history_encryption_key_env_var": history_raw.get("encryption_key_env_var", ""),
-        # ── Learning ──
-        "learning_enabled": learning_raw.get("consent_enabled", False),
-        "auto_apply_delta": learning_raw.get("auto_apply_delta", False),
-        "learning_auto_apply_min_confidence": learning_raw.get("auto_apply_min_confidence", "high"),
+        # ── Learning (autonomic) ──
+        "learning_enabled": learning_raw.get("enabled", True),
+        "learning_validation_threshold": learning_raw.get("validation_threshold", 0.75),
+        "learning_complexity_threshold": learning_raw.get("complexity_threshold", 0.6),
+        "learning_require_user_identity": learning_raw.get("require_user_identity", True),
+        "auto_apply_delta": learning_raw.get("auto_apply_delta", True),
+        "learning_auto_apply_min_confidence": learning_raw.get("auto_apply_min_confidence", "medium"),
         "learning_auto_apply_min_confirmations": learning_raw.get("auto_apply_min_confirmations", 3),
         "learning_notify_on_apply": learning_raw.get("notify_on_apply", True),
+        "learning_max_lesson_chars": learning_raw.get("max_lesson_chars", 500),
         # ── Security ──
         "security_max_input_tokens": security_raw.get("max_input_tokens", 4000),
         "security_secret_scrub_patterns": _list_to_lines(security_raw.get("secret_scrub_patterns", [])),
@@ -813,7 +820,6 @@ def _load_existing_config(config_path: str) -> dict:
         "code_sandbox_enabled": sandbox_raw.get("enabled", False),
         "code_sandbox_timeout_seconds": sandbox_raw.get("timeout_seconds", 60),
         "code_sandbox_allow_network": sandbox_raw.get("allow_network", False),
-        "code_sandbox_ask_persist_consent": sandbox_raw.get("ask_persist_consent", True),
         "code_sandbox_auto_add_to_yaml": sandbox_raw.get("auto_add_to_yaml", False),
         # ── Ant Colony ──
         "ant_colony_enabled": ant_colony_raw.get("enabled", False),

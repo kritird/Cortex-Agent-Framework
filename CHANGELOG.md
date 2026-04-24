@@ -5,18 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2026-04-19
+## [1.3.0] - 2026-04-24
 
 ### Added
+
+#### Autonomic learning (replaces evolution consent)
+
+- **Signal-driven learning gate**: `CortexFramework.run_session()` now decides whether to stage deltas / refine blueprints from observable signals at end of session — the previous `ask_persist_consent` clarification prompt is gone. The gate skips chat turns, RPC calls with no principal (configurable), and sessions below the validation or complexity thresholds.
+- **`TaskComplexityScorer`** (`cortex/modules/task_complexity_scorer.py`) — deterministic 0.0–1.0 scorer combining six signals with fixed weights: code synthesis (0.35), tool-trace length (0.20), decomposed-task count (0.15), has-dependencies (0.15), total tokens (0.10), duration (0.05). Emits a structured `ComplexityBreakdown` for observability.
+- **Draft blueprints on first stage**: `LearningEngine.persist_evolution()` seeds a draft blueprint under `drafts/{task_name}__{hash}` the moment a new ad-hoc task is staged, pre-populated with the observed tool trace, validator findings (as initial don'ts), and a session lesson summary. Promoted to a permanent `blueprint:` reference on `apply_delta()`.
+- **`auto_apply_delta: true` by default**: staged proposals promote themselves into `cortex.yaml` as soon as the distinct-principal confirmation threshold is met (default `medium` = 3). Explicit `cortex delta apply` remains available for manual workflows (`auto_apply_delta: false`).
+- **`LearningEvent`** streaming event — emitted once per session with `action`, `complexity_score`, `validation_score`, `intent_mode`, and the staged / applied task lists. Mirrored into `HistoryRecord.learned_action` (and a new `HistoryRecord.complexity_score` column).
+- **`ObservabilityEmitter.emit_complexity_score()`** — per-session complexity breakdown on the operational stream.
+
+#### Synthesis (carried forward from earlier 1.3.0 changes)
 
 - **Synthesis Tier 1 — smart excerpt**: `assemble_context` now builds a keyword-grep excerpt from each file-output task (up to 8 000 chars) instead of blindly truncating to the first 2 000 chars. Keywords are derived from the task label and content summary; `head` is used as a fallback when grep returns nothing.
 - **Synthesis Tier 2 — iterative file summarisation**: When completed tasks produce file outputs, up to 3 concurrent LLM `complete()` calls summarise each file in the context of its task instruction before the final synthesis pass. Summaries replace the Tier 1 excerpt for those files. Fires automatically — no developer configuration required.
 - **Synthesis file output**: When file-output envelopes are present, the synthesised response is written to `synthesis_{session_id}.md` in the session storage path. A `ResultEvent` with `metadata.output_type="file"` carries the path to the caller. Falls back to text streaming on write failure.
 - **Scratchpad in synthesis**: `synthesise()` now accepts a `scratchpad` parameter. The accumulated session reasoning trace (confirmed facts, open questions, strategy) built up during replanning is injected as a `## Session Reasoning` block so the final response is informed by mid-session observations. All three `synthesise()` call sites in `framework.py` pass `primary._scratchpad`.
 
+### Changed
+
+- **`learning` config block** — reshaped around the autonomic gate. New keys: `validation_threshold` (0.75), `complexity_threshold` (0.6), `require_user_identity` (true), `auto_apply_delta` (true), `auto_apply_min_confidence` (`medium`), `max_lesson_chars` (500).
+- **`LearningEngine.persist_evolution()`** signature now accepts `complexity_score` and `decomposed_tasks` (both optional). The old `user_consent` parameter is removed from the engine. The framework parameter `run_session(user_consent=...)` is retained as an inert record-shape field (written into `HistoryRecord.user_consent`) for API compatibility.
+- **Setup wizard** — the *Learning engine* section now exposes `validation_threshold`, `complexity_threshold`, `require_user_identity`, and `max_lesson_chars`; the old "Ask before persisting scripts" toggle is removed.
+
+### Deprecated
+
+- **`CortexFramework.resolve_evolution_consent()`** — no-op in 1.3.0 (logs a one-time deprecation warning and returns `False`). Autonomic learning no longer emits a consent prompt to resolve.
+- **`learning.consent_enabled`** and **`code_sandbox.ask_persist_consent`** — accepted for parsing, ignored at runtime. Remove from `cortex.yaml` when convenient.
+
 ### Internal
 
 - `_EXCERPT_MAX_CHARS = 8_000`, `_ITERATIVE_MAX_FILES = 3`, `_ITERATIVE_SUMMARY_TOKENS = 400` defined as module-level constants in `primary_agent.py` — not developer-configurable; derived and applied at runtime.
+- `_PENDING_EVOLUTION_CONSENTS` module-level dict removed from `framework.py`.
 
 ---
 
@@ -89,10 +112,10 @@ Initial public release of the Cortex Agent Framework.
 
 ### Knowledge & memory
 
-- Blueprint Store: persistent markdown templates per task type, auto-updated post-session with user consent, with staleness checks that trigger re-discovery.
+- Blueprint Store: persistent markdown templates per task type, auto-updated post-session (originally consent-gated; see 1.3.0 for autonomic replacement), with staleness checks that trigger re-discovery.
 - History Store with encryption support and automatic retention cleanup.
 - Result Envelope Store with in-process hot path and SQLite/Redis crash-resilience backing.
-- Learning Engine with delta proposals gated by confidence levels (medium = 3, high = 5) and end-of-session evolution consent for promoting ad-hoc scripts to reusable task types.
+- Learning Engine with delta proposals gated by confidence levels (medium = 3, high = 5) (originally consent-gated at end of session; replaced by the autonomic gate in 1.3.0).
 
 ### Safety & isolation
 

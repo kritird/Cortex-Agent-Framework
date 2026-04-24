@@ -273,16 +273,27 @@ Every response is scored on intent match, completeness, and coherence. Responses
 
 ## `learning`
 
+Autonomic learning — signal-gated, no consent prompt.
+
 ```yaml
 learning:
-  enabled: true
-  consent_enabled: true                 # Only learn from sessions with user consent
-  min_confirmations_medium: 3           # Distinct users for medium confidence
-  min_confirmations_high: 5             # Distinct users for high confidence
-  auto_apply_confidence: null           # null | medium | high
+  enabled: true                         # Master switch
+  validation_threshold: 0.75            # Min composite validation score to learn
+  complexity_threshold: 0.6             # Min TaskComplexityScorer score to stage ad-hoc task
+  require_user_identity: true           # In rpc mode, skip learning when no principal attached
+  auto_apply_delta: true                # Auto-promote to cortex.yaml once confidence met
+  auto_apply_min_confidence: medium     # low | medium | high
+  auto_apply_min_confirmations: 3       # Distinct principals required before auto-apply
+  notify_on_apply: true                 # Emit a LearningEvent when a delta is applied
+  max_lesson_chars: 500                 # Per-entry cap when writing into a blueprint
 ```
 
-When enabled, the agent observes task patterns and stages delta proposals. Review with `cortex delta review` and apply with `cortex delta apply`.
+At end of session the framework runs a two-stage gate:
+
+1. **Skip guards** — chat turns, RPC calls without an attached principal, and sessions with `learning.enabled: false` exit immediately with a `LearningEvent(action=…skipped)`.
+2. **Scoring gates** — if the composite validation score clears `validation_threshold` *and* the [TaskComplexityScorer](../cortex/modules/task_complexity_scorer.py) score clears `complexity_threshold`, the session is eligible. Ad-hoc tasks are staged into `cortex_delta/pending.yaml` with a seeded draft blueprint; known tasks have their blueprints refined via auto-update.
+
+Staged ad-hoc proposals still need **distinct-principal confirmations** (default 3) before they are promoted into `cortex.yaml`. When `auto_apply_delta: true` (the default) that promotion happens automatically as soon as the threshold is met; otherwise run `cortex delta review` / `cortex delta apply` manually.
 
 ---
 

@@ -129,7 +129,7 @@ That's the **Intent Gate** doing its job. It classifies each turn (heuristic fir
 
 ### What's the difference between `interactive` and `rpc`?
 
-- **`interactive`** — for chat UIs, CLIs, dev mode. Conversational turns skip the full pipeline; clarifications (`ClarificationEvent`, evolution consent) are emitted and a human answers.
+- **`interactive`** — for chat UIs, CLIs, dev mode. Conversational turns skip the full pipeline; `ClarificationEvent`s (intent gate, HITL task prompts, timeout-extension offers) are emitted and a human answers. Learning fires automatically at end-of-session via the autonomic gate — no consent prompt is shown.
 - **`rpc`** — for agents exposed as callables (e.g. published MCP servers). Every turn is forced to the task path. Interactive clarifications are suppressed so automated callers never hang on a prompt they can't answer. `cortex publish mcp` sets this automatically via `CORTEX_INTERACTION_MODE=rpc`.
 
 ### Can I override interaction mode at runtime?
@@ -178,7 +178,7 @@ Pass an `asyncio.Queue()` to `run_session()`. The queue receives `StatusEvent`, 
 
 ### How do clarifications work?
 
-If the agent decides it needs more information, it emits a `ClarificationEvent` with a question and a `clarification_id`. Your UI shows the question, collects the user's answer, and calls `framework.resolve_evolution_consent(clarification_id, answer)` — the agent picks up the answer and continues.
+If the agent decides it needs more information, it emits a `ClarificationEvent` with a question and a `clarification_id`. Your UI shows the question, collects the user's answer, and calls the appropriate resolver — `framework.resolve_task_clarification(clarification_id, answer)` for mid-task HITL prompts, or `framework.resolve_timeout_extension(clarification_id, "yes"|"no")` for session-timeout-extension offers. The agent picks up the answer and continues.
 
 ### Can I interrupt a running session?
 
@@ -202,19 +202,31 @@ Yes — `validation.model` lets you override the model used for validation calls
 
 ---
 
-## Learning & deltas
+## Autonomic learning
 
-### What is delta learning?
+### How does learning decide to fire?
 
-The Learning Engine observes how user requests map to task decompositions across sessions. When it sees a pattern it didn't know about — e.g., users consistently asking for something the current task types don't model — it stages a **delta proposal** suggesting a new task type.
+At the end of every session the framework runs a **signal-driven gate** (not a consent prompt):
+
+1. **Skip guards** — chat turns, RPC calls with no principal, or `learning.enabled: false` exit immediately.
+2. **Scoring gates** — the `TaskComplexityScorer` produces a deterministic 0.0–1.0 score from code synthesis / tool trace / fan-out / deps / tokens / duration; the composite validation score must clear `validation_threshold`. When both gates clear, learning fires.
+
+The outcome is emitted as a `LearningEvent` (`staged`, `applied`, `blueprint_updated`, `skipped_*`, …) and written to `HistoryRecord.learned_action`.
+
+### What actually gets saved?
+
+Two paths, decided by whether the task was in `cortex.yaml` at runtime:
+
+- **Ad-hoc tasks** (new capabilities discovered this session) are staged into `cortex_delta/pending.yaml` with a seeded draft blueprint under `drafts/{task_name}__{hash}`. Any generated Python script is persisted to the code store immediately.
+- **Known tasks** (already in `cortex.yaml`) have their existing blueprints refined via an LLM-driven blueprint auto-update.
 
 ### Does it modify my config automatically?
 
-Only if you explicitly set `learning.auto_apply_confidence: high`. By default it's gated: run `cortex delta review` to see staged proposals and `cortex delta apply` to apply them (with automatic backup, so `cortex delta rollback` restores).
+By default yes — `auto_apply_delta: true`. Promotion still requires distinct-principal accumulation (default: 3 users with `auto_apply_min_confidence: medium`), so a single session can never rewrite your config on its own. Set `auto_apply_delta: false` to keep deltas in `pending.yaml` until you run `cortex delta review` / `cortex delta apply`.
 
 ### Can I opt out?
 
-Yes — `learning.enabled: false`. Or leave it enabled but `consent_enabled: true` so it only learns from sessions where the user explicitly consented.
+Yes — `learning.enabled: false`. Or keep learning on but tighten the gates (raise `validation_threshold` / `complexity_threshold`, or set `auto_apply_delta: false` to require manual promotion).
 
 ---
 

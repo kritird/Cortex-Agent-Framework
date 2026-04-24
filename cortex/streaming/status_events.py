@@ -18,6 +18,7 @@ class EventType(str, Enum):
     EXTERNAL_MCP_AUTH_REQUIRED = "external_mcp_auth_required"  # auth-gated MCP found during session
     ANT_HATCHED = "ant_hatched"    # ant agent spawned and registered
     ANT_STOPPED = "ant_stopped"    # ant agent stopped or crashed
+    LEARNING = "learning"          # autonomic learning gate decision
 
 
 @dataclass
@@ -117,6 +118,43 @@ class ResultEvent:
         if self.validation_score is not None:
             data["validation_score"] = self.validation_score
         return f"event: result\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class LearningEvent:
+    """Emitted once at session end after the autonomic learning gate runs.
+
+    Captures the observable inputs (complexity, validation, intent mode) that
+    drove the decision so callers can reason about *why* learning did or did
+    not fire without reading the audit log. The ``action`` field mirrors the
+    ``learned_action`` column written to :class:`HistoryRecord`.
+    """
+    session_id: str
+    action: str                          # see HistoryRecord.learned_action values
+    complexity_score: Optional[float] = None
+    validation_score: Optional[float] = None
+    intent_mode: Optional[str] = None    # chat | task | hybrid
+    staged_tasks: list = field(default_factory=list)
+    applied_tasks: list = field(default_factory=list)
+    message: str = ""
+    event_type: EventType = EventType.LEARNING
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "action": self.action,
+            "complexity_score": self.complexity_score,
+            "validation_score": self.validation_score,
+            "intent_mode": self.intent_mode,
+            "staged_tasks": self.staged_tasks,
+            "applied_tasks": self.applied_tasks,
+            "message": self.message,
+            "timestamp": self.timestamp,
+        }
+        return f"event: {self.event_type.value}\ndata: {json.dumps(data)}\n\n"
 
 
 @dataclass

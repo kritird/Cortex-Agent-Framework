@@ -95,7 +95,7 @@ Requires `history.enabled: true` in `cortex.yaml`.
 
 ## `cortex delta`
 
-Manages the delta learning system.
+Manages the autonomic learning system.
 
 ```bash
 cortex delta review                               # Show staged proposals
@@ -105,7 +105,7 @@ cortex delta history                              # Show apply history
 cortex delta rollback [--yes]                     # Restore previous cortex.yaml
 ```
 
-`apply` writes changes to `cortex.yaml` and takes a backup first. `rollback` restores that backup.
+By default (`learning.auto_apply_delta: true`) proposals promote themselves into `cortex.yaml` as soon as the distinct-principal confirmation threshold is met — these commands are useful for auditing what was applied, or for overriding the default with `auto_apply_delta: false` and manually curating. `apply` writes changes to `cortex.yaml` and takes a backup first; `rollback` restores that backup.
 
 ---
 

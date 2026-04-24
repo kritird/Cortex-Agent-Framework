@@ -20,6 +20,7 @@ from cortex.modules.observability_emitter import ObservabilityEmitter
 from cortex.modules.result_envelope_store import ResultEnvelope, ResultEnvelopeStore
 from cortex.modules.session_manager import SessionManager
 from cortex.modules.signal_registry import SignalRegistry
+from cortex.modules.task_complexity_scorer import TaskComplexityScorer
 from cortex.modules.task_graph_compiler import (
     CompiledTaskGraph, TaskGraphCompiler
 )
@@ -29,13 +30,11 @@ from cortex.security.sanitiser import InputSanitiser
 from cortex.security.scrubber import CredentialScrubber
 from cortex.storage.memory_backend import MemoryBackend
 from cortex.streaming.sse import SSEBuffer, SSEGenerator
-from cortex.streaming.status_events import ClarificationEvent, EventType, StatusEvent
+from cortex.streaming.status_events import (
+    ClarificationEvent, EventType, LearningEvent, StatusEvent,
+)
 
 logger = logging.getLogger(__name__)
-
-# Pending end-of-session evolution consent events.
-# {clarification_id: {"event": asyncio.Event, "answer": str|None}}
-_PENDING_EVOLUTION_CONSENTS: Dict[str, dict] = {}
 
 # Pending mid-execution sub-agent clarification requests.
 # Populated by GenericMCPAgent.ask_human(); resolved by
@@ -320,8 +319,12 @@ class CortexFramework:
         self._learning_engine = LearningEngine(
             delta_path=delta_path,
             config=cfg.learning,
+            blueprint_store=self._blueprint_store,
         )
         self._learning_engine.set_reload_callback(self.hot_reload)
+
+        # Task complexity scorer — stateless; shared across sessions.
+        self._complexity_scorer = TaskComplexityScorer()
 
         # Intent gate — pre-scout turn classifier.
         from cortex.modules.intent_gate import IntentGate
@@ -1003,107 +1006,147 @@ class CortexFramework:
                 if validation_report:
                     self._observability.emit_validation_result(session_id, validation_report)
 
-            # ── End-of-session evolution consent ─────────────────────────────────
-            # Collect envelopes for tasks that were ad-hoc (not in cortex.yaml).
+            # ── Autonomic learning gate ──────────────────────────────────────────
+            # Signal-driven replacement for the old consent prompt. Two gates:
+            #   1. Global guards (chat turn, rpc-anon, disabled config, no work)
+            #   2. Scoring gates (complexity ≥ threshold, validation ≥ threshold)
+            # The gate produces a single ``learned_action`` string that is
+            # mirrored into the HistoryRecord and the emitted LearningEvent.
+            learned_action: Optional[str] = None
+            complexity_value: Optional[float] = None
+            evo_result = None
+            blueprints_touched = False
+
             adhoc_envelopes = [
                 env for env in (all_envelopes if decomposed_tasks else [])
                 if env.is_adhoc and env.status == "complete"
             ]
+            known_envelopes = [
+                env for env in (all_envelopes if decomposed_tasks else [])
+                if not env.is_adhoc and env.status == "complete"
+            ]
 
-            if (
-                adhoc_envelopes
-                and self._config.learning.consent_enabled
-                and validation_report
-                and validation_report.passed
-                and self._config.code_sandbox.ask_persist_consent
+            learning_cfg = self._config.learning
+            validation_score = (
+                validation_report.composite_score if validation_report else None
+            )
+
+            if not learning_cfg.enabled:
+                learned_action = "skipped_disabled"
+            elif intent_is_chat:
+                learned_action = "skipped_chat"
+            elif (
+                self._config.agent.interaction_mode == "rpc"
+                and principal is None
+                and learning_cfg.require_user_identity
             ):
-                evo_id = f"evolve_{session_id[-6:]}"
-                consent_event = asyncio.Event()
-                _PENDING_EVOLUTION_CONSENTS[evo_id] = {
-                    "event": consent_event,
-                    "answer": None,
-                    "loop": asyncio.get_event_loop(),
-                }
-
-                task_names_display = ", ".join(
-                    env.task_id.split("/")[-1].lstrip("0123456789_")
-                    for env in adhoc_envelopes
+                learned_action = "skipped_rpc_anon"
+                logger.info(
+                    "Learning skipped for session %s — rpc mode with no principal",
+                    session_id,
                 )
-                scripts_count = sum(1 for env in adhoc_envelopes if env.generated_script)
-                question = (
-                    f"I completed {len(adhoc_envelopes)} new task type(s) this session "
-                    f"({task_names_display})"
+            elif not all_envelopes:
+                # Task mode but nothing actually ran (e.g. decomposer emitted no
+                # tasks). Nothing to learn from.
+                learned_action = "skipped_no_work"
+            else:
+                # Score complexity from the full executed envelope set plus the
+                # decomposed task graph — captures fan-out, code synthesis, etc.
+                breakdown = self._complexity_scorer.score(
+                    envelopes=all_envelopes,
+                    decomposed_tasks=decomposed_tasks,
                 )
-                if scripts_count:
-                    question += f" and generated {scripts_count} reusable Python script(s)"
-                question += ". Would you like me to remember these for future sessions? (yes/no)"
+                complexity_value = breakdown.score
+                self._observability.emit_complexity_score(session_id, breakdown)
 
-                await event_queue.put(ClarificationEvent(
-                    question=question,
-                    session_id=session_id,
-                    clarification_id=evo_id,
-                ))
+                validation_ok = (
+                    validation_score is not None
+                    and validation_score >= learning_cfg.validation_threshold
+                )
+                complexity_ok = (
+                    complexity_value >= learning_cfg.complexity_threshold
+                )
 
-                try:
-                    await asyncio.wait_for(consent_event.wait(), timeout=120)
-                    evo_answer = (_PENDING_EVOLUTION_CONSENTS.pop(evo_id, {}) or {}).get("answer", "no")
-                except asyncio.TimeoutError:
-                    evo_answer = "no"
-                    _PENDING_EVOLUTION_CONSENTS.pop(evo_id, None)
-                    logger.info("Evolution consent timed out for session %s — not saving", session_id)
-
-                if evo_answer and evo_answer.strip().lower() in ("yes", "y"):
-                    try:
-                        evo_result = await self._learning_engine.persist_evolution(
-                            ad_hoc_envelopes=adhoc_envelopes,
-                            user_id=user_id,
-                            validation_report=validation_report,
-                            cortex_yaml_path=self._config_path,
-                        )
-                        await event_queue.put(StatusEvent(
-                            message=evo_result.message,
-                            session_id=session_id,
-                            event_type=EventType.STATUS,
-                        ))
-                        logger.info(
-                            "Evolution: staged=%s scripts=%s auto_applied=%s",
-                            evo_result.staged_tasks,
-                            evo_result.scripts_persisted,
-                            evo_result.auto_applied,
-                        )
-                    except Exception as e:
-                        logger.warning("Evolution persist failed: %s", e)
+                if not validation_ok:
+                    learned_action = "skipped_validation"
+                elif not complexity_ok and not known_envelopes:
+                    # Only ad-hoc tasks depend on the complexity gate; low-score
+                    # sessions with no known-task envelopes have nothing to do.
+                    learned_action = "skipped_complexity"
                 else:
-                    logger.info("User declined evolution consent for session %s", session_id)
+                    # Structural learning — ad-hoc tasks that cleared both gates.
+                    if adhoc_envelopes and complexity_ok:
+                        try:
+                            evo_result = await self._learning_engine.persist_evolution(
+                                ad_hoc_envelopes=adhoc_envelopes,
+                                user_id=user_id,
+                                validation_report=validation_report,
+                                cortex_yaml_path=self._config_path,
+                                complexity_score=complexity_value,
+                                decomposed_tasks=decomposed_tasks,
+                            )
+                            if evo_result.message:
+                                await event_queue.put(StatusEvent(
+                                    message=evo_result.message,
+                                    session_id=session_id,
+                                    event_type=EventType.STATUS,
+                                ))
+                            logger.info(
+                                "Autonomic learning: staged=%s scripts=%s drafts=%s applied=%s",
+                                evo_result.staged_tasks,
+                                evo_result.scripts_persisted,
+                                evo_result.drafts_seeded,
+                                evo_result.auto_applied,
+                            )
+                        except Exception as e:
+                            logger.warning("Learning persist failed: %s", e)
 
-            # ── Blueprint auto-update (gated on consent) ─────────────────────────
-            # When the user has consented (either via evolution flow above or by
-            # passing user_consent='positive') and blueprint.auto_update is on,
-            # append a lessons-learned entry to each task type's blueprint so the
-            # next session benefits from what was learned this run. Task types
-            # with no `blueprint:` reference are implicitly opted out.
-            try:
-                blueprint_cfg = getattr(self._config, "blueprint", None)
-                consent_positive = (
-                    user_consent == "positive"
-                    or ('evo_answer' in locals() and str(evo_answer).strip().lower() in ("yes", "y"))
-                )
-                if (
-                    blueprint_cfg
-                    and blueprint_cfg.enabled
-                    and blueprint_cfg.auto_update
-                    and consent_positive
-                    and decomposed_tasks
-                ):
-                    await self._persist_blueprints_from_session(
-                        session_id=session_id,
-                        primary_agent=primary,
-                        decomposed_tasks=decomposed_tasks,
-                        envelopes=all_envelopes,
-                        validation_report=validation_report,
-                    )
-            except Exception as e:
-                logger.warning("Blueprint auto-update failed for session %s: %s", session_id, e)
+                    # Guidance learning — refine blueprints for known task types.
+                    # Runs independently of complexity gate so every successful
+                    # known-task run can accumulate dos/donts/clarifications.
+                    try:
+                        blueprint_cfg = getattr(self._config, "blueprint", None)
+                        if (
+                            blueprint_cfg
+                            and blueprint_cfg.enabled
+                            and blueprint_cfg.auto_update
+                            and decomposed_tasks
+                        ):
+                            await self._persist_blueprints_from_session(
+                                session_id=session_id,
+                                primary_agent=primary,
+                                decomposed_tasks=decomposed_tasks,
+                                envelopes=all_envelopes,
+                                validation_report=validation_report,
+                            )
+                            blueprints_touched = True
+                    except Exception as e:
+                        logger.warning(
+                            "Blueprint auto-update failed for session %s: %s",
+                            session_id, e,
+                        )
+
+                    # Determine the record-level action label.
+                    if evo_result and evo_result.auto_applied:
+                        learned_action = "applied"
+                    elif evo_result and evo_result.staged_tasks:
+                        learned_action = "staged"
+                    elif blueprints_touched:
+                        learned_action = "blueprint_updated"
+                    else:
+                        learned_action = "no_change"
+
+            # Emit the gate decision as a structured event so UIs can surface it.
+            await event_queue.put(LearningEvent(
+                session_id=session_id,
+                action=learned_action or "unknown",
+                complexity_score=complexity_value,
+                validation_score=validation_score,
+                intent_mode=intent_decision.mode if intent_decision else None,
+                staged_tasks=(evo_result.staged_tasks if evo_result else []),
+                applied_tasks=(evo_result.auto_applied if evo_result else []),
+                message=(evo_result.message if evo_result else ""),
+            ))
 
         except Exception as e:
             logger.error("Session %s failed with exception: %s", session_id, e, exc_info=True)
@@ -1145,6 +1188,8 @@ class CortexFramework:
             token_usage=token_usage,
             persisted_files=[],
             duration_seconds=duration,
+            complexity_score=complexity_value,
+            learned_action=learned_action,
         )
 
         # Complete session — skip storage wipe if timed out (keep data for resume)
@@ -1492,6 +1537,8 @@ class CortexFramework:
             token_usage=token_usage,
             persisted_files=[],
             duration_seconds=duration,
+            complexity_score=None,
+            learned_action="skipped_resume",
         )
         await self._session_manager.complete_session(
             session_id, record=history_record, skip_storage_cleanup=timed_out,
@@ -1765,29 +1812,19 @@ class CortexFramework:
             )
 
     def resolve_evolution_consent(self, clarification_id: str, answer: str) -> bool:
-        """
-        Called by the application when the user answers the end-of-session
-        evolution consent question (ClarificationEvent with clarification_id
-        starting with "evolve_").
+        """Deprecated — kept as a no-op for API compatibility.
 
-        answer: "yes" | "no"
-        Returns True if the clarification_id was found and resolved.
-
-        Usage:
-            # The event_queue emits a ClarificationEvent.
-            # When the user responds via your API, call:
-            framework.resolve_evolution_consent(clarification_id, "yes")
+        The end-of-session evolution consent prompt was removed in v1.3.0 when
+        learning became autonomic (signal-driven, not consent-driven). Callers
+        that still invoke this method will log a one-time deprecation warning
+        and always receive ``False``; there is no pending consent to resolve.
         """
-        entry = _PENDING_EVOLUTION_CONSENTS.get(clarification_id)
-        if entry:
-            entry["answer"] = answer
-            event = entry["event"]
-            loop = entry.get("loop")
-            if loop and loop.is_running():
-                loop.call_soon_threadsafe(event.set)
-            else:
-                event.set()
-            return True
+        logger.warning(
+            "resolve_evolution_consent() is deprecated in v1.3.0 — "
+            "learning is now signal-driven and no consent prompt is issued. "
+            "clarification_id=%r answer=%r was ignored.",
+            clarification_id, answer,
+        )
         return False
 
     def resolve_timeout_extension(self, clarification_id: str, answer: str) -> bool:

@@ -60,9 +60,9 @@ This is how you catch regressions before users do, not after.
 
 ### Your agent gets smarter over time
 
-The **Learning Engine** observes task patterns across sessions. When the same decomposition pattern recurs, it stages a **delta proposal** — a concrete config change you can review with `cortex delta review` and apply in one command. The agent doesn't silently drift; it surfaces what it learned and asks for approval.
+The **autonomic Learning Engine** observes task patterns across sessions and fires automatically at end-of-session when a signal-driven gate clears. The gate combines a deterministic `TaskComplexityScorer` with the composite validation score — no consent prompt, no human-in-the-loop delay, and the same decision surface whether the session was interactive or an RPC call. New task patterns stage as **delta proposals** under `cortex_delta/pending.yaml`; once three distinct principals have confirmed the same pattern it auto-promotes into `cortex.yaml` (or stays staged if you set `auto_apply_delta: false`).
 
-**Blueprints** capture workflow knowledge in versionable markdown: the dos, don'ts, and lessons learned for each task type. They're loaded into the LLM's context on the second run and auto-updated (with consent) after every session.
+**Blueprints** capture workflow knowledge in versionable markdown: the dos, don'ts, and lessons learned for each task type. They're loaded into the LLM's context on the next run, refined every time a session's validation clears `learning.validation_threshold`, and seeded as drafts the moment a new task pattern is staged — so guidance starts accumulating before a task is promoted.
 
 ---
 
@@ -78,7 +78,7 @@ The **Learning Engine** observes task patterns across sessions. When the same de
 | **Chat vs. task routing** | Intent Gate classifies each turn (heuristic → LLM cascade); small talk skips the full task pipeline | Same path for every turn, or hand-coded intent routing |
 | **Deployment contract** | `interaction_mode` distinguishes chat (clarifications allowed) from RPC (never blocks) — one code path, two contracts | Separate codebases for chat vs. MCP |
 | **Quality gates** | Built-in validation agent with scoring + remediation | Manual testing or nothing |
-| **Learning** | Delta proposals + blueprints with human review | Prompt tweaking by hand |
+| **Learning** | Autonomic gate (complexity + validation) → delta proposals + draft blueprints, confirmed across distinct principals | Prompt tweaking by hand |
 | **LLM providers** | 8 cloud providers + local runtime (Ollama / LM Studio / vLLM) | Usually 1–2, hard-coded |
 | **Per-task routing** | Route decomposition to a fast model, synthesis to flagship | One model for everything |
 | **Streaming** | Typed event classes (StatusEvent, ResultEvent, ClarificationEvent) | Loose dicts or raw SSE strings |
@@ -100,7 +100,7 @@ The **Learning Engine** observes task patterns across sessions. When the same de
 | An **enterprise architect** | Multi-agent meshes with independent scaling, configurable security, and compliance-friendly history encryption |
 | A **solo developer** | Prototype to production with one YAML file — no framework-of-the-month to learn |
 | A **researcher** | Swap LLM providers, models, and tools from config — run experiments without touching code |
-| An **MLOps engineer** | Validation scores, session replay, token accounting, delta learning, and OpenTelemetry hooks out of the box |
+| An **MLOps engineer** | Validation scores, session replay, token accounting, autonomic learning telemetry, and OpenTelemetry hooks out of the box |
 
 ---
 
@@ -114,7 +114,7 @@ You write a YAML file describing your agent. Cortex reads it and gives you:
 - **MCP tool servers** — connect any tool with three lines of YAML
 - **8 cloud LLM providers + local runtime** — switch models without code changes, route different tasks to different models, or run fully offline on Ollama / LM Studio / vLLM
 - **Response validation** — every output scored; regressions caught automatically
-- **Delta learning** — agent proposes its own improvements; you review and approve
+- **Autonomic learning** — signal-gated end-of-session evolution; new task patterns stage themselves, seeded draft blueprints accumulate guidance, distinct-principal confirmation gates promotion
 - **Blueprints** — reusable workflow knowledge that makes the agent better over time
 - **Streaming events** — typed, structured events for any UI (SSE, WebSocket, CLI)
 - **Session persistence** — resume timed-out sessions, replay history, encrypt at rest

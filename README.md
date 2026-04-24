@@ -133,8 +133,8 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 | **Ant Colony** | Orchestrator self-spawns specialist Cortex agents as MCP servers at runtime; supervised, health-checked, auto-restarted |
 | **Identity & delegation** | First-class `Principal` model — human, system, or agent-to-agent calls with full delegation chains in audit logs |
 | **Quality validation** | Every response scored and gated; per-task validation inside the execution loop |
-| **Delta learning** | Agent proposes improvements; human-in-the-loop review before apply |
-| **Blueprints** | Reusable workflow knowledge loaded into context, auto-updated with consent |
+| **Autonomic learning** | Signal-gated end-of-session evolution — complexity + validation thresholds trigger staging; distinct-principal confirmation gates promotion |
+| **Blueprints** | Reusable workflow knowledge loaded into context; refined automatically when a session clears the validation threshold, seeded as drafts the moment a new task pattern is staged |
 | **Streaming** | Typed event classes (`StatusEvent`, `ResultEvent`, `ClarificationEvent`) for any UI |
 | **Smart synthesis** | Keyword-grep excerpts + concurrent per-file LLM summaries; large results written to disk as a `file` ResultEvent |
 | **Per-task LLM routing** | Route decomposition to a fast model, synthesis to flagship |

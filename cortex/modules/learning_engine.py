@@ -1,15 +1,34 @@
-"""LearningEngine — unified self-evolution engine for cortex.yaml deltas and code persistence.
+"""LearningEngine — autonomic self-evolution engine for cortex.yaml deltas
+and code persistence.
 
-Both concerns live here because they are the same thing: the framework learning
-from usage and evolving its own capabilities over time.
+Both concerns live here because they are the same thing: the framework
+learning from usage and evolving its own capabilities over time.
+
+The engine is *signal-driven* and *consent-free*. Gating is performed by
+:class:`CortexFramework` at end-of-session using the autonomic learning
+gate (intent mode + complexity score + validation score); this module
+trusts that its callers have already passed that gate.
 
 Flow:
-  1. Session completes with ad-hoc tasks (tasks not defined in cortex.yaml).
-  2. Framework calls persist_evolution() with the completed envelopes.
-  3. LearningEngine stages each as a DeltaProposal (task type + optional script).
-  4. If a generated_script exists, it is persisted to AgentCodeStore immediately.
-  5. The proposal accumulates confirmations from distinct users over time.
-  6. Once threshold is met, apply_delta() writes the task type (+ handler) into cortex.yaml.
+
+  1. A session completes with ad-hoc tasks (tasks not defined in
+     ``cortex.yaml``) that cleared the framework gate.
+  2. Framework calls :meth:`persist_evolution` with the completed envelopes
+     and the computed complexity score.
+  3. LearningEngine stages each envelope as a :class:`DeltaProposal`
+     (task type + optional script).
+  4. Any ``generated_script`` is persisted to :class:`AgentCodeStore`
+     immediately so future sessions can reuse it.
+  5. A draft :class:`Blueprint` is seeded from the session's execution data
+     under a reserved ``drafts/`` namespace so guidance starts accumulating
+     before the task type is formally promoted to ``cortex.yaml``.
+  6. Proposals accumulate confirmations from distinct users. Once the
+     configured confidence threshold is met,
+     :meth:`apply_delta` merges the task type into ``cortex.yaml`` and
+     re-links the draft blueprint to its permanent location.
+
+Anti-abuse: one ``user_id`` counts as one confirmation regardless of how
+many times that user runs the same ad-hoc task.
 """
 import logging
 import shutil
@@ -36,6 +55,7 @@ class SessionConfirmation:
     user_id: str
     confirmed: bool
     validation_score: float
+    complexity_score: float = 0.0
 
 
 @dataclass
@@ -59,6 +79,13 @@ class DeltaProposal:
     # Optional tool_servers entries to merge into cortex.yaml on apply
     # {server_name: {url: ..., transport: ..., ...}}
     tool_servers_config: Optional[dict] = None
+    # Draft blueprint reference (``drafts/{task_name}__{hash}``) created on
+    # first stage. Promoted to a permanent ``blueprint:`` reference when
+    # ``apply_delta`` writes this task into cortex.yaml.
+    draft_blueprint: Optional[str] = None
+    # Peak runtime complexity score observed across all confirmations —
+    # used for observability and conflict resolution.
+    complexity_score: float = 0.0
 
     def compute_confidence(self) -> str:
         if self.confirmations >= 5:
@@ -81,6 +108,7 @@ class EvolutionResult:
     """Result returned by persist_evolution()."""
     staged_tasks: List[str]           # task type names staged as proposals
     scripts_persisted: List[str]      # task names whose scripts were saved
+    drafts_seeded: List[str]          # task names with a new draft blueprint
     auto_applied: List[str]           # task names immediately applied (auto_apply_delta)
     message: str                      # human-readable summary for the user
 
@@ -88,25 +116,34 @@ class EvolutionResult:
 # ─────────────────────────────── engine ──────────────────────────────────────
 
 class LearningEngine:
-    """
-    Unified evolution engine.
+    """Autonomic evolution engine.
 
     Responsibilities:
-    - Accumulate DeltaProposals for new/ad-hoc task types (pending.yaml).
-    - Persist generated Python scripts to AgentCodeStore.
-    - Apply proposals to cortex.yaml once confidence threshold is met.
-    - Hot-reload the running framework config after apply.
 
-    Dual-gate: both positive user consent AND passing validation required
-    before a proposal is staged.
-    Anti-abuse: one user_id counts as one confirmation toward threshold.
+      - Accumulate :class:`DeltaProposal` entries for new/ad-hoc task types
+        in ``pending.yaml``.
+      - Persist generated Python scripts to :class:`AgentCodeStore`.
+      - Seed draft blueprints from session execution data so guidance begins
+        accumulating before a task is promoted.
+      - Apply proposals to ``cortex.yaml`` once the configured confidence
+        threshold is met.
+      - Hot-reload the running framework config after apply.
+
+    Gating is the caller's responsibility: this engine runs on every call
+    it receives. The framework's autonomic gate (``complexity_threshold`` +
+    ``validation_threshold``, chat-turn skip, principal identity check) is
+    the single source of truth for when to engage the engine.
+
+    Anti-abuse: one ``user_id`` counts as one confirmation toward the
+    confidence threshold regardless of how many sessions it contributes.
     """
 
     def __init__(
         self,
         delta_path: str,
         config: LearningConfig,
-        code_store=None,   # cortex.sandbox.code_store.AgentCodeStore (optional)
+        code_store=None,       # cortex.sandbox.code_store.AgentCodeStore (optional)
+        blueprint_store=None,  # cortex.modules.blueprint_store.BlueprintStore (optional)
     ):
         self._delta_path = Path(delta_path)
         self._delta_path.mkdir(parents=True, exist_ok=True)
@@ -115,6 +152,7 @@ class LearningEngine:
         self._history_path.mkdir(exist_ok=True)
         self._config = config
         self._code_store = code_store
+        self._blueprint_store = blueprint_store
         self._reload_callback = None
 
     def set_reload_callback(self, callback) -> None:
@@ -124,6 +162,10 @@ class LearningEngine:
         """Inject AgentCodeStore after construction (e.g. when sandbox is enabled)."""
         self._code_store = code_store
 
+    def set_blueprint_store(self, blueprint_store) -> None:
+        """Inject BlueprintStore after construction so draft blueprints can be seeded."""
+        self._blueprint_store = blueprint_store
+
     # ── primary entry point ───────────────────────────────────────────────────
 
     async def persist_evolution(
@@ -132,28 +174,41 @@ class LearningEngine:
         user_id: str,
         validation_report: ValidationReport,
         cortex_yaml_path: str,
+        complexity_score: float = 0.0,
+        decomposed_tasks: Optional[list] = None,
     ) -> EvolutionResult:
-        """
-        Called end-of-session when the user has given positive consent and validation passed.
+        """Stage one or more ad-hoc task envelopes as delta proposals.
+
+        Called by the framework when the autonomic learning gate has cleared
+        (intent is task/hybrid, complexity ≥ threshold, validation ≥ threshold).
+        The gate is the caller's responsibility; this method does not
+        re-validate gating conditions.
 
         For each ad-hoc envelope:
-          1. Build a DeltaProposal (task type definition).
-          2. If a generated_script is attached, persist it to AgentCodeStore and
-             link the script path + handler into the proposal.
-          3. Stage the proposal into pending.yaml.
 
-        If auto_apply_delta is enabled and the confidence threshold is already met
-        (or if this is a fresh proposal with explicit consent, treated as an
-        immediate-apply candidate), apply_delta() is called immediately.
+          1. Build a :class:`DeltaProposal` (task type definition).
+          2. If a ``generated_script`` is attached, persist it to
+             :class:`AgentCodeStore` and link the script path + handler into
+             the proposal.
+          3. Seed a draft blueprint under ``drafts/{task_name}__{hash}``
+             so guidance starts accumulating immediately.
+          4. Stage the proposal into ``pending.yaml``.
+
+        If ``auto_apply_delta`` is enabled and the confidence threshold is
+        already met (e.g. after the third distinct principal has run the same
+        ad-hoc task), :meth:`apply_delta` runs immediately and the draft
+        blueprint is promoted to a permanent reference on the new task type.
         """
-        if not self._config.consent_enabled:
+        if not self._config.enabled:
             return EvolutionResult(
-                staged_tasks=[], scripts_persisted=[], auto_applied=[],
-                message="Learning is disabled (consent_enabled: false)."
+                staged_tasks=[], scripts_persisted=[], drafts_seeded=[],
+                auto_applied=[],
+                message="Learning is disabled (learning.enabled: false).",
             )
 
         staged_tasks: List[str] = []
         scripts_persisted: List[str] = []
+        drafts_seeded: List[str] = []
 
         for envelope in ad_hoc_envelopes:
             if envelope.status != "complete":
@@ -188,6 +243,22 @@ class LearningEngine:
                 except Exception as e:
                     logger.warning("LearningEngine: script persist failed for '%s': %s", task_name, e)
 
+            # ── seed draft blueprint ────────────────────────────────────────
+            draft_ref: Optional[str] = None
+            if self._blueprint_store:
+                try:
+                    draft_ref = await self._seed_draft_blueprint(
+                        task_name=task_name,
+                        description=description,
+                        envelope=envelope,
+                        validation_report=validation_report,
+                        has_script=bool(script_path),
+                    )
+                    if draft_ref:
+                        drafts_seeded.append(task_name)
+                except Exception as e:
+                    logger.warning("LearningEngine: draft blueprint seed failed for '%s': %s", task_name, e)
+
             # ── build & stage proposal ──────────────────────────────────────
             capability = "code_exec" if envelope.generated_script else "llm_synthesis"
             complexity = "scripted" if script_path else "adaptive"
@@ -205,6 +276,7 @@ class LearningEngine:
                         user_id=user_id,
                         confirmed=True,
                         validation_score=validation_report.composite_score or 0.0,
+                        complexity_score=complexity_score,
                     )
                 ],
                 confirmations=1,
@@ -212,6 +284,8 @@ class LearningEngine:
                 script_path=script_path,
                 script_requirements=requirements,
                 is_adhoc=True,
+                draft_blueprint=draft_ref,
+                complexity_score=complexity_score,
             )
             proposal.confidence = proposal.compute_confidence()
 
@@ -237,6 +311,8 @@ class LearningEngine:
             parts.append(f"Staged {len(staged_tasks)} new task type(s): {', '.join(staged_tasks)}.")
         if scripts_persisted:
             parts.append(f"Saved {len(scripts_persisted)} script(s) for reuse.")
+        if drafts_seeded:
+            parts.append(f"Seeded {len(drafts_seeded)} draft blueprint(s).")
         if auto_applied:
             parts.append(f"Auto-applied {len(auto_applied)} task type(s) to cortex.yaml.")
         message = " ".join(parts) if parts else "No new tasks to stage."
@@ -244,6 +320,7 @@ class LearningEngine:
         return EvolutionResult(
             staged_tasks=staged_tasks,
             scripts_persisted=scripts_persisted,
+            drafts_seeded=drafts_seeded,
             auto_applied=auto_applied,
             message=message,
         )
@@ -254,19 +331,21 @@ class LearningEngine:
         self,
         session_id: str,
         user_id: str,
-        user_consent: str,
         validation_report: ValidationReport,
         task_completion: TaskCompletion,
         config: Optional[LearningConfig] = None,
+        complexity_score: float = 0.0,
     ) -> Optional[DeltaProposal]:
-        """
-        Legacy single-session evaluation path (non-ad-hoc tasks).
-        Requires positive consent AND passing validation.
+        """Legacy single-session evaluation path (non-ad-hoc tasks).
+
+        Historically required positive user consent; that gate has been
+        replaced by the framework-level autonomic gate. This method now
+        requires only that the session ran successfully and passed
+        validation. Retained for callers that evaluate sessions outside the
+        main ``persist_evolution`` flow.
         """
         cfg = config or self._config
-        if not cfg.consent_enabled:
-            return None
-        if user_consent != "positive":
+        if not cfg.enabled:
             return None
         if not validation_report.passed:
             return None
@@ -282,9 +361,11 @@ class LearningEngine:
                     user_id=user_id,
                     confirmed=True,
                     validation_score=validation_report.composite_score or 0.0,
+                    complexity_score=complexity_score,
                 )
             ],
             confirmations=1,
+            complexity_score=complexity_score,
         )
         proposal.confidence = proposal.compute_confidence()
         return proposal
@@ -316,12 +397,15 @@ class LearningEngine:
             "confidence": proposal.confidence,
             "confirmations": proposal.confirmations,
             "is_adhoc": proposal.is_adhoc,
+            "complexity_score": round(proposal.complexity_score, 3),
         }
         # Persist script metadata (but not the full source — it's in code_store)
         if proposal.script_path:
             prop_dict["handler"] = _script_path_to_handler(proposal.script_path)
         if proposal.script_requirements:
             prop_dict["script_requirements"] = proposal.script_requirements
+        if proposal.draft_blueprint:
+            prop_dict["draft_blueprint"] = proposal.draft_blueprint
 
         if proposal.task_name in task_map:
             existing_task = task_map[proposal.task_name]
@@ -340,6 +424,14 @@ class LearningEngine:
             if proposal.script_path and "handler" not in existing_task:
                 existing_task["handler"] = _script_path_to_handler(proposal.script_path)
                 existing_task["complexity"] = "scripted"
+            # Track the peak complexity score across confirmations
+            prior_score = float(existing_task.get("complexity_score", 0.0) or 0.0)
+            existing_task["complexity_score"] = round(
+                max(prior_score, proposal.complexity_score), 3
+            )
+            # Preserve the draft blueprint reference created at first stage
+            if proposal.draft_blueprint and "draft_blueprint" not in existing_task:
+                existing_task["draft_blueprint"] = proposal.draft_blueprint
             task_map[proposal.task_name] = existing_task
         else:
             task_map[proposal.task_name] = prop_dict
@@ -349,6 +441,92 @@ class LearningEngine:
             yaml.dump(existing, f, default_flow_style=False, sort_keys=False)
         logger.info("Staged delta for task type: %s", proposal.task_name)
 
+    # ── draft blueprint seeding ───────────────────────────────────────────────
+
+    async def _seed_draft_blueprint(
+        self,
+        task_name: str,
+        description: str,
+        envelope,
+        validation_report: ValidationReport,
+        has_script: bool,
+    ) -> Optional[str]:
+        """Create a draft blueprint from first-session execution data.
+
+        Writes the blueprint under ``drafts/{task_name}__{hash}`` so it never
+        collides with a permanent blueprint if the task gets promoted later.
+        The draft is seeded with:
+
+          - discovery hints (adaptive) or topology (scripted) from the
+            observed ``tool_trace`` — whichever matches the task complexity;
+          - any validator findings as initial ``don'ts`` so the next run
+            starts with known failure modes in mind;
+          - an initial ``lesson_summary`` recording the session context.
+
+        Returns the blueprint reference (relative name used by
+        :class:`BlueprintStore`) or ``None`` on failure.
+        """
+        if self._blueprint_store is None:
+            return None
+        from cortex.modules.blueprint_store import BlueprintStore, Blueprint
+
+        deterministic = has_script  # scripted → topology-locked; adaptive → hints
+        draft_name = f"drafts/{BlueprintStore.generate_unique_name(task_name)}"
+
+        bp = await self._blueprint_store.load(draft_name)
+        if bp is None:
+            bp = Blueprint(name=draft_name, task_name=task_name, version=1)
+        bp.deterministic = deterministic
+
+        trace_lines = [
+            t for t in (getattr(envelope, "tool_trace", []) or [])
+            if isinstance(t, str) and t.strip()
+        ]
+        trace_block = "\n".join(f"- {t}" for t in trace_lines[:12])
+
+        if deterministic:
+            if not bp.topology and trace_block:
+                bp.topology = (
+                    "Observed tool sequence (first session):\n" + trace_block
+                )
+        else:
+            if not bp.discovery_hints and trace_block:
+                bp.discovery_hints = (
+                    "Prior tool usage (first session):\n" + trace_block
+                )
+
+        # Seed don'ts from validator findings.
+        max_chars = max(80, int(getattr(self._config, "max_lesson_chars", 500) or 500))
+        if validation_report and getattr(validation_report, "findings", None):
+            seen = {d.strip().lower() for d in bp.donts}
+            for f in validation_report.findings[:5]:
+                issue = (getattr(f, "issue", "") or "").strip()
+                suggestion = (getattr(f, "suggestion", "") or "").strip()
+                text = (
+                    f"{issue} — {suggestion}" if issue and suggestion else issue
+                )
+                if not text:
+                    continue
+                text = text[:max_chars]
+                if text.lower() not in seen:
+                    bp.donts.append(text)
+                    seen.add(text.lower())
+
+        if not bp.lessons_learned:
+            lesson = (
+                f"Seeded from ad-hoc session {getattr(envelope, 'session_id', '?')}: "
+                f"{description}"
+            )[:max_chars]
+            bp.lessons_learned.append(f"[v{bp.version}] {lesson}")
+
+        # Stamp a tentative successful-run timestamp so staleness checks can
+        # reason about the draft immediately.
+        bp.last_successful_run_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        await self._blueprint_store.save(bp)
+        logger.info("LearningEngine: seeded draft blueprint '%s'", draft_name)
+        return draft_name
+
     # ── apply ─────────────────────────────────────────────────────────────────
 
     async def apply_delta(
@@ -357,14 +535,18 @@ class LearningEngine:
         cortex_yaml_path: str,
         min_confidence: Optional[str] = None,
     ) -> ApplyResult:
-        """
-        1. Load pending.yaml.
-        2. Filter by min_confidence.
-        3. Merge into cortex.yaml — writing handler + complexity: scripted when
-           a script is associated with the task type.
-        4. Backup original, write updated.
-        5. Archive applied proposal; truncate pending.
-        6. Trigger hot-reload.
+        """Merge confidence-cleared proposals from ``pending.yaml`` into
+        ``cortex.yaml``.
+
+          1. Load pending.yaml.
+          2. Filter by ``min_confidence``.
+          3. Merge into cortex.yaml — writing handler + ``complexity: scripted``
+             when a script is associated with the task type, and promoting
+             any ``draft_blueprint`` reference to a permanent ``blueprint:``
+             field.
+          4. Backup original, write updated.
+          5. Archive applied proposal; truncate pending.
+          6. Trigger hot-reload.
         """
         pending_p = Path(delta_path) / "pending.yaml" if delta_path else self._pending_path
         if not pending_p.exists():
@@ -413,6 +595,7 @@ class LearningEngine:
                 if k not in (
                     "learned_from_sessions", "confidence", "confirmations",
                     "is_adhoc", "script_requirements", "generated_script",
+                    "complexity_score", "draft_blueprint",
                 )
             }
             # If a handler is defined, upgrade complexity to scripted
@@ -424,6 +607,21 @@ class LearningEngine:
                         self._code_store.mark_added_to_yaml(new_task["name"])
                     except Exception:
                         pass
+            # Promote any draft blueprint to a permanent reference.
+            draft_ref = new_task.get("draft_blueprint")
+            if draft_ref and self._blueprint_store:
+                try:
+                    promoted_ref = await self._promote_draft_blueprint(
+                        draft_ref=draft_ref,
+                        task_name=new_task["name"],
+                    )
+                    if promoted_ref:
+                        clean_task["blueprint"] = promoted_ref
+                except Exception as e:
+                    logger.warning(
+                        "Failed to promote draft blueprint '%s' for task '%s': %s",
+                        draft_ref, new_task["name"], e,
+                    )
             existing_map[new_task["name"]] = clean_task
             applied_names.append(new_task["name"])
 
@@ -466,6 +664,30 @@ class LearningEngine:
             timestamp=ts,
         )
 
+    async def _promote_draft_blueprint(
+        self,
+        draft_ref: str,
+        task_name: str,
+    ) -> Optional[str]:
+        """Copy a ``drafts/`` blueprint to its permanent location.
+
+        Returns the permanent blueprint reference (the new name) or ``None``
+        if promotion failed (in which case the caller should leave the task
+        without a blueprint reference and let the blueprint auto-update path
+        recreate it on the next run).
+        """
+        if self._blueprint_store is None:
+            return None
+        draft = await self._blueprint_store.load(draft_ref)
+        if draft is None:
+            return None
+
+        from cortex.modules.blueprint_store import BlueprintStore
+        permanent_name = BlueprintStore.generate_unique_name(task_name)
+        draft.name = permanent_name
+        await self._blueprint_store.save(draft)
+        return permanent_name
+
     # ── misc ──────────────────────────────────────────────────────────────────
 
     def hot_reload(self, new_config) -> None:
@@ -478,8 +700,8 @@ class LearningEngine:
         return []
 
     def resolve_conflicts(self, proposals: List[DeltaProposal]) -> List[DeltaProposal]:
-        """
-        When multiple proposals conflict for the same task type:
+        """When multiple proposals conflict for the same task type.
+
         Prefer higher confidence > more distinct confirmations > higher avg validation score.
         """
         by_name: Dict[str, List[DeltaProposal]] = {}
@@ -512,10 +734,10 @@ class LearningEngine:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _script_path_to_handler(script_path: str) -> str:
-    """
-    Convert an absolute script path to a dotted handler string.
-    e.g. /data/storage/agent_tools/fetch_data_abc12345.py
-         → agent_tools.fetch_data_abc12345.run
+    """Convert an absolute script path to a dotted handler string.
+
+    e.g. ``/data/storage/agent_tools/fetch_data_abc12345.py`` →
+    ``agent_tools.fetch_data_abc12345.run``.
     """
     stem = Path(script_path).stem   # fetch_data_abc12345
     # Find the "agent_tools" directory component

@@ -352,12 +352,38 @@ class HistoryConfig(BaseModel):
 
 
 class LearningConfig(BaseModel):
+    """Autonomic learning — signal-gated, no user consent.
+
+    Learning triggers off two signals at end-of-session:
+
+      - ``validation_threshold``: composite validation score a response must
+        reach before any learning action (blueprint update or delta staging)
+        fires. Shared with the blueprint auto-update path.
+      - ``complexity_threshold``: minimum ``TaskComplexityScorer`` score an
+        ad-hoc task must reach before it is staged to ``pending.yaml``.
+        Blueprint updates for *known* tasks ignore this — any successful
+        run can refine a known task's guidance.
+
+    The promote-to-cortex.yaml step remains gated by confidence accumulation
+    (``auto_apply_min_confidence`` + ``auto_apply_min_confirmations``). A
+    single session can stage a delta but can never promote one on its own.
+
+    Chat turns (intent_gate → ``chat``) never trigger learning regardless of
+    other signals.
+    """
     model_config = ConfigDict(extra='allow')
-    consent_enabled: bool = False
-    auto_apply_delta: bool = False
-    auto_apply_min_confidence: str = "high"
-    auto_apply_min_confirmations: int = 3
+    enabled: bool = True                          # master switch
+    validation_threshold: float = 0.75            # min composite score to learn
+    complexity_threshold: float = 0.6             # min score to stage ad-hoc task type
+    require_user_identity: bool = True            # RPC without a principal → skip learning
+    auto_apply_delta: bool = True                 # auto-promote to cortex.yaml once confidence met
+    auto_apply_min_confidence: str = "medium"     # min confidence level for auto-apply
+    auto_apply_min_confirmations: int = 3         # distinct principals required for auto-apply
     notify_on_apply: bool = True
+    max_lesson_chars: int = 500                   # blueprint poisoning guard
+    # Deprecated — retained for backwards-compat config parsing. Ignored at
+    # runtime; consent prompts have been replaced by signal-driven learning.
+    consent_enabled: Optional[bool] = None
 
 
 class SecurityConfig(BaseModel):
@@ -389,13 +415,21 @@ class UserConfig(BaseModel):
 
 
 class CodeSandboxConfig(BaseModel):
-    """Configuration for the sandboxed Python code execution capability."""
+    """Configuration for the sandboxed Python code execution capability.
+
+    Script persistence is now driven by the autonomic learning gate — a
+    generated script is saved to ``AgentCodeStore`` when its parent ad-hoc
+    task passes the complexity + validation thresholds. See
+    :class:`LearningConfig` for the governing knobs.
+    """
     model_config = ConfigDict(extra='allow')
     enabled: bool = False
     timeout_seconds: int = 60
     allow_network: bool = False
-    ask_persist_consent: bool = True    # Ask user after execution if they want to save the script
-    auto_add_to_yaml: bool = False      # If True, automatically update cortex.yaml on consent
+    # Deprecated — retained for backwards-compat config parsing. Consent
+    # prompts have been replaced by signal-driven learning.
+    ask_persist_consent: Optional[bool] = None
+    auto_add_to_yaml: bool = False      # If True, auto-apply the delta on stage
                                         # If False, only saves the script — developer applies YAML manually
 
 

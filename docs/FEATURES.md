@@ -86,16 +86,19 @@ Wires into FastAPI SSE, WebSockets, or any async consumer pattern.
 | **Per-session validation report** | Returned on `SessionResult.validation_report` |
 | **Model override** | Run validation with a different model than task execution |
 
-## Delta learning
+## Autonomic learning
 
 | Feature | Description |
 |---|---|
-| **Pattern observation** | Tracks task decomposition patterns across sessions |
-| **Consent gating** | Only learns from sessions where the user granted consent |
-| **Confidence levels** | Medium (3 confirmations) / High (5 confirmations) from distinct users |
-| **Human-in-the-loop review** | `cortex delta review` shows staged proposals |
-| **Apply with rollback** | `cortex delta apply` writes to `cortex.yaml`, `cortex delta rollback` restores the prior version |
-| **Auto-apply mode** | Optional: auto-apply high-confidence proposals |
+| **Signal-driven gate** | At end-of-session, learning fires automatically when the `TaskComplexityScorer` and validation score both clear their thresholds. No consent prompt is issued — the gate is deterministic and auditable. |
+| **Chat-turn skip** | Sessions classified as chat by the Intent Gate never trigger learning. |
+| **RPC identity check** | Sessions running in `interaction_mode: rpc` without an attached principal are skipped (configurable via `learning.require_user_identity`). |
+| **TaskComplexityScorer** | Pure weighted sum of code synthesis, tool-trace length, fan-out, dependencies, tokens, duration → 0.0–1.0 score. Fixed weights = reproducible learning decisions across deployments. |
+| **Draft blueprints** | On first stage, a draft blueprint is seeded under `drafts/{task_name}__{hash}` so guidance accumulates before a task is promoted into `cortex.yaml`. |
+| **Distinct-principal accumulation** | Promotion still requires 3 distinct principals (configurable). One user can never promote a delta alone. |
+| **Auto-apply mode** | Default on — deltas promote themselves once confidence accumulates. Flip `auto_apply_delta: false` to keep `pending.yaml` as a manual review queue. |
+| **Human-in-the-loop review** | `cortex delta review` shows staged proposals; `cortex delta apply` writes to `cortex.yaml`; `cortex delta rollback` restores the prior version. |
+| **LearningEvent telemetry** | Every session emits a single `LearningEvent` with the gate decision, complexity score, validation score, and staged/applied task lists. |
 
 ## Session management
 

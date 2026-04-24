@@ -149,6 +149,23 @@ class ObservabilityEmitter:
             "provider": provider,
         })
 
+    def emit_complexity_score(self, session_id: str, breakdown) -> None:
+        """Emit a single complexity-score summary per session.
+
+        ``breakdown`` is a ``TaskComplexityScorer.ComplexityBreakdown`` — the
+        final score plus every per-signal counter the scorer considered. We
+        flatten it into the operational stream so dashboards can correlate
+        learning decisions with the signals that produced them.
+        """
+        try:
+            payload = breakdown.to_dict()
+        except AttributeError:
+            payload = {"score": getattr(breakdown, "score", None)}
+        self._emit_operational("complexity_score", {
+            "session_id": session_id,
+            **payload,
+        })
+
     def emit_validation_result(self, session_id: str, report) -> None:
         self._emit_operational("validation_result", {
             "session_id": session_id,

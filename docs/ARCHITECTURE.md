@@ -207,12 +207,24 @@ Hot store for task result envelopes (`output_value`, status, token usage). Small
 
 **File:** [`cortex/modules/result_envelope_store.py`](../cortex/modules/result_envelope_store.py)
 
-#### Learning Engine
-Observes task patterns across sessions. When the same decomposition pattern recurs across distinct users, it stages a **delta proposal** — a suggestion to add a task type or tool server to `cortex.yaml`. Proposals are gated by confidence (medium = 3 confirmations, high = 5) and require human review via `cortex delta review`. At session end, the Learning Engine also drives **evolution consent**: if ad-hoc tasks produced reusable scripts, the user can persist them as new task types.
+#### Learning Engine — Autonomic
+Signal-driven, consent-free evolution. At end of session the framework runs a two-stage gate:
 
-**Why:** Agents drift in the wild. Real user patterns differ from what you predicted at design time. The Learning Engine surfaces those patterns as concrete config changes you can inspect and apply.
+1. **Skip guards** — chat turns, RPC calls with no principal, or `learning.enabled: false` exit immediately.
+2. **Scoring gates** — the `TaskComplexityScorer` produces a deterministic 0.0–1.0 score from envelope + graph signals (code synthesis, tool-trace length, fan-out, deps, tokens, duration); the composite validation score must clear `validation_threshold`. Both gates firing eligible sessions for learning.
 
-**File:** [`cortex/modules/learning_engine.py`](../cortex/modules/learning_engine.py)
+Eligible sessions take one of two paths:
+
+- **Ad-hoc tasks** (not declared in `cortex.yaml`) are staged as `DeltaProposal` entries in `cortex_delta/pending.yaml`, with any generated script persisted via `AgentCodeStore` and a **draft blueprint** seeded under `drafts/{task_name}__{hash}` so guidance begins accumulating before promotion. Once a proposal reaches the distinct-principal confidence threshold (default: 3 users = medium), `auto_apply_delta` promotes it into `cortex.yaml` and the draft blueprint is relinked to its permanent location.
+- **Known tasks** have their existing blueprints refined via the LLM-driven blueprint auto-update (dos/don'ts, clarifications, lesson summary) — this runs even when the complexity gate doesn't fire, so every successful known-task run can accrete guidance.
+
+A single `LearningEvent` is emitted per session reporting the gate decision (`staged`, `applied`, `blueprint_updated`, `skipped_*`, …); the same label is written to the session's `HistoryRecord.learned_action` field.
+
+**Why:** Consent prompts never worked in RPC / headless deployments and were routinely timed out by users in interactive flows. Making learning a deterministic function of observable signals (validation score + complexity score + intent + identity) means behaviour is the same everywhere and is auditable per session. Distinct-principal accumulation is the real anti-abuse gate — not the prompt.
+
+**Files:**
+- [`cortex/modules/learning_engine.py`](../cortex/modules/learning_engine.py)
+- [`cortex/modules/task_complexity_scorer.py`](../cortex/modules/task_complexity_scorer.py)
 
 ### Session & validation
 
@@ -368,7 +380,7 @@ There's no custom inter-agent protocol. It's all MCP, all the way down.
 
 The framework supports two deployment contracts, selected via `agent.interaction_mode`:
 
-- **`interactive`** — chat UIs, CLI, dev mode. The Intent Gate routes conversational turns directly to `converse()`. Task-shaped turns run the full pipeline. Interactive clarifications (`ClarificationEvent` / evolution consent prompts) are permitted because a human is on the other end.
+- **`interactive`** — chat UIs, CLI, dev mode. The Intent Gate routes conversational turns directly to `converse()`. Task-shaped turns run the full pipeline. Interactive clarifications (`ClarificationEvent`) are permitted because a human is on the other end. Learning runs automatically at end of session via the autonomic gate — no consent prompt is issued.
 - **`rpc`** — agent is exposed as a callable (e.g. via `cortex publish mcp`). Every turn is forced to the task path and interactive clarifications are suppressed so automated callers never hang on a prompt they can't answer. If the decomposer returns zero tasks for an `rpc` turn, the synthesiser returns a structured direct response instead of waiting.
 
 Runtime override: `CORTEX_INTERACTION_MODE=interactive|rpc`. `cortex publish mcp` auto-injects `rpc`.
