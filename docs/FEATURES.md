@@ -130,6 +130,8 @@ All three implement the same interface — swap via `storage` config, no code ch
 | **Input sanitisation** | Prompt injection mitigation on user inputs |
 | **Credential scrubbing** | Redacts secrets from logs and event streams |
 | **Bash sandbox** | Code execution task runs in a sandboxed subprocess |
+| **WorkspaceBash** | Workspace-scoped file read/write and command execution with mandatory HITL before any mutating operation; path traversal blocked at resolve time |
+| **HITL relay** | Ant subprocesses relay HITL prompts to the parent framework session so the user always controls workspace mutations, even from spawned agents |
 | **API key via env vars** | Keys are never stored in config files |
 | **Session ownership checks** | Resume is gated by the original `user_id` |
 
@@ -138,6 +140,7 @@ All three implement the same interface — swap via `storage` config, no code ch
 | Tool | What it does |
 |---|---|
 | **Setup wizard** | Browser-based `cortex.yaml` generator at `localhost:7799` — multi-step flow for identity, LLM, storage, adaptive behaviour, runtime, and chat-UI config |
+| **Config Studio** | `cortex config-ui` launches a browser UI at `localhost:7801` to inspect and edit `cortex.yaml`, blueprints, staged deltas, and session metadata |
 | **Dry-run validation** | `cortex dry-run` validates config and compiles task graph without LLM calls |
 | **Hot-reload dev mode** | `cortex dev --watch` applies config changes live |
 | **Session replay** | `cortex replay` shows request, response, task outcomes, validation report |

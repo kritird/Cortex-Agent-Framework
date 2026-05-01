@@ -146,3 +146,11 @@ class CortexAntError(CortexException):
     def __init__(self, message: str, ant_name: str = ""):
         self.ant_name = ant_name
         super().__init__(message)
+
+
+class CortexHITLDeniedError(CortexException):
+    """User denied a HITL prompt (e.g. from WorkspaceBash write/execute)."""
+    def __init__(self, message: str, operation: str = "", path: str = ""):
+        self.operation = operation
+        self.path = path
+        super().__init__(message)

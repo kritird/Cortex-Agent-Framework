@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class AgentTimeConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
-    default_max_wait_seconds: int = 120
-    default_task_timeout_seconds: int = 40
+    default_max_wait_seconds: int = 1000
+    default_task_timeout_seconds: int = 400
 
 
 class AgentPerformanceConfig(BaseModel):
@@ -53,7 +53,7 @@ class IntentGateConfig(BaseModel):
     # "default" provider is used — matches existing framework convention.
     llm_provider: str = "default"
     # Hard upper bound on classifier latency before we fall back to task mode.
-    timeout_seconds: float = 5.0
+    timeout_seconds: float = 50.0
 
 
 class ExternalMCPDiscoveryConfig(BaseModel):
@@ -77,14 +77,14 @@ class ExternalMCPDiscoveryConfig(BaseModel):
     # Re-verify known external MCPs whose last_verified is older than this.
     max_stale_days: int = 30
     # Per-registry HTTP request timeout (seconds).
-    search_timeout_s: float = 10.0
+    search_timeout_s: float = 100.0
 
 
 class CapabilityScoutConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     enabled: bool = True          # run scout before decomposition
     max_capabilities: int = 30    # probe at most N capabilities per request
-    timeout_seconds: int = 10     # abandon scout if it takes too long
+    timeout_seconds: int = 100     # abandon scout if it takes too long
     external_discovery: ExternalMCPDiscoveryConfig = Field(
         default_factory=ExternalMCPDiscoveryConfig
     )
@@ -133,7 +133,7 @@ class TaskTypeConfig(BaseModel):
     depends_on: List[str] = Field(default_factory=list)
     retry: TaskRetryConfig = Field(default_factory=TaskRetryConfig)
     output: TaskOutputConfig = Field(default_factory=TaskOutputConfig)
-    timeout_seconds: int = 40
+    timeout_seconds: int = 400
     llm_provider: str = "default"
     handler: Optional[str] = None
     # Wave-level validation contract. The wave validation gate runs only if
@@ -178,8 +178,8 @@ class ToolServerTLSConfig(BaseModel):
 
 class ToolServerConnectionConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
-    timeout_seconds: int = 10
-    read_timeout_seconds: int = 60
+    timeout_seconds: int = 100
+    read_timeout_seconds: int = 600
     max_retries: int = 3
     retry_backoff_ms: int = 500
 
@@ -223,7 +223,7 @@ class ToolServerConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     working_dir: str = ""
-    startup_timeout_seconds: int = 10
+    startup_timeout_seconds: int = 100
 
 
 class LLMProviderConfig(BaseModel):
@@ -268,7 +268,7 @@ class SQLiteConfig(BaseModel):
     enabled: bool = False
     path: str = ""
     wal_mode: bool = True
-    connection_timeout_seconds: int = 5
+    connection_timeout_seconds: int = 50
     ttl_session_data_seconds: int = 3600
     ttl_session_index_seconds: int = 86400
 
@@ -331,7 +331,7 @@ class ValidationConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     threshold: float = 0.75
     critical_threshold: float = 0.40
-    timeout_seconds: int = 15
+    timeout_seconds: int = 150
     weights_intent_match: float = 0.50
     weights_completeness: float = 0.30
     weights_coherence: float = 0.20
@@ -400,7 +400,7 @@ class SecurityConfig(BaseModel):
 class StartupConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     require_all_servers: bool = False
-    discovery_timeout_seconds: int = 15
+    discovery_timeout_seconds: int = 150
     log_discovered_tools: bool = True
     verify_auth: bool = True
     eager_discovery: bool = False  # when False, servers are probed on first use, not at startup
@@ -423,8 +423,8 @@ class CodeSandboxConfig(BaseModel):
     :class:`LearningConfig` for the governing knobs.
     """
     model_config = ConfigDict(extra='allow')
-    enabled: bool = False
-    timeout_seconds: int = 60
+    enabled: bool = True
+    timeout_seconds: int = 600
     allow_network: bool = False
     # Deprecated — retained for backwards-compat config parsing. Consent
     # prompts have been replaced by signal-driven learning.
@@ -453,6 +453,13 @@ class BlueprintConfig(BaseModel):
     auto_update: bool = True   # append lessons learned / bump version after runs
     inject_max_chars: int = 4000  # cap prompt injection size per blueprint
     staleness_warning_days: int = 90  # days since last successful run before blueprint is stale
+
+
+class WorkspaceBashConfig(BaseModel):
+    """Configuration for workspace-aware file read/write and command execution."""
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = True
+    hitl_enabled: bool = True  # cannot be False in production — enforced in framework init
 
 
 class AntColonyConfig(BaseModel):
@@ -487,6 +494,7 @@ class CortexConfig(BaseModel):
     startup: StartupConfig = Field(default_factory=StartupConfig)
     user_config: UserConfig = Field(default_factory=UserConfig)
     code_sandbox: CodeSandboxConfig = Field(default_factory=CodeSandboxConfig)
+    workspace_bash: WorkspaceBashConfig = Field(default_factory=WorkspaceBashConfig)
     blueprint: BlueprintConfig = Field(default_factory=BlueprintConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     ant_colony: AntColonyConfig = Field(default_factory=AntColonyConfig)

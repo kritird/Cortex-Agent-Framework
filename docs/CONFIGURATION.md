@@ -7,18 +7,19 @@ Every aspect of Cortex is driven by `cortex.yaml`. This page is the authoritativ
 ## Top-level structure
 
 ```yaml
-agent:          # Agent identity, concurrency, timeouts, intent gate, interaction mode
-llm_access:     # LLM provider routing
-task_types:     # Vocabulary of work the agent can do
-tool_servers:   # MCP tool server connections
-storage:        # Persistence configuration
-sqlite:         # (optional) SQLite backend settings
-redis:          # (optional) Redis backend settings
-history:        # (optional) Session history settings
-validation:     # (optional) Quality validation settings
-learning:       # (optional) Delta learning settings
-ant_colony:     # (optional) Self-spawning specialist agent mesh
-ui:             # (optional) Built-in chat UI served by `cortex publish ui`
+agent:           # Agent identity, concurrency, timeouts, intent gate, interaction mode
+llm_access:      # LLM provider routing
+task_types:      # Vocabulary of work the agent can do
+tool_servers:    # MCP tool server connections
+storage:         # Persistence configuration
+sqlite:          # (optional) SQLite backend settings
+redis:           # (optional) Redis backend settings
+history:         # (optional) Session history settings
+validation:      # (optional) Quality validation settings
+learning:        # (optional) Delta learning settings
+ant_colony:      # (optional) Self-spawning specialist agent mesh
+workspace_bash:  # (optional) Workspace-aware file/command execution with HITL
+ui:              # (optional) Built-in chat UI served by `cortex publish ui`
 ```
 
 ---
@@ -336,6 +337,31 @@ cortex ants status my-ant                         # Detailed status for one ant
 
 ---
 
+## `workspace_bash`
+
+Workspace-scoped file and command execution with mandatory Human-in-the-Loop (HITL) gating. When enabled, the Generic MCP Agent gains `read_file`, `list_dir`, `write_file`, and `execute` capabilities scoped to a workspace directory extracted from the task instruction.
+
+```yaml
+workspace_bash:
+  enabled: true          # Master switch (default: true)
+  hitl_enabled: true     # Enforced true at runtime — cannot be disabled
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Activates workspace-aware file/command tools in the Generic MCP Agent |
+| `hitl_enabled` | `true` | Hardcoded guard — the framework logs a warning and overrides this to `true` even if set to `false` in config |
+
+**HITL behaviour:**
+- `read_file` and `list_dir` never prompt — they are read-only.
+- `write_file` fires a `ClarificationRequestEvent` before writing; if the file exists, a unified diff is shown.
+- `execute` fires a `ClarificationRequestEvent` before running; obviously dangerous patterns (`rm -rf /`, `sudo`, etc.) are blocked before the prompt fires.
+- If the HITL prompt times out or the user denies it, a `CortexHITLDeniedError` is raised and the task fails cleanly.
+
+All paths are resolved relative to the workspace root and checked for traversal — any `rel_path` that resolves outside the workspace raises `CortexSecurityError`.
+
+---
+
 ## `ui`
 
 Configures the built-in chat UI that `cortex publish ui` serves. Enable via the wizard's *Chat UI* step or by hand.
@@ -387,6 +413,7 @@ Substitution happens at load time. Missing variables produce a clear error.
 | `CORTEX_CONFIG` | Override default config path (defaults to `./cortex.yaml`) |
 | `CORTEX_LOG_LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
 | `CORTEX_INTERACTION_MODE` | Runtime override for `agent.interaction_mode` — `interactive` \| `rpc`. `cortex publish mcp` sets this to `rpc` automatically. |
+| `CORTEX_HITL_URL` | Base URL of the HITL relay server (e.g. `http://127.0.0.1:PORT`). Set automatically on ant subprocess environments so WorkspaceBash HITL prompts are relayed to the parent framework session instead of failing silently. Not set manually in normal use. |
 | `ANTHROPIC_API_KEY` | Default Anthropic provider key |
 | `OPENAI_API_KEY` | Default OpenAI provider key |
 | `GEMINI_API_KEY` | Default Gemini provider key |

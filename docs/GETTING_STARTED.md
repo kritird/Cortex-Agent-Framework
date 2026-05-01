@@ -817,6 +817,10 @@ learning:
   complexity_threshold: 0.6            # Min TaskComplexityScorer score to stage ad-hoc tasks
   auto_apply_delta: true               # Auto-promote deltas once confidence accumulates
   auto_apply_min_confidence: medium    # ≥ 3 distinct principals
+
+workspace_bash:
+  enabled: true                        # Workspace-scoped file/command execution with HITL
+  hitl_enabled: true                   # Cannot be disabled — enforced at runtime
 ```
 
 ---
@@ -826,6 +830,7 @@ learning:
 | Command | What it does |
 |---|---|
 | `cortex setup` | Interactive browser wizard to generate `cortex.yaml` |
+| `cortex config-ui` | Browser-based Config Studio to inspect/edit all framework config at `localhost:7801` |
 | `cortex dev --watch` | Dev mode with hot-reload on config changes |
 | `cortex dry-run "query"` | Validate config and task graph without LLM calls |
 | `cortex publish docker` | Generate `Dockerfile.cortex` (pass `--with-ui` for a chat-UI image) |
@@ -942,7 +947,8 @@ User Request
 | **Task Graph Compiler** | Validates dependencies, detects cycles, computes execution order |
 | **Capability Scout** | Pre-decomposition tool discovery so the agent knows what's available |
 | **Validation Agent** | Scores responses on intent match, completeness, and coherence |
-| **Learning Engine** | Observes patterns and proposes new task types (human-in-the-loop review) |
+| **Learning Engine** | Signal-gated autonomic evolution — stages deltas and refines blueprints at session end |
+| **WorkspaceBash** | Workspace-scoped file read/write and command execution with mandatory HITL before any mutating operation |
 | **Session Manager** | Concurrency limits, per-user caps, session resume after timeout |
 | **Signal Registry** | Coordinates async completion across parallel tasks |
 
@@ -1002,6 +1008,7 @@ mock_llm = MockLLMClient(responses={"default": "Mock response"})
 | `CORTEX_CONFIG` | Override default config path |
 | `CORTEX_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `CORTEX_INTERACTION_MODE` | Override `agent.interaction_mode` — `interactive` or `rpc`. Set automatically by `cortex publish mcp`. |
+| `CORTEX_HITL_URL` | Set automatically on ant subprocesses so WorkspaceBash HITL prompts relay to the parent session. Not set manually in normal use. |
 
 ---
 

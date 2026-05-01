@@ -20,6 +20,7 @@ from cortex.exceptions import (
     CortexFileInputError,
     CortexQuotaError,
     CortexDeltaError,
+    CortexHITLDeniedError,
     ActiveSessionInfo,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "CortexFileInputError",
     "CortexQuotaError",
     "CortexDeltaError",
+    "CortexHITLDeniedError",
     "ActiveSessionInfo",
     "Principal",
 ]

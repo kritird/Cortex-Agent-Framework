@@ -83,6 +83,15 @@ class WizardServer:
             """Return list of supported LLM providers."""
             return web.json_response({"providers": _get_providers()})
 
+        async def handle_check_env(request):
+            """Return whether an env var is set (non-empty) — never reveals the value."""
+            import os
+            var = request.query.get("var", "").strip()
+            if not var:
+                return web.json_response({"set": False, "error": "No var specified"})
+            val = os.environ.get(var)
+            return web.json_response({"set": bool(val and val.strip())})
+
         async def handle_load_config(request):
             """Load existing cortex.yaml and return parsed data for pre-population."""
             config_path = request.query.get("path", "cortex.yaml")
@@ -130,6 +139,7 @@ class WizardServer:
         app.router.add_post("/api/save", handle_save)
         app.router.add_post("/api/publish", handle_publish)
         app.router.add_get("/api/providers", handle_providers)
+        app.router.add_get("/api/check-env", handle_check_env)
         app.router.add_get("/api/load-config", handle_load_config)
         app.router.add_get("/api/blueprint", handle_blueprint_get)
         app.router.add_post("/api/blueprint", handle_blueprint_save)
@@ -299,10 +309,11 @@ def _generate_config(data: dict) -> str:
         "description": data.get("agent_description", "An AI agent"),
     }
     _only_if(agent_block, "synthesis_guidance", data.get("agent_synthesis_guidance"), "")
+    _only_if(agent_block, "interaction_mode", data.get("interaction_mode"), "interactive")
 
     time_cfg = {}
-    _only_if(time_cfg, "default_max_wait_seconds", data.get("max_wait_seconds"), 120)
-    _only_if(time_cfg, "default_task_timeout_seconds", data.get("default_task_timeout"), 40)
+    _only_if(time_cfg, "default_max_wait_seconds", data.get("max_wait_seconds"), 1000)
+    _only_if(time_cfg, "default_task_timeout_seconds", data.get("default_task_timeout"), 400)
     if time_cfg:
         agent_block["time"] = time_cfg
 
@@ -335,7 +346,7 @@ def _generate_config(data: dict) -> str:
     scout_cfg = {}
     _only_if(scout_cfg, "enabled", data.get("scout_enabled"), True)
     _only_if(scout_cfg, "max_capabilities", data.get("scout_max_capabilities"), 30)
-    _only_if(scout_cfg, "timeout_seconds", data.get("scout_timeout_seconds"), 10)
+    _only_if(scout_cfg, "timeout_seconds", data.get("scout_timeout_seconds"), 100)
     ext_cfg = {}
     _only_if(ext_cfg, "enabled", data.get("scout_ext_enabled"), True)
     _only_if(ext_cfg, "auto_discovery_file", data.get("scout_ext_auto_discovery_file"), "cortex_auto_mcps.yaml")
@@ -350,7 +361,7 @@ def _generate_config(data: dict) -> str:
         ext_cfg["registry_sources"] = reg_sources
     _only_if(ext_cfg, "max_new_per_session", data.get("scout_ext_max_new_per_session"), 5)
     _only_if(ext_cfg, "max_stale_days", data.get("scout_ext_max_stale_days"), 30)
-    _only_if(ext_cfg, "search_timeout_s", data.get("scout_ext_search_timeout_s"), 10.0)
+    _only_if(ext_cfg, "search_timeout_s", data.get("scout_ext_search_timeout_s"), 100.0)
     if ext_cfg:
         scout_cfg["external_discovery"] = ext_cfg
     if scout_cfg:
@@ -428,7 +439,7 @@ def _generate_config(data: dict) -> str:
             "path": data.get("sqlite_path", "./cortex_storage/cortex.db"),
             "wal_mode": True if wal_mode_in is None else bool(wal_mode_in),
         }
-        _only_if(sq, "connection_timeout_seconds", data.get("sqlite_connection_timeout_seconds"), 5)
+        _only_if(sq, "connection_timeout_seconds", data.get("sqlite_connection_timeout_seconds"), 50)
         _only_if(sq, "ttl_session_data_seconds", data.get("sqlite_ttl_session_data_seconds"), 3600)
         _only_if(sq, "ttl_session_index_seconds", data.get("sqlite_ttl_session_index_seconds"), 86400)
         config["sqlite"] = sq
@@ -503,7 +514,7 @@ def _generate_config(data: dict) -> str:
             "description": tt.get("description", ""),
             "output_format": tt.get("output_format", "text"),
             "capability_hint": tt.get("capability_hint", "auto"),
-            "timeout_seconds": tt.get("timeout_seconds", 40),
+            "timeout_seconds": tt.get("timeout_seconds", 400),
         }
         _only_if(entry, "mandatory", tt.get("mandatory"), True)
         _only_if(entry, "complexity", tt.get("complexity"), "adaptive")
@@ -570,7 +581,7 @@ def _generate_config(data: dict) -> str:
         if wave_gate_provider and wave_gate_provider != "default":
             validation_cfg["wave_gate_llm_provider"] = wave_gate_provider
         _only_if(validation_cfg, "critical_threshold", data.get("validation_critical_threshold"), 0.40)
-        _only_if(validation_cfg, "timeout_seconds", data.get("validation_timeout_seconds"), 15)
+        _only_if(validation_cfg, "timeout_seconds", data.get("validation_timeout_seconds"), 150)
         _only_if(validation_cfg, "weights_intent_match", data.get("validation_weights_intent_match"), 0.50)
         _only_if(validation_cfg, "weights_completeness", data.get("validation_weights_completeness"), 0.30)
         _only_if(validation_cfg, "weights_coherence", data.get("validation_weights_coherence"), 0.20)
@@ -626,7 +637,7 @@ def _generate_config(data: dict) -> str:
     # Startup
     start_cfg = {}
     _only_if(start_cfg, "require_all_servers", data.get("startup_require_all_servers"), False)
-    _only_if(start_cfg, "discovery_timeout_seconds", data.get("startup_discovery_timeout_seconds"), 15)
+    _only_if(start_cfg, "discovery_timeout_seconds", data.get("startup_discovery_timeout_seconds"), 150)
     _only_if(start_cfg, "log_discovered_tools", data.get("startup_log_discovered_tools"), True)
     _only_if(start_cfg, "verify_auth", data.get("startup_verify_auth"), True)
     _only_if(start_cfg, "eager_discovery", data.get("startup_eager_discovery"), False)
@@ -646,10 +657,14 @@ def _generate_config(data: dict) -> str:
     # Code sandbox
     if data.get("code_sandbox_enabled"):
         sb_cfg = {"enabled": True}
-        _only_if(sb_cfg, "timeout_seconds", data.get("code_sandbox_timeout_seconds"), 60)
+        _only_if(sb_cfg, "timeout_seconds", data.get("code_sandbox_timeout_seconds"), 600)
         _only_if(sb_cfg, "allow_network", data.get("code_sandbox_allow_network"), False)
         _only_if(sb_cfg, "auto_add_to_yaml", data.get("code_sandbox_auto_add_to_yaml"), False)
         config["code_sandbox"] = sb_cfg
+
+    # Workspace Bash
+    if data.get("workspace_bash_enabled"):
+        config["workspace_bash"] = {"enabled": True, "hitl_enabled": True}
 
     # Ant Colony
     if data.get("ant_colony_enabled"):
@@ -658,9 +673,18 @@ def _generate_config(data: dict) -> str:
         _only_if(ant_cfg, "max_ants", data.get("ant_colony_max_ants"), 20)
         _only_if(ant_cfg, "auto_restart", data.get("ant_colony_auto_restart"), True)
         _only_if(ant_cfg, "auto_hatch_on_gap", data.get("ant_colony_auto_hatch_on_gap"), False)
-        _only_if(ant_cfg, "llm_provider", data.get("ant_colony_llm_provider"), "default")
-        _only_if(ant_cfg, "llm_model", data.get("ant_colony_llm_model"), "claude-haiku-4-5-20251001")
-        _only_if(ant_cfg, "api_key_env_var", data.get("ant_colony_api_key_env_var"), "ANTHROPIC_API_KEY")
+        ant_provider_name = data.get("ant_colony_llm_provider") or "default"
+        _only_if(ant_cfg, "llm_provider", ant_provider_name, "default")
+        # Derive model and api_key_env_var from the selected provider's Step 2 config
+        providers_in = data.get("llm_providers", []) or []
+        matched = next((p for p in providers_in if p.get("name") == ant_provider_name), None)
+        if matched:
+            _only_if(ant_cfg, "llm_model", matched.get("model"), "")
+            _only_if(ant_cfg, "api_key_env_var", matched.get("api_key_env_var"), "ANTHROPIC_API_KEY")
+        else:
+            # "default" provider — inherit from the top-level llm_access.default
+            _only_if(ant_cfg, "llm_model", data.get("model"), "")
+            _only_if(ant_cfg, "api_key_env_var", data.get("api_key_env_var"), "ANTHROPIC_API_KEY")
         config["ant_colony"] = ant_cfg
 
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
@@ -700,6 +724,7 @@ def _load_existing_config(config_path: str) -> dict:
     startup_raw = raw.get("startup", {}) or {}
     user_raw = raw.get("user_config", {}) or {}
     sandbox_raw = raw.get("code_sandbox", {}) or {}
+    workspace_bash_raw = raw.get("workspace_bash", {}) or {}
     file_input_raw = raw.get("file_input", {}) or {}
     ui_raw = raw.get("ui", {}) or {}
     ui_auth_raw = ui_raw.get("auth", {}) or {}
@@ -725,8 +750,9 @@ def _load_existing_config(config_path: str) -> dict:
         "agent_name": agent.get("name", ""),
         "agent_description": agent.get("description", ""),
         "agent_synthesis_guidance": agent.get("synthesis_guidance", ""),
-        "max_wait_seconds": time_cfg.get("default_max_wait_seconds", 120),
-        "default_task_timeout": time_cfg.get("default_task_timeout_seconds", 40),
+        "interaction_mode": agent.get("interaction_mode", "interactive"),
+        "max_wait_seconds": time_cfg.get("default_max_wait_seconds", 1000),
+        "default_task_timeout": time_cfg.get("default_task_timeout_seconds", 400),
         "agent_streaming_decomposition": perf_cfg.get("streaming_decomposition", False),
         "max_concurrent_sessions": concurrency_cfg.get("max_concurrent_sessions", 50),
         "max_sessions_per_user": concurrency_cfg.get("max_concurrent_sessions_per_user", 3),
@@ -741,13 +767,13 @@ def _load_existing_config(config_path: str) -> dict:
         "agent_clarification_enabled": clarification_cfg.get("enabled", False),
         "scout_enabled": scout_cfg.get("enabled", True),
         "scout_max_capabilities": scout_cfg.get("max_capabilities", 30),
-        "scout_timeout_seconds": scout_cfg.get("timeout_seconds", 10),
+        "scout_timeout_seconds": scout_cfg.get("timeout_seconds", 100),
         "scout_ext_enabled": scout_ext.get("enabled", True),
         "scout_ext_auto_discovery_file": scout_ext.get("auto_discovery_file", "cortex_auto_mcps.yaml"),
         "scout_ext_registry_sources": _list_to_lines(scout_ext.get("registry_sources", [])),
         "scout_ext_max_new_per_session": scout_ext.get("max_new_per_session", 5),
         "scout_ext_max_stale_days": scout_ext.get("max_stale_days", 30),
-        "scout_ext_search_timeout_s": scout_ext.get("search_timeout_s", 10.0),
+        "scout_ext_search_timeout_s": scout_ext.get("search_timeout_s", 100.0),
         # ── LLM ──
         "provider": llm.get("provider", "anthropic"),
         "model": llm.get("model", ""),
@@ -778,7 +804,7 @@ def _load_existing_config(config_path: str) -> dict:
         "wave_gate_llm_provider": validation_raw.get("wave_gate_llm_provider", "default"),
         "validation_threshold": validation_raw.get("threshold", 0.75),
         "validation_critical_threshold": validation_raw.get("critical_threshold", 0.40),
-        "validation_timeout_seconds": validation_raw.get("timeout_seconds", 15),
+        "validation_timeout_seconds": validation_raw.get("timeout_seconds", 150),
         "validation_weights_intent_match": validation_raw.get("weights_intent_match", 0.50),
         "validation_weights_completeness": validation_raw.get("weights_completeness", 0.30),
         "validation_weights_coherence": validation_raw.get("weights_coherence", 0.20),
@@ -807,7 +833,7 @@ def _load_existing_config(config_path: str) -> dict:
         "security_secret_scrub_patterns": _list_to_lines(security_raw.get("secret_scrub_patterns", [])),
         # ── Startup ──
         "startup_require_all_servers": startup_raw.get("require_all_servers", False),
-        "startup_discovery_timeout_seconds": startup_raw.get("discovery_timeout_seconds", 15),
+        "startup_discovery_timeout_seconds": startup_raw.get("discovery_timeout_seconds", 150),
         "startup_log_discovered_tools": startup_raw.get("log_discovered_tools", True),
         "startup_verify_auth": startup_raw.get("verify_auth", True),
         "startup_eager_discovery": startup_raw.get("eager_discovery", False),
@@ -818,9 +844,11 @@ def _load_existing_config(config_path: str) -> dict:
         "user_allow_user_tool_servers": user_raw.get("allow_user_tool_servers", False),
         # ── Code sandbox ──
         "code_sandbox_enabled": sandbox_raw.get("enabled", False),
-        "code_sandbox_timeout_seconds": sandbox_raw.get("timeout_seconds", 60),
+        "code_sandbox_timeout_seconds": sandbox_raw.get("timeout_seconds", 600),
         "code_sandbox_allow_network": sandbox_raw.get("allow_network", False),
         "code_sandbox_auto_add_to_yaml": sandbox_raw.get("auto_add_to_yaml", False),
+        # ── Workspace Bash ──
+        "workspace_bash_enabled": workspace_bash_raw.get("enabled", False),
         # ── Ant Colony ──
         "ant_colony_enabled": ant_colony_raw.get("enabled", False),
         "ant_colony_base_port": ant_colony_raw.get("base_port", 8100),
@@ -828,8 +856,6 @@ def _load_existing_config(config_path: str) -> dict:
         "ant_colony_auto_restart": ant_colony_raw.get("auto_restart", True),
         "ant_colony_auto_hatch_on_gap": ant_colony_raw.get("auto_hatch_on_gap", False),
         "ant_colony_llm_provider": ant_colony_raw.get("llm_provider", "default"),
-        "ant_colony_llm_model": ant_colony_raw.get("llm_model", "claude-haiku-4-5-20251001"),
-        "ant_colony_api_key_env_var": ant_colony_raw.get("api_key_env_var", "ANTHROPIC_API_KEY"),
         # ── Chat UI ──
         "ui_enabled": ui_raw.get("enabled", False),
         "ui_host": ui_raw.get("host", "0.0.0.0"),
@@ -888,9 +914,9 @@ def _load_existing_config(config_path: str) -> dict:
             "args": ", ".join(cfg.get("args", [])) if isinstance(cfg.get("args"), list) else "",
             "description": cfg.get("description", ""),
             "working_dir": cfg.get("working_dir", ""),
-            "startup_timeout_seconds": cfg.get("startup_timeout_seconds", 10),
-            "conn_timeout": conn.get("timeout_seconds", 10),
-            "conn_read_timeout": conn.get("read_timeout_seconds", 60),
+            "startup_timeout_seconds": cfg.get("startup_timeout_seconds", 100),
+            "conn_timeout": conn.get("timeout_seconds", 100),
+            "conn_read_timeout": conn.get("read_timeout_seconds", 600),
             "conn_max_retries": conn.get("max_retries", 3),
             "conn_retry_backoff_ms": conn.get("retry_backoff_ms", 500),
             "auth_type": auth.get("type", "none"),
@@ -941,7 +967,7 @@ def _load_existing_config(config_path: str) -> dict:
             "description": tt.get("description", ""),
             "output_format": tt.get("output_format", "text"),
             "capability_hint": tt.get("capability_hint", "auto"),
-            "timeout_seconds": tt.get("timeout_seconds", 40),
+            "timeout_seconds": tt.get("timeout_seconds", 400),
             "blueprint": tt.get("blueprint", ""),
             # Advanced
             "mandatory": tt.get("mandatory", True),

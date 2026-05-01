@@ -75,9 +75,17 @@ async def run_ant_server(cortex_yaml_path: str, name: str, port: int, host: str 
         params = body.get("params", body)
         user_request = params.get("request", "")
         user_id = params.get("user_id", "ant_caller")
+        hitl_url = params.get("hitl_url", "")
 
         if not user_request:
             return web.json_response({"error": "request param is required"}, status=400)
+
+        # Set CORTEX_HITL_URL so GenericMCPAgent.ask_human() and WorkspaceBash._ask_hitl()
+        # relay HITL prompts back to the parent framework's session event_queue.
+        import os as _os
+        prev_hitl_url = _os.environ.get("CORTEX_HITL_URL")
+        if hitl_url:
+            _os.environ["CORTEX_HITL_URL"] = hitl_url
 
         queue = asyncio.Queue()
         try:
@@ -90,6 +98,13 @@ async def run_ant_server(cortex_yaml_path: str, name: str, port: int, host: str 
         except Exception as exc:
             logger.error("Ant %s invoke error: %s", name, exc)
             return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            # Restore previous env state
+            if hitl_url:
+                if prev_hitl_url is not None:
+                    _os.environ["CORTEX_HITL_URL"] = prev_hitl_url
+                else:
+                    _os.environ.pop("CORTEX_HITL_URL", None)
 
     app = web.Application()
     app.router.add_get("/health", handle_health)

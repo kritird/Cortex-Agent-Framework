@@ -116,6 +116,7 @@ class ToolServerRegistry:
         self._servers: Dict[str, ToolServerInfo] = {}
         self._connections: Dict[str, ToolServerConnection] = {}
         self._capability_map: Dict[str, List[str]] = {}  # {capability: [server_names]}
+        self._builtin_capabilities: Dict[str, str] = {}  # {name: description}
         self._user_config = user_config or UserConfig()
         self._health_task: Optional[asyncio.Task] = None
         self._discovery_task: Optional[asyncio.Task] = None
@@ -961,6 +962,31 @@ class ToolServerRegistry:
         if not config or not conn or not conn.session:
             return info.status.startswith("READY")
         return await self._health_check(server_name, config, conn.session)
+
+    def register_builtin_capabilities(self, builtins: List[Dict[str, str]]) -> None:
+        """Register built-in (non-server) capabilities so they appear in the system prompt.
+
+        Each entry is a dict with ``name`` and ``description`` keys. These are
+        surfaced in ``get_available_capabilities()`` alongside server-backed ones.
+
+        Example::
+
+            registry.register_builtin_capabilities([
+                {"name": "llm_synthesis",  "description": "LLM text generation and reasoning"},
+                {"name": "workspace_bash", "description": "Read, write, and execute in user workspace"},
+            ])
+        """
+        for entry in builtins:
+            name = entry.get("name", "")
+            desc = entry.get("description", "")
+            if name:
+                self._builtin_capabilities[name] = desc
+                logger.debug("Registered builtin capability: %s", name)
+
+    def get_available_capabilities(self) -> List[str]:
+        """Return all known capabilities: server-backed ones plus registered builtins."""
+        server_caps = {cap for cap, servers in self._capability_map.items() if servers}
+        return sorted(server_caps | set(self._builtin_capabilities.keys()))
 
     def list_servers(self) -> List[ToolServerInfo]:
         return list(self._servers.values())

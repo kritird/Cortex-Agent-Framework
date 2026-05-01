@@ -100,11 +100,13 @@ def build_system_prompt(
                 desc = f" — {t.description}" if t.description else ""
                 lines.append(f"  - {t.name}{desc}")
         lines.append("")
-    elif not has_predefined_tasks and not has_scripts:
-        # No task types, no scout, no scripts — tell the LLM what capabilities exist at minimum
+    # Always surface available capabilities so the decomposition LLM can set
+    # the <capability> field even when task_types or scout tools are defined.
+    if capabilities:
         lines += [
             "## Available Capabilities",
-            f"The following tool capabilities are available: {', '.join(capabilities) or 'none'}",
+            "Use these capability names in the <capability> field of each task block:",
+            f"{', '.join(sorted(capabilities))}",
             "",
         ]
 
@@ -128,10 +130,12 @@ def build_system_prompt(
         "```",
         "<task>",
         "  <name>task_type_name</name>",
+        "  <capability>capability_name</capability>",
         "  <instruction>specific instruction for this task</instruction>",
         "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
         "</task>",
         "```",
+        "Set <capability> to the best matching capability from the Available Capabilities list.",
     ]
     guidance_parts = []
     if has_scripts:
@@ -169,6 +173,7 @@ def _parse_task_blocks(text: str) -> List[DecomposedTask]:
     pattern = re.compile(
         r'<task>\s*'
         r'<name>(.*?)</name>\s*'
+        r'(?:<capability>(.*?)</capability>\s*)?'
         r'<instruction>(.*?)</instruction>\s*'
         r'(?:<depends_on>(.*?)</depends_on>\s*)?'
         r'</task>',
@@ -176,14 +181,16 @@ def _parse_task_blocks(text: str) -> List[DecomposedTask]:
     )
     for match in pattern.finditer(text):
         name = match.group(1).strip()
-        instruction = match.group(2).strip()
-        depends_on_raw = (match.group(3) or "").strip()
+        capability_raw = (match.group(2) or "").strip()
+        instruction = match.group(3).strip()
+        depends_on_raw = (match.group(4) or "").strip()
         depends_on = [d.strip() for d in depends_on_raw.split(",") if d.strip()] if depends_on_raw else []
         if name:
             tasks.append(DecomposedTask(
                 task_name=name,
                 instruction=instruction,
                 depends_on=depends_on,
+                capability_hint=capability_raw or None,
             ))
     return tasks
 

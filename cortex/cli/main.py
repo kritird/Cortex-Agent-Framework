@@ -9,6 +9,7 @@ from cortex.cli.publish import publish_group
 from cortex.cli.spec import spec_command
 from cortex.cli.setup_wizard import setup_command
 from cortex.cli.ants import ants_group
+from cortex.cli.config_ui import config_ui_command
 
 
 @click.group()
@@ -27,6 +28,7 @@ cli.add_command(migrate_command, name="migrate")
 cli.add_command(publish_group, name="publish")
 cli.add_command(spec_command, name="spec")
 cli.add_command(ants_group, name="ants")
+cli.add_command(config_ui_command, name="config-ui")
 
 
 if __name__ == "__main__":

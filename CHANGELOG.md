@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CortexFramework.resolve_evolution_consent()`** — no-op in 1.3.0 (logs a one-time deprecation warning and returns `False`). Autonomic learning no longer emits a consent prompt to resolve.
 - **`learning.consent_enabled`** and **`code_sandbox.ask_persist_consent`** — accepted for parsing, ignored at runtime. Remove from `cortex.yaml` when convenient.
 
+#### WorkspaceBash — workspace-aware file and command execution
+
+- **`WorkspaceBash`** (`cortex/modules/workspace_bash.py`) — read, write, and execute files and shell commands scoped to a declared workspace directory. Path traversal is blocked at resolve time.
+  - `read_file` and `list_dir` are read-only (no HITL prompt).
+  - `write_file` and `execute` fire a mandatory HITL `ClarificationRequestEvent` before acting; write shows a unified diff when the file already exists.
+  - `hitl_enabled` is enforced `True` in `framework.py` regardless of config value — cannot be disabled at runtime.
+  - Path safety: all paths resolved against the workspace root; absolute references outside the root in shell commands are blocked.
+- **`HITLRelayServer`** — lightweight aiohttp server spawned per-session so that ant subprocesses can relay HITL prompts to the parent framework event queue via `CORTEX_HITL_URL`.
+- **`workspace_bash` config block** — new `CortexConfig.workspace_bash` field (`WorkspaceBashConfig`) with `enabled` (default `true`) and `hitl_enabled` (enforced `true`).
+- **`CortexHITLDeniedError`** — raised when the user denies a WorkspaceBash HITL prompt or the prompt times out. Carries `operation` (`"write"` / `"execute"`) and `path`. Now exported from the top-level `cortex` package.
+
+#### Config Studio — browser-based framework config browser
+
+- **`cortex config-ui`** — new CLI command that launches the Cortex Config Studio on `localhost:7801`. Loads the live `cortex.yaml`, all stored blueprints, staged deltas, and session metadata into a read/edit browser UI.
+  - Flags: `--config`, `--port`, `--host`, `--no-browser`, `--storage-base`.
+  - Server lives in `cortex/config_ui/` (aiohttp + static bundle).
+
 ### Internal
 
 - `_EXCERPT_MAX_CHARS = 8_000`, `_ITERATIVE_MAX_FILES = 3`, `_ITERATIVE_SUMMARY_TOKENS = 400` defined as module-level constants in `primary_agent.py` — not developer-configurable; derived and applied at runtime.

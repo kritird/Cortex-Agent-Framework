@@ -155,6 +155,7 @@ class CortexFramework:
         self._external_mcp_registry = None
         self._ant_colony = None
         self._intent_gate = None  # cortex.modules.intent_gate.IntentGate
+        self._workspace_bash = None  # cortex.modules.workspace_bash.WorkspaceBash
 
     async def initialize(self) -> "CortexFramework":
         """
@@ -353,6 +354,28 @@ class CortexFramework:
                 len(self._code_store.list_scripts()),
             )
 
+        # WorkspaceBash — workspace-aware file/command capability
+        if cfg.workspace_bash.enabled:
+            from cortex.modules.workspace_bash import WorkspaceBash
+            if not cfg.workspace_bash.hitl_enabled:
+                logger.warning(
+                    "workspace_bash.hitl_enabled is False — overriding to True "
+                    "(HITL cannot be disabled for workspace operations)"
+                )
+            self._workspace_bash = WorkspaceBash(
+                event_queue=None,   # set per-session at execution time
+                hitl_enabled=True,  # always enforced
+            )
+            logger.info("WorkspaceBash enabled")
+
+        # Register built-in capabilities so they surface in the system prompt
+        self._tool_registry.register_builtin_capabilities([
+            {"name": "llm_synthesis",  "description": "LLM text generation and reasoning"},
+            {"name": "bash",           "description": "Bash commands in Cortex session directory"},
+            {"name": "code_exec",      "description": "Generate and execute Python in isolated sandbox"},
+            {"name": "workspace_bash", "description": "Read, write, and execute code in user workspace directory"},
+        ])
+
         # Ant Colony — self-spawning specialist agent subsystem
         if cfg.ant_colony.enabled:
             from cortex.ants.ant_colony import AntColony
@@ -481,6 +504,7 @@ class CortexFramework:
         token_usage = TokenUsageByRole()
         final_response = None
         validation_report = None
+        _hitl_relay = None
 
         try:
             from cortex.modules.primary_agent import PrimaryAgent
@@ -509,6 +533,14 @@ class CortexFramework:
 
             primary = PrimaryAgent(self._config, self._llm_client, blueprint_store=self._blueprint_store)
             primary.reset_session_state()
+
+            # Start per-session HITL relay for ant subprocesses (no-op if no ant colony)
+            _hitl_relay_url = None
+            if self._ant_colony is not None:
+                from cortex.modules.workspace_bash import HITLRelayServer
+                _hitl_relay = HITLRelayServer(event_queue=event_queue, session_id=session_id)
+                _hitl_relay_url = await _hitl_relay.start()
+
             mcp_agent = GenericMCPAgent(
                 session_storage_path=session_path,
                 scrubber=self._scrubber,
@@ -516,6 +548,8 @@ class CortexFramework:
                 code_store=self._code_store,
                 sandbox_config=self._config.code_sandbox,
                 discovery_callback=_mid_run_discovery,
+                workspace_bash=self._workspace_bash,
+                hitl_relay_url=_hitl_relay_url,
             )
 
             # Load history context
@@ -525,12 +559,8 @@ class CortexFramework:
                     user_id, self._config.history.max_sessions_in_context
                 )
 
-            # Available capabilities
-            capabilities = list(set(
-                cap
-                for cap, servers in self._tool_registry._capability_map.items()
-                if servers
-            ))
+            # Available capabilities (server-backed + registered builtins)
+            capabilities = self._tool_registry.get_available_capabilities()
 
             # Emit session start capability message
             start_msg = self._tool_registry.emit_session_start_event()
@@ -1150,6 +1180,11 @@ class CortexFramework:
 
         except Exception as e:
             logger.error("Session %s failed with exception: %s", session_id, e, exc_info=True)
+            if _hitl_relay is not None:
+                try:
+                    await _hitl_relay.stop()
+                except Exception:
+                    pass
             await event_queue.put(StatusEvent(
                 message=f"Session error: {str(e)[:200]}",
                 session_id=session_id,
@@ -1169,6 +1204,13 @@ class CortexFramework:
                 duration_seconds=duration,
                 error=str(e),
             )
+
+        # Stop per-session HITL relay now that the session is complete
+        if _hitl_relay is not None:
+            try:
+                await _hitl_relay.stop()
+            except Exception:
+                pass
 
         duration = time.time() - start_time
         val_score = validation_report.composite_score if validation_report else None

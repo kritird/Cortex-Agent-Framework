@@ -256,6 +256,26 @@ cortex ants stop-all [--config cortex.yaml]
 
 ---
 
+## `cortex config-ui`
+
+Launches the Cortex Config Studio — a browser-based UI for inspecting and editing all framework configuration: `cortex.yaml`, stored blueprints, staged learning deltas, and session metadata.
+
+```bash
+cortex config-ui [--config cortex.yaml] [--port 7801] [--host 127.0.0.1] [--no-browser] [--storage-base PATH]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config` | `cortex.yaml` | Path to the `cortex.yaml` to load and edit |
+| `--port` | `7801` | Port the Config Studio server listens on |
+| `--host` | `127.0.0.1` | Host to bind the server to |
+| `--no-browser` | false | Start the server without auto-opening the browser |
+| `--storage-base` | auto from config | Override `storage.base_path` for locating runtime files (blueprints, deltas, sessions) |
+
+The studio reads `storage.base_path` from the config file automatically — use `--storage-base` only when the storage path was moved or the config file is in a different directory than the data.
+
+---
+
 ## Global environment variables
 
 | Variable | Effect |

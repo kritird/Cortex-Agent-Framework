@@ -10,7 +10,7 @@ agent:
   interaction_mode: interactive
   time:
     default_max_wait_seconds: 1000
-    default_task_timeout_seconds: 500
+    default_task_timeout_seconds: 900
   concurrency:
     max_concurrent_sessions: 5
   intent_gate:
@@ -19,7 +19,7 @@ agent:
     heuristic_confidence_threshold: 0.7
     # LLM provider for Stage 2. "default" reuses the main provider.
     llm_provider: default
-    timeout_seconds: 5.0
+    timeout_seconds: 50.0
 llm_access:
   default:
     provider: local
@@ -39,3 +39,6 @@ history:
   retention_days: 90
 ant_colony:
   enabled: true
+workspace_bash:
+  enabled: true
+  hitl_enabled: true

@@ -19,6 +19,9 @@ class DecomposedTask:
     input_refs: List[str] = field(default_factory=list)
     context_hints: Dict[str, str] = field(default_factory=dict)
     mandatory: Optional[bool] = None
+    # Set by the decomposition LLM via <capability> tag; used to build ad-hoc
+    # TaskTypeConfig when the task name is not defined in cortex.yaml.
+    capability_hint: Optional[str] = None
 
 
 @dataclass
@@ -180,8 +183,12 @@ class TaskGraphCompiler:
         valid_tasks: List[DecomposedTask] = []
         for dt in decomposed_tasks:
             if dt.task_name not in effective_types:
-                # Create an ad-hoc TaskTypeConfig for this unknown task
-                capability = "code_exec" if sandbox_enabled else "llm_synthesis"
+                # Prefer the capability the decomposition LLM chose; fall back to
+                # code_exec (when sandbox is on) or llm_synthesis.
+                capability = (
+                    dt.capability_hint
+                    or ("code_exec" if sandbox_enabled else "llm_synthesis")
+                )
                 adhoc_config = TaskTypeConfig(
                     name=dt.task_name,
                     description=f"Ad-hoc task created at runtime: {dt.task_name}",

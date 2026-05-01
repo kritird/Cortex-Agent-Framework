@@ -1,0 +1,1616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Config Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+:root {
+  --bg-base:        #07070f;
+  --bg-surface:     #0f0f1a;
+  --bg-card:        rgba(255,255,255,0.035);
+  --bg-card-hover:  rgba(255,255,255,0.06);
+  --border:         rgba(255,255,255,0.07);
+  --border-focus:   var(--accent-focus);
+  --accent:         #06b6d4;
+  --accent-focus:   rgba(6,182,212,0.55);
+  --accent-dim:     rgba(6,182,212,0.12);
+  --accent-glow:    rgba(6,182,212,0.18);
+  --text-primary:   #eeeef8;
+  --text-secondary: #9898b8;
+  --text-muted:     #55556a;
+  --success:        #22c55e;
+  --warning:        #f59e0b;
+  --danger:         #ef4444;
+}
+/* Per-theme accent overrides — applied by the color picker */
+[data-theme="cyan"]   { --accent:#06b6d4; --accent-focus:rgba(6,182,212,0.55);   --accent-dim:rgba(6,182,212,0.12);   --accent-glow:rgba(6,182,212,0.18); }
+[data-theme="violet"] { --accent:#a855f7; --accent-focus:rgba(168,85,247,0.55);  --accent-dim:rgba(168,85,247,0.12);  --accent-glow:rgba(168,85,247,0.18); }
+[data-theme="emerald"]{ --accent:#10b981; --accent-focus:rgba(16,185,129,0.55);  --accent-dim:rgba(16,185,129,0.12);  --accent-glow:rgba(16,185,129,0.18); }
+[data-theme="rose"]   { --accent:#f43f5e; --accent-focus:rgba(244,63,94,0.55);   --accent-dim:rgba(244,63,94,0.12);   --accent-glow:rgba(244,63,94,0.18); }
+[data-theme="amber"]  { --accent:#f59e0b; --accent-focus:rgba(245,158,11,0.55);  --accent-dim:rgba(245,158,11,0.12);  --accent-glow:rgba(245,158,11,0.18); }
+[data-theme="indigo"] { --accent:#6366f1; --accent-focus:rgba(99,102,241,0.55);  --accent-dim:rgba(99,102,241,0.12);  --accent-glow:rgba(99,102,241,0.18); }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg-base); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.5; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+/* ── Layout ── */
+.layout { display: flex; height: calc(100vh - 56px); }
+.sidebar { width: 260px; min-width: 260px; background: var(--bg-surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; transition: width .2s; }
+.sidebar.collapsed { width: 52px; min-width: 52px; }
+.content { flex: 1; overflow-y: auto; padding: 32px 40px; }
+
+/* ── Header ── */
+.topbar { height: 56px; background: var(--bg-surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 12px; position: sticky; top: 0; z-index: 50; }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--accent); font-size: 15px; letter-spacing: -.3px; }
+.config-badge { background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+/* ── Sidebar nav ── */
+.nav-group-label { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); padding: 20px 16px 6px; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; border-left: 3px solid transparent; transition: all .15s; border-radius: 0 6px 6px 0; margin: 1px 6px 1px 0; color: var(--text-secondary); font-size: 13px; font-weight: 450; position: relative; white-space: nowrap; overflow: hidden; }
+.nav-item:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.nav-item.active { background: var(--accent-dim); border-left-color: var(--accent); color: var(--accent); font-weight: 500; }
+.nav-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .7; }
+.nav-item.active .nav-icon { opacity: 1; }
+.dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); position: absolute; right: 12px; top: 50%; transform: translateY(-50%); }
+.collapse-btn { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; border-top: 1px solid var(--border); color: var(--text-muted); cursor: pointer; background: none; border-bottom: none; border-left: none; border-right: none; transition: color .15s; }
+.collapse-btn:hover { color: var(--text-primary); }
+
+/* ── Glass panel ── */
+.glass { background: var(--bg-card); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 12px; }
+.glass-accent { border-left: 3px solid var(--accent); }
+
+/* ── Section header ── */
+.section-title { font-size: 22px; font-weight: 600; color: var(--text-primary); letter-spacing: -.4px; }
+.section-desc { font-size: 13.5px; color: var(--text-secondary); line-height: 1.65; margin-top: 6px; }
+
+/* ── Field groups ── */
+.field-group { margin-bottom: 28px; }
+.group-title { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.field-row { display: grid; grid-template-columns: 220px 1fr; gap: 12px 20px; align-items: start; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.field-row:last-child { border-bottom: none; }
+.field-label { font-size: 13px; font-weight: 500; color: var(--text-primary); padding-top: 2px; }
+.field-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.55; }
+.required-star { color: var(--danger); margin-left: 3px; }
+
+/* ── Form inputs ── */
+.form-input, .form-select, .form-textarea {
+  width: 100%; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 11px; color: var(--text-primary); font-family: 'Inter', sans-serif;
+  font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.form-input:focus, .form-select:focus, .form-textarea:focus {
+  border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.form-textarea { resize: vertical; min-height: 72px; }
+.form-select { cursor: pointer; }
+.form-input[type="number"] { font-family: 'JetBrains Mono', monospace; }
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+
+/* ── Toggle switch ── */
+.toggle-wrap { display: flex; align-items: center; gap: 10px; }
+.toggle { position: relative; display: inline-flex; width: 38px; height: 22px; cursor: pointer; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track { position: absolute; inset: 0; border-radius: 11px; background: rgba(255,255,255,0.1); transition: background .2s; }
+.toggle input:checked + .toggle-track { background: var(--accent); }
+.toggle-thumb { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 3px; left: 3px; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+.toggle-label { font-size: 13px; color: var(--text-secondary); }
+
+/* ── Chip list ── */
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-dim); border: 1px solid rgba(99,102,241,.25); border-radius: 5px; padding: 3px 8px; font-size: 12px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+.chip-remove { cursor: pointer; opacity: .6; font-size: 14px; line-height: 1; }
+.chip-remove:hover { opacity: 1; }
+
+/* ── KV pairs ── */
+.kv-row { display: grid; grid-template-columns: 1fr 1fr 28px; gap: 6px; margin-bottom: 6px; }
+.kv-remove { display: flex; align-items: center; justify-content: center; width: 28px; height: 32px; background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.2); border-radius: 6px; cursor: pointer; color: var(--danger); font-size: 14px; }
+.kv-remove:hover { background: rgba(239,68,68,.2); }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all .15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #5254cc; box-shadow: 0 0 16px var(--accent-glow); }
+.btn-secondary { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-secondary); }
+.btn-secondary:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+.btn-danger { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.25); color: var(--danger); }
+.btn-danger:hover { background: rgba(239,68,68,.2); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── List+detail ── */
+.split-layout { display: grid; grid-template-columns: 230px 1fr; gap: 20px; }
+.item-list { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.item-list-header { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; }
+.item-entry { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); transition: all .12s; display: flex; align-items: center; justify-content: space-between; }
+.item-entry:last-child { border-bottom: none; }
+.item-entry:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.item-entry.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
+.item-entry-del { opacity: 0; font-size: 16px; color: var(--danger); }
+.item-entry:hover .item-entry-del { opacity: .7; }
+.item-detail { min-height: 200px; }
+.empty-state { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--text-muted); font-size: 13px; }
+
+/* ── Runtime tables ── */
+.rt-table { width: 100%; border-collapse: collapse; }
+.rt-table th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.rt-table td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); font-size: 12.5px; color: var(--text-secondary); vertical-align: top; }
+.rt-table tr:hover td { background: var(--bg-card-hover); }
+.rt-table td code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: rgba(255,255,255,0.05); padding: 2px 5px; border-radius: 4px; }
+
+/* ── Badges ── */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+.badge-green { background: rgba(34,197,94,.12); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+.badge-amber { background: rgba(245,158,11,.12); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+.badge-red { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+.badge-indigo { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(99,102,241,.2); }
+.badge-muted { background: rgba(255,255,255,.05); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* ── Toast ── */
+.toast { position: fixed; bottom: 28px; right: 28px; z-index: 1000; padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(20px); }
+.toast-success { background: rgba(34,197,94,.15); border: 1px solid rgba(34,197,94,.3); color: #4ade80; }
+.toast-error { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); color: #f87171; }
+
+/* ── Modal ── */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+.modal-box { background: #13131f; border: 1px solid var(--border); border-radius: 14px; width: 720px; max-width: 95vw; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.modal-body { flex: 1; overflow-y: auto; padding: 20px 22px; }
+.modal-close { cursor: pointer; color: var(--text-muted); font-size: 20px; }
+.modal-close:hover { color: var(--text-primary); }
+pre.yaml-block { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; color: #a5b4fc; background: rgba(0,0,0,.4); border-radius: 8px; padding: 16px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; color: #86efac; background: rgba(0,0,0,.4); border-radius: 8px; padding: 16px; overflow-x: auto; white-space: pre; }
+
+/* ── Misc ── */
+.divider { height: 1px; background: var(--border); margin: 24px 0; }
+.section-actions { display: flex; gap: 10px; margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
+.sub-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 28px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.runtime-section-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin: 28px 0 12px; display: flex; align-items: center; gap: 8px; }
+.runtime-section-title::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.no-data { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 13px; }
+.add-btn { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--accent); cursor: pointer; padding: 3px 6px; border-radius: 5px; }
+.add-btn:hover { background: var(--accent-dim); }
+</style>
+</head>
+<body x-data="app()" x-init="init()" :data-theme="activeTheme">
+
+<!-- ── Header ── -->
+<header class="topbar">
+  <div class="logo">
+    <img src="/cortex-logo.svg" alt="Cortex" style="height:28px;width:auto;object-fit:contain">
+    <span style="margin-left:4px">Config Studio</span>
+  </div>
+  <span class="config-badge" x-text="serverStatus?.config_path || 'loading…'"></span>
+  <div style="flex:1"></div>
+  <span x-show="serverStatus?.agent_name" style="font-size:12px;color:var(--text-muted)">
+    agent: <span style="color:var(--text-secondary)" x-text="serverStatus?.agent_name"></span>
+  </span>
+
+  <!-- Accent colour picker -->
+  <div style="display:flex;align-items:center;gap:5px;padding:0 6px">
+    <template x-for="t in themes" :key="t.id">
+      <button
+        :title="t.label"
+        @click="setTheme(t.id)"
+        :style="`width:16px;height:16px;border-radius:50%;background:${t.color};border:2px solid ${activeTheme===t.id ? '#fff' : 'transparent'};cursor:pointer;transition:border-color .15s;`">
+      </button>
+    </template>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--success)">
+    <span class="live-dot"></span> Live
+  </div>
+  <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px" @click="reloadAll()">↺ Reload</button>
+</header>
+
+<!-- ── Body ── -->
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <nav class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <div class="nav-group-label" x-show="!sidebarCollapsed">Configuration</div>
+    <div style="height:8px" x-show="sidebarCollapsed"></div>
+
+    <template x-for="s in sections.filter(s=>s.group==='config')" :key="s.id">
+      <div class="nav-item" :class="{ active: activeSection===s.id }" @click="navigate(s.id)">
+        <span class="nav-icon" x-html="s.icon"></span>
+        <span x-show="!sidebarCollapsed" x-text="s.label"></span>
+        <span class="dirty-dot" x-show="!sidebarCollapsed && dirty[s.id]"></span>
+      </div>
+    </template>
+
+    <div class="nav-group-label" x-show="!sidebarCollapsed" style="margin-top:6px">Runtime & State</div>
+    <div style="height:4px" x-show="sidebarCollapsed"></div>
+
+    <template x-for="s in sections.filter(s=>s.group==='runtime')" :key="s.id">
+      <div class="nav-item" :class="{ active: activeSection===s.id }" @click="navigate(s.id)">
+        <span class="nav-icon" x-html="s.icon"></span>
+        <span x-show="!sidebarCollapsed" x-text="s.label"></span>
+        <span class="dirty-dot" x-show="!sidebarCollapsed && dirty[s.id]"></span>
+      </div>
+    </template>
+
+    <div style="flex:1"></div>
+    <button class="collapse-btn" @click="sidebarCollapsed=!sidebarCollapsed">
+      <span x-text="sidebarCollapsed ? '›' : '‹'" style="font-size:16px"></span>
+    </button>
+  </nav>
+
+  <!-- ── Content ── -->
+  <main class="content">
+
+    <!-- ══ CORE AGENT ══ -->
+    <div x-show="activeSection==='core_agent'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Core Agent</div>
+        <div class="section-desc">Defines the agent's identity and fundamental runtime behaviour. <code style="font-family:JetBrains Mono,monospace;font-size:12px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px">interaction_mode</code> is the most critical field — it determines whether the agent converses or treats every input as a task.</div>
+      </div>
+      <template x-if="formValues.agent !== undefined">
+        <div>
+          <template x-for="grp in SCHEMAS.core_agent.groups" :key="grp.title">
+            <div class="field-group glass" style="padding:20px 24px">
+              <div class="group-title" x-text="grp.title"></div>
+              <template x-for="f in grp.fields" :key="f.key">
+                <div class="field-row">
+                  <div>
+                    <div class="field-label"><span x-text="f.label"></span><span class="required-star" x-show="f.required">*</span></div>
+                    <div class="field-hint" x-text="f.hint"></div>
+                  </div>
+                  <div x-html="renderField(f)"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('core_agent')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+            <button class="btn btn-secondary" @click="resetSection('core_agent')">Reset to Defaults</button>
+          </div>
+        </div>
+      </template>
+      <div x-show="formValues.agent === undefined" class="empty-state">Loading…</div>
+    </div>
+
+    <!-- ══ INTENT GATE ══ -->
+    <div x-show="activeSection==='intent_gate'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Intent Gate &amp; Capability Scout</div>
+        <div class="section-desc">Two-stage classifier that runs before decomposition. Stage 1 is a fast heuristic; Stage 2 calls an LLM only when Stage 1 is unsure. The Capability Scout pre-probes MCP tool servers to map capabilities that steer decomposition.</div>
+      </div>
+      <template x-if="formValues.agent !== undefined">
+        <div>
+          <template x-for="grp in SCHEMAS.intent_gate.groups" :key="grp.title">
+            <div class="field-group glass" style="padding:20px 24px">
+              <div class="group-title" x-text="grp.title"></div>
+              <template x-for="f in grp.fields" :key="f.key">
+                <div class="field-row">
+                  <div>
+                    <div class="field-label" x-text="f.label"></div>
+                    <div class="field-hint" x-text="f.hint"></div>
+                  </div>
+                  <div x-html="renderField(f)"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('intent_gate')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ══ TASK TYPES ══ -->
+    <div x-show="activeSection==='task_types'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Task Types</div>
+        <div class="section-desc">Defines the agent's declared capabilities — what kinds of work it knows how to do. The decomposer matches user requests to task types and dispatches sub-agents. Each entry has its own tool routing, timeout, retry policy, and optional blueprint guidance.</div>
+      </div>
+      <template x-if="formValues.task_types !== undefined">
+        <div class="split-layout">
+          <div>
+            <div class="item-list">
+              <div class="item-list-header">
+                <span>Task Types</span>
+                <span class="add-btn" @click="addTaskType()">+ Add</span>
+              </div>
+              <template x-for="(tt, idx) in (formValues.task_types || [])" :key="idx">
+                <div class="item-entry" :class="{active: selectedTaskType===idx}" @click="selectedTaskType=idx">
+                  <span x-text="tt.name || '(unnamed)'"></span>
+                  <span class="item-entry-del" @click.stop="removeTaskType(idx)">×</span>
+                </div>
+              </template>
+              <div x-show="!(formValues.task_types||[]).length" class="no-data" style="height:80px">No task types defined</div>
+            </div>
+          </div>
+          <div class="item-detail">
+            <template x-if="selectedTaskType !== null && formValues.task_types && formValues.task_types[selectedTaskType]">
+              <div>
+                <template x-for="grp in SCHEMAS.task_type_detail.groups" :key="grp.title">
+                  <div class="field-group glass" style="padding:18px 22px">
+                    <div class="group-title" x-text="grp.title"></div>
+                    <template x-for="f in grp.fields" :key="f.key">
+                      <div class="field-row">
+                        <div>
+                          <div class="field-label" x-text="f.label"></div>
+                          <div class="field-hint" x-text="f.hint"></div>
+                        </div>
+                        <div x-html="renderTaskTypeField(f)"></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div x-show="selectedTaskType === null" class="empty-state glass" style="height:200px">Select a task type to edit</div>
+          </div>
+        </div>
+      </template>
+      <div class="section-actions">
+        <button class="btn btn-primary" :disabled="saving" @click="saveSection('task_types')">
+          <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ TOOL SERVERS ══ -->
+    <div x-show="activeSection==='tool_servers'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Tool Servers (MCP Handlers)</div>
+        <div class="section-desc">MCP servers that sub-agents can call during task execution. Each entry is a named connection — local or remote — with its own auth, TLS, pooling, and health check settings. These are the MCPs you explicitly configure and trust.</div>
+      </div>
+      <template x-if="formValues.tool_servers !== undefined">
+        <div class="split-layout">
+          <div>
+            <div class="item-list">
+              <div class="item-list-header">
+                <span>Servers</span>
+                <span class="add-btn" @click="addToolServer()">+ Add</span>
+              </div>
+              <template x-for="name in Object.keys(formValues.tool_servers || {})" :key="name">
+                <div class="item-entry" :class="{active: selectedServer===name}" @click="selectedServer=name">
+                  <span x-text="name"></span>
+                  <span class="item-entry-del" @click.stop="removeToolServer(name)">×</span>
+                </div>
+              </template>
+              <div x-show="!Object.keys(formValues.tool_servers||{}).length" class="no-data" style="height:80px">No servers configured</div>
+            </div>
+          </div>
+          <div class="item-detail">
+            <template x-if="selectedServer && formValues.tool_servers && formValues.tool_servers[selectedServer]">
+              <div>
+                <template x-for="grp in SCHEMAS.tool_server_detail.groups" :key="grp.title">
+                  <div class="field-group glass" style="padding:18px 22px">
+                    <div class="group-title" x-text="grp.title"></div>
+                    <template x-for="f in grp.fields" :key="f.key">
+                      <div class="field-row">
+                        <div>
+                          <div class="field-label" x-text="f.label"></div>
+                          <div class="field-hint" x-text="f.hint"></div>
+                        </div>
+                        <div x-html="renderServerField(f)"></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div x-show="!selectedServer" class="empty-state glass" style="height:200px">Select a server to edit</div>
+          </div>
+        </div>
+      </template>
+      <div class="section-actions">
+        <button class="btn btn-primary" :disabled="saving" @click="saveSection('tool_servers')">
+          <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ LLM PROVIDERS ══ -->
+    <div x-show="activeSection==='llm_providers'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">LLM Providers</div>
+        <div class="section-desc">Defines the LLM backends available to the framework. The <code style="font-family:JetBrains Mono,monospace;font-size:12px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px">default</code> provider is used by the primary agent and any tasks that don't specify their own. Named providers allow different parts of the framework to use different models.</div>
+      </div>
+      <template x-if="formValues.llm_access !== undefined">
+        <div class="split-layout">
+          <div>
+            <div class="item-list">
+              <div class="item-list-header">
+                <span>Providers</span>
+                <span class="add-btn" @click="addLLMProvider()">+ Add</span>
+              </div>
+              <div class="item-entry" :class="{active: selectedProvider==='__default__'}" @click="selectedProvider='__default__'">
+                <span>default</span>
+                <span class="badge badge-indigo" style="font-size:10px">primary</span>
+              </div>
+              <template x-for="name in Object.keys((formValues.llm_access||{}).providers || {})" :key="name">
+                <div class="item-entry" :class="{active: selectedProvider===name}" @click="selectedProvider=name">
+                  <span x-text="name"></span>
+                  <span class="item-entry-del" @click.stop="removeLLMProvider(name)">×</span>
+                </div>
+              </template>
+            </div>
+          </div>
+          <div class="item-detail">
+            <template x-if="selectedProvider && formValues.llm_access">
+              <div>
+                <div class="field-group glass" style="padding:18px 22px">
+                  <div class="group-title">Provider Settings</div>
+                  <template x-for="f in SCHEMAS.llm_provider_detail.fields" :key="f.key">
+                    <div class="field-row">
+                      <div>
+                        <div class="field-label" x-text="f.label"></div>
+                        <div class="field-hint" x-text="f.hint"></div>
+                      </div>
+                      <div x-html="renderLLMField(f)"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div x-show="!selectedProvider" class="empty-state glass" style="height:200px">Select a provider to edit</div>
+          </div>
+        </div>
+      </template>
+      <div class="section-actions">
+        <button class="btn btn-primary" :disabled="saving" @click="saveSection('llm_providers')">
+          <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ BLUEPRINTS ══ -->
+    <div x-show="activeSection==='blueprints'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Blueprint Store</div>
+        <div class="section-desc">Per-task guidance documents accumulated from real execution runs. Each blueprint captures topology hints, dos/don'ts, known failure modes, and lessons learned. When present for a task, it is injected into the primary agent's system prompt before decomposition.</div>
+      </div>
+      <template x-if="formValues.blueprint !== undefined">
+        <div>
+          <div class="field-group glass" style="padding:20px 24px">
+            <div class="group-title">Blueprint Configuration</div>
+            <template x-for="f in SCHEMAS.blueprints.fields" :key="f.key">
+              <div class="field-row">
+                <div>
+                  <div class="field-label" x-text="f.label"></div>
+                  <div class="field-hint" x-text="f.hint"></div>
+                </div>
+                <div x-html="renderField(f)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('blueprints')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="runtime-section-title" style="margin-top:36px">Live Blueprint Files</div>
+      <div class="glass" style="overflow:hidden">
+        <template x-if="runtimeData.blueprints && runtimeData.blueprints.length">
+          <table class="rt-table">
+            <thead><tr>
+              <th>Task Name</th><th>Version</th><th>Updated</th><th>Last Run</th><th>Lessons</th><th></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="bp in runtimeData.blueprints" :key="bp.file">
+                <tr>
+                  <td><code x-text="bp.task_name || bp.name"></code></td>
+                  <td><span class="badge badge-indigo" x-text="'v' + (bp.version||1)"></span></td>
+                  <td x-text="formatDate(bp.updated_at)"></td>
+                  <td x-text="formatDate(bp.last_successful_run_at)"></td>
+                  <td><span class="badge badge-muted" x-text="bp.lessons_count + ' lessons'"></span></td>
+                  <td><button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" @click="openModal('blueprint', bp)">View</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+        <div x-show="!runtimeData.blueprints || !runtimeData.blueprints.length" class="no-data">No blueprint files found in storage base</div>
+      </div>
+    </div>
+
+    <!-- ══ CODE REGISTRY ══ -->
+    <div x-show="activeSection==='code_registry'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Code Execution Registry</div>
+        <div class="section-desc">When a task has no matching tool server, the agent generates Python scripts on the fly and runs them in an isolated sandbox. This registry is the index of all scripts the agent has created — their metadata, use counts, and whether they've been promoted to permanent handlers.</div>
+      </div>
+      <template x-if="formValues.code_sandbox !== undefined">
+        <div>
+          <div class="field-group glass" style="padding:20px 24px">
+            <div class="group-title">Sandbox Configuration</div>
+            <template x-for="f in SCHEMAS.code_registry.fields" :key="f.key">
+              <div class="field-row">
+                <div>
+                  <div class="field-label" x-text="f.label"></div>
+                  <div class="field-hint" x-text="f.hint"></div>
+                </div>
+                <div x-html="renderField(f)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('code_registry')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="runtime-section-title" style="margin-top:36px">Agent-Generated Scripts</div>
+      <div class="glass" style="overflow:hidden">
+        <template x-if="runtimeData.code_registry && runtimeData.code_registry.scripts && runtimeData.code_registry.scripts.length">
+          <table class="rt-table">
+            <thead><tr>
+              <th>Task Name</th><th>Description</th><th>Uses</th><th>Created</th><th>In YAML</th><th></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="s in runtimeData.code_registry.scripts" :key="s.script_path">
+                <tr>
+                  <td><code x-text="s.task_name"></code></td>
+                  <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.description"></td>
+                  <td x-text="s.use_count"></td>
+                  <td x-text="formatDate(s.created_at)"></td>
+                  <td>
+                    <span x-show="s.added_to_yaml" class="badge badge-green">✓ Yes</span>
+                    <span x-show="!s.added_to_yaml" class="badge badge-amber">Pending</span>
+                  </td>
+                  <td><button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" @click="openModal('script', s)">View</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+        <div x-show="!runtimeData.code_registry || !runtimeData.code_registry.scripts || !runtimeData.code_registry.scripts.length" class="no-data">No generated scripts in registry</div>
+      </div>
+    </div>
+
+    <!-- ══ AUTO MCPs ══ -->
+    <div x-show="activeSection==='auto_mcps'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Auto-Discovered MCPs</div>
+        <div class="section-desc">MCP servers discovered automatically by the Capability Scout from public registries. Unlike Tool Servers you configure manually, these are discovered at runtime. Each carries a trust tier, auth requirement flag, and verification timestamp.</div>
+      </div>
+
+      <template x-if="formValues.external_discovery !== undefined">
+        <div>
+          <div class="field-group glass" style="padding:20px 24px">
+            <div class="group-title">External Discovery Configuration</div>
+            <template x-for="f in SCHEMAS.auto_mcps.fields" :key="f.key">
+              <div class="field-row">
+                <div>
+                  <div class="field-label" x-text="f.label"></div>
+                  <div class="field-hint" x-text="f.hint"></div>
+                </div>
+                <div x-html="renderField(f)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('auto_mcps')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="runtime-section-title" style="margin-top:36px">Discovered MCP Registry</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <template x-for="tier in ['all','trusted','provisional','blocked']" :key="tier">
+          <button class="btn" :class="mcpFilter===tier?'btn-primary':'btn-secondary'" style="font-size:11px;padding:5px 12px" @click="mcpFilter=tier" x-text="tier"></button>
+        </template>
+        <input type="text" class="form-input" style="width:200px;font-size:12px;padding:5px 10px" placeholder="Search…" x-model="mcpSearch">
+      </div>
+      <div class="glass" style="overflow:hidden">
+        <template x-if="filteredMCPs.length">
+          <table class="rt-table">
+            <thead><tr>
+              <th>Name</th><th>Description</th><th>Trust</th><th>Auth</th><th>Source</th><th>Verified</th><th></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="rec in filteredMCPs" :key="rec.name">
+                <tr>
+                  <td><code x-text="rec.name"></code></td>
+                  <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(rec.description||'').slice(0,80)"></td>
+                  <td>
+                    <span class="badge" :class="trustBadge(rec.trust_tier)" x-text="rec.trust_tier||'unknown'"></span>
+                  </td>
+                  <td>
+                    <span x-show="rec.auth_required" class="badge badge-amber">Auth</span>
+                    <span x-show="!rec.auth_required" class="badge badge-muted">None</span>
+                  </td>
+                  <td style="font-size:11px" x-text="(rec.source_registry||'').replace('https://','')"></td>
+                  <td x-text="formatDate(rec.last_verified)"></td>
+                  <td style="display:flex;gap:5px;flex-wrap:nowrap">
+                    <button x-show="rec.trust_tier!=='trusted'" class="btn btn-secondary" style="font-size:10px;padding:3px 8px" @click="updateTrust(rec.name,'trusted')">Trust</button>
+                    <button x-show="rec.trust_tier!=='blocked'" class="btn btn-danger" style="font-size:10px;padding:3px 8px" @click="updateTrust(rec.name,'blocked')">Block</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+        <div x-show="!filteredMCPs.length" class="no-data">No auto-discovered MCPs found</div>
+      </div>
+
+      <template x-if="runtimeData.auto_mcps && runtimeData.auto_mcps.pending_auth && runtimeData.auto_mcps.pending_auth.length">
+        <div style="margin-top:20px">
+          <div class="runtime-section-title" style="color:var(--warning)">
+            <span style="background:var(--warning);border-radius:50%;width:8px;height:8px;display:inline-block"></span>
+            Pending Auth (<span x-text="runtimeData.auto_mcps.pending_auth.length"></span>)
+          </div>
+          <div class="glass" style="padding:14px 18px;border-color:rgba(245,158,11,.2)">
+            <template x-for="p in runtimeData.auto_mcps.pending_auth" :key="p.name||p">
+              <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--text-secondary)" x-text="p.name||p"></div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ══ ANT COLONY ══ -->
+    <div x-show="activeSection==='ant_colony'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Ant Colony</div>
+        <div class="section-desc">Self-spawning specialist agent mesh. When the primary agent encounters a capability gap, it can hatch a new "ant" — a lightweight Cortex instance pre-configured for a specific domain. Each ant runs as a separate process on its own port and registers itself as an MCP server.</div>
+      </div>
+      <template x-if="formValues.ant_colony !== undefined">
+        <div>
+          <template x-for="grp in SCHEMAS.ant_colony.groups" :key="grp.title">
+            <div class="field-group glass" style="padding:20px 24px">
+              <div class="group-title" x-text="grp.title"></div>
+              <template x-for="f in grp.fields" :key="f.key">
+                <div class="field-row">
+                  <div>
+                    <div class="field-label" x-text="f.label"></div>
+                    <div class="field-hint" x-text="f.hint"></div>
+                  </div>
+                  <div x-html="renderField(f)"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('ant_colony')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="runtime-section-title" style="margin-top:36px">Live Colony Manifest</div>
+      <div class="glass" style="overflow:hidden">
+        <template x-if="runtimeData.ant_colony && runtimeData.ant_colony.ants && runtimeData.ant_colony.ants.length">
+          <table class="rt-table">
+            <thead><tr>
+              <th>Name</th><th>Capability</th><th>Port</th><th>PID</th><th>Status</th><th>Restarts</th><th></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="ant in runtimeData.ant_colony.ants" :key="ant.name">
+                <tr>
+                  <td><code x-text="ant.name"></code></td>
+                  <td x-text="ant.capability"></td>
+                  <td x-text="ant.port"></td>
+                  <td x-text="ant.pid"></td>
+                  <td>
+                    <span class="badge" :class="antStatusBadge(ant.status)" x-text="ant.status"></span>
+                  </td>
+                  <td x-text="ant.restart_count"></td>
+                  <td><button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" @click="openModal('ant', ant)">Config</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+        <div x-show="!runtimeData.ant_colony || !runtimeData.ant_colony.ants || !runtimeData.ant_colony.ants.length" class="no-data">Colony is empty — no ants are running</div>
+      </div>
+    </div>
+
+    <!-- ══ SYSTEM ══ -->
+    <div x-show="activeSection==='system'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Learning &amp; History</div>
+        <div class="section-desc">Covers the autonomic learning engine, session validation, history retention, storage backend, security guardrails, startup behaviour, and the Cortex UI. Also shows the live learning delta queue with proposals waiting for confidence-based promotion.</div>
+      </div>
+      <template x-if="formValues.learning !== undefined">
+        <div>
+          <template x-for="grp in SCHEMAS.system.groups" :key="grp.title">
+            <div class="field-group glass" style="padding:20px 24px">
+              <div class="group-title" x-text="grp.title"></div>
+              <template x-for="f in grp.fields" :key="f.key">
+                <div class="field-row">
+                  <div>
+                    <div class="field-label" x-text="f.label"></div>
+                    <div class="field-hint" x-text="f.hint"></div>
+                  </div>
+                  <div x-html="renderField(f)"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('system')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="runtime-section-title" style="margin-top:36px">Pending Learning Proposals</div>
+      <div class="glass" style="overflow:hidden">
+        <template x-if="runtimeData.delta_queue && runtimeData.delta_queue.proposals && runtimeData.delta_queue.proposals.length">
+          <table class="rt-table">
+            <thead><tr>
+              <th>Task Name</th><th>Description</th><th>Confidence</th><th>Confirmations</th><th></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="p in runtimeData.delta_queue.proposals" :key="p.task_name">
+                <tr>
+                  <td><code x-text="p.task_name"></code></td>
+                  <td style="max-width:240px;font-size:12px" x-text="(p.description||'').slice(0,100)"></td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div style="width:80px;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;background:var(--accent);border-radius:3px" :style="`width:${Math.round((p.confidence_level||0)*100)}%`"></div>
+                      </div>
+                      <span x-text="Math.round((p.confidence_level||0)*100)+'%'" style="font-size:11px;color:var(--text-muted)"></span>
+                    </div>
+                  </td>
+                  <td x-text="(p.confirmations||[]).length"></td>
+                  <td style="display:flex;gap:5px">
+                    <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" @click="deltaAction(p.task_name,'promote')">Promote</button>
+                    <button class="btn btn-danger" style="font-size:11px;padding:4px 10px" @click="deltaAction(p.task_name,'discard')">Discard</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+        <div x-show="!runtimeData.delta_queue || !runtimeData.delta_queue.proposals || !runtimeData.delta_queue.proposals.length" class="no-data">No pending learning proposals</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Toast ── -->
+<div x-show="toast" x-transition class="toast" :class="toast?.type==='success'?'toast-success':'toast-error'" x-text="toast?.msg" style="display:none"></div>
+
+<!-- ── Modal ── -->
+<div x-show="modal" class="modal-backdrop" @click.self="modal=null" style="display:none">
+  <div class="modal-box" x-show="modal" x-transition>
+    <div class="modal-header">
+      <span style="font-weight:600;color:var(--text-primary)" x-text="modal?.title"></span>
+      <span class="modal-close" @click="modal=null">×</span>
+    </div>
+    <div class="modal-body">
+      <!-- Blueprint modal -->
+      <template x-if="modal?.type==='blueprint'">
+        <div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <span class="badge badge-indigo" x-text="'v'+(modal.data.version||1)"></span>
+            <span class="badge badge-muted" x-text="'task: '+(modal.data.task_name||'')"></span>
+            <span class="badge badge-muted" x-text="formatDate(modal.data.updated_at)"></span>
+          </div>
+          <pre class="yaml-block" x-text="modal.data.body"></pre>
+        </div>
+      </template>
+      <!-- Script modal -->
+      <template x-if="modal?.type==='script'">
+        <div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <span class="badge badge-muted" x-text="'uses: '+(modal.data.use_count||0)"></span>
+            <span class="badge badge-muted" x-text="formatDate(modal.data.created_at)"></span>
+            <template x-for="req in (modal.data.requirements||[])" :key="req">
+              <span class="badge badge-indigo" x-text="req"></span>
+            </template>
+          </div>
+          <pre class="code-block" x-text="modal.data.source||'# source not available'"></pre>
+        </div>
+      </template>
+      <!-- Ant config modal -->
+      <template x-if="modal?.type==='ant'">
+        <div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <span class="badge" :class="antStatusBadge(modal.data.status)" x-text="modal.data.status"></span>
+            <span class="badge badge-muted" x-text="'port: '+(modal.data.port||'')"></span>
+            <span class="badge badge-muted" x-text="'pid: '+(modal.data.pid||'')"></span>
+          </div>
+          <pre class="yaml-block" x-text="JSON.stringify(modal.data, null, 2)"></pre>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Section nav metadata ──────────────────────────────────────────────────────
+const SECTIONS = [
+  { id:'core_agent',   label:'Core Agent',          group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>' },
+  { id:'intent_gate',  label:'Intent Gate & Scout',  group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>' },
+  { id:'task_types',   label:'Task Types',           group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>' },
+  { id:'tool_servers', label:'Tool Servers',         group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/><circle cx="18" cy="5" r="1" fill="currentColor"/><circle cx="18" cy="12" r="1" fill="currentColor"/><circle cx="18" cy="19" r="1" fill="currentColor"/></svg>' },
+  { id:'llm_providers',label:'LLM Providers',        group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
+  { id:'blueprints',   label:'Blueprints',           group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>' },
+  { id:'code_registry',label:'Code Registry',        group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' },
+  { id:'auto_mcps',    label:'Auto-Discovered MCPs', group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>' },
+  { id:'ant_colony',   label:'Ant Colony',           group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/><polygon points="12 8 17 11 17 16 12 19 7 16 7 11"/></svg>' },
+  { id:'system',       label:'Learning & History',   group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07M8.46 8.46a5 5 0 000 7.07"/></svg>' },
+];
+
+// ── Field schemas ─────────────────────────────────────────────────────────────
+const SCHEMAS = {
+  core_agent: {
+    groups: [
+      { title: 'Identity', fields: [
+        { key:'agent.name',             type:'text',    label:'Name',             required:true, hint:'Display name for the agent. Shown in API responses and UI headers.' },
+        { key:'agent.description',      type:'textarea',label:'Description',      required:true, hint:'One-paragraph summary of what this agent does. Injected into the system prompt during decomposition.' },
+        { key:'agent.synthesis_guidance',type:'textarea',label:'Synthesis Guidance', hint:'Optional instructions appended to the synthesis (final answer assembly) prompt. Leave blank for framework defaults.' },
+        { key:'agent.interaction_mode', type:'select',  label:'Interaction Mode', required:true, options:['interactive','rpc'], hint:'interactive: for chat UIs and CLIs where the agent may converse. rpc: every turn is treated as a task — use when publishing as an MCP server.' },
+      ]},
+      { title: 'Timing', fields: [
+        { key:'agent.time.default_max_wait_seconds',    type:'number', label:'Max Wait (s)',    hint:'Maximum seconds the framework waits for all sub-tasks before returning a timeout response.' },
+        { key:'agent.time.default_task_timeout_seconds',type:'number', label:'Task Timeout (s)',hint:'Per-task hard limit. A task exceeding this is cancelled and marked failed.' },
+      ]},
+      { title: 'Performance', fields: [
+        { key:'agent.performance.streaming_decomposition', type:'toggle', label:'Streaming Decomposition', hint:'Stream the decomposition LLM call token-by-token. Reduces time-to-first-token but slightly increases API cost.' },
+      ]},
+      { title: 'Concurrency', fields: [
+        { key:'agent.concurrency.max_concurrent_sessions',          type:'number', label:'Max Sessions (global)',   hint:'Hard cap on total simultaneous user sessions. Requests beyond this receive a 503.' },
+        { key:'agent.concurrency.max_concurrent_sessions_per_user', type:'number', label:'Max Sessions (per user)', hint:'Per-user session limit. Prevents a single user from consuming all capacity.' },
+        { key:'agent.concurrency.max_tasks_per_session',            type:'number', label:'Max Tasks / Session',    hint:'Maximum sub-tasks a single session can dispatch in its lifetime. Guards against runaway decomposition.' },
+        { key:'agent.concurrency.max_parallel_tasks',               type:'number', label:'Max Parallel Tasks',     hint:'Maximum sub-tasks executed concurrently within one session. Higher values use more LLM quota simultaneously.' },
+        { key:'agent.concurrency.max_mcp_agent_llm_calls',          type:'number', label:'Max MCP LLM Calls',      hint:'Maximum LLM calls an MCP sub-agent may make for a single task. Guards against LLM call loops.' },
+      ]},
+      { title: 'Streaming (SSE)', fields: [
+        { key:'agent.streaming.status_updates',         type:'toggle', label:'Status Updates',        hint:'Enable Server-Sent Event progress updates pushed to the client during task execution.' },
+        { key:'agent.streaming.include_task_detail',    type:'toggle', label:'Include Task Detail',   hint:'Include sub-task name and status in each SSE event. Disable to reduce payload size.' },
+        { key:'agent.streaming.mcp_agent_updates',      type:'toggle', label:'MCP Agent Updates',     hint:'Push per-MCP-tool-call events to the SSE stream. Very verbose — useful for debugging only.' },
+        { key:'agent.streaming.reconnect_buffer_size',  type:'number', label:'Reconnect Buffer Size', hint:'Number of past SSE events held in memory for client reconnection replay.' },
+        { key:'agent.streaming.min_delivery_interval_ms', type:'number', label:'Min Delivery Interval (ms)', hint:'Minimum milliseconds between SSE flushes. Increase to reduce CPU on high-throughput deployments.' },
+      ]},
+      { title: 'Clarification', fields: [
+        { key:'agent.clarification.enabled', type:'toggle', label:'Allow Clarification', hint:'Allow the agent to pause and ask the user one clarifying question before decomposing a task. Only active in interactive mode.' },
+      ]},
+    ]
+  },
+
+  intent_gate: {
+    groups: [
+      { title: 'Intent Gate', fields: [
+        { key:'agent.intent_gate.enabled',                    type:'toggle', label:'Enabled',                 hint:'Disable to skip intent classification entirely — every turn goes to full decomposition.' },
+        { key:'agent.intent_gate.heuristic_confidence_threshold', type:'number', label:'Heuristic Confidence Threshold', hint:'Stage 1 heuristic confidence at or above this value skips the LLM classifier. Lower = more LLM calls but better routing. Range: 0.0–1.0' },
+        { key:'agent.intent_gate.llm_provider',               type:'text',   label:'LLM Provider',            hint:'Named provider key from llm_access.providers for Stage 2. Use "default" to inherit the primary provider.' },
+        { key:'agent.intent_gate.timeout_seconds',            type:'number', label:'Timeout (s)',              hint:'If intent classification takes longer than this, fall back to task mode.' },
+      ]},
+      { title: 'Capability Scout', fields: [
+        { key:'agent.capability_scout.enabled',          type:'toggle', label:'Enabled',          hint:'Run a pre-decomposition scout pass to map available MCP tools to capability categories.' },
+        { key:'agent.capability_scout.max_capabilities', type:'number', label:'Max Capabilities', hint:'Maximum capabilities to probe per request. Higher values improve coverage but increase scout latency.' },
+        { key:'agent.capability_scout.timeout_seconds',  type:'number', label:'Timeout (s)',       hint:'Abandon the scout pass if it takes longer than this many seconds.' },
+      ]},
+      { title: 'External MCP Discovery', fields: [
+        { key:'agent.capability_scout_external_discovery.enabled',          type:'toggle',   label:'Enabled',             hint:'Allow the scout to query public MCP registries for MCPs the agent doesn\'t already know about.' },
+        { key:'agent.capability_scout_external_discovery.registry_sources', type:'list',     label:'Registry Sources',    hint:'Ordered list of public MCP registry URLs to query. Failures are swallowed.' },
+        { key:'agent.capability_scout_external_discovery.max_new_per_session', type:'number',label:'Max New / Session',   hint:'Cap on how many new external MCPs can be registered in a single session.' },
+        { key:'agent.capability_scout_external_discovery.max_stale_days',   type:'number',   label:'Max Stale Days',      hint:'Re-verify known external MCPs whose last_verified is older than this many days.' },
+        { key:'agent.capability_scout_external_discovery.search_timeout_s', type:'number',   label:'Search Timeout (s)',  hint:'Per-registry HTTP request timeout in seconds.' },
+      ]},
+    ]
+  },
+
+  task_type_detail: {
+    groups: [
+      { title: 'Identity', fields: [
+        { key:'name',        type:'text',    label:'Name',        required:true, hint:'Unique snake_case identifier used for routing and blueprint lookup.' },
+        { key:'description', type:'textarea',label:'Description', required:true, hint:'Natural language description the decomposer uses to match user requests. Write it from the LLM\'s perspective.' },
+        { key:'output_format',type:'select', label:'Output Format',options:['text','md','json','file'], hint:'text, md, json (enables schema validation), or file (task produces a file artifact).' },
+        { key:'mandatory',   type:'toggle',  label:'Mandatory',   hint:'When true, this task type must succeed for the session to be considered complete.' },
+      ]},
+      { title: 'Execution', fields: [
+        { key:'complexity',      type:'select', label:'Complexity',     options:['adaptive','pinned','scripted'], hint:'adaptive: LLM decides tool calls dynamically. pinned: fixed sequence. scripted: runs a pre-generated Python script.' },
+        { key:'capability_hint', type:'text',   label:'Capability Hint',hint:'Hint to the capability scout. Use "auto" or name a capability category (e.g. "web_search", "database").' },
+        { key:'timeout_seconds', type:'number', label:'Timeout (s)',    hint:'Per-task timeout. Overrides agent.time.default_task_timeout_seconds for this specific task type.' },
+        { key:'llm_provider',    type:'text',   label:'LLM Provider',  hint:'Named provider key for this task\'s sub-agent LLM calls. Use "default" to inherit.' },
+        { key:'handler',         type:'text',   label:'Handler',        hint:'Python dotted path to a custom handler (e.g. mymodule.handlers.my_fn). Forces complexity to scripted.' },
+        { key:'human_in_loop',   type:'toggle', label:'Human in Loop', hint:'Allow the sub-agent to pause mid-execution and ask the user a clarifying question.' },
+        { key:'blueprint',       type:'text',   label:'Blueprint File', hint:'Relative path to a blueprint .md file. When set, past lessons are injected into this task\'s system prompt.' },
+      ]},
+      { title: 'Routing', fields: [
+        { key:'tool_servers', type:'list', label:'Tool Servers',hint:'Names of tool servers this task type is allowed to call. Empty = all servers available.' },
+        { key:'depends_on',   type:'list', label:'Depends On',   hint:'Names of other task types that must complete before this one can start.' },
+      ]},
+      { title: 'Retry', fields: [
+        { key:'retry.max_attempts',    type:'number', label:'Max Attempts',     hint:'How many times to retry a failed task before marking it permanently failed.' },
+        { key:'retry.backoff_initial_ms', type:'number', label:'Backoff Initial (ms)', hint:'Initial backoff delay before the first retry. Doubles on each subsequent attempt.' },
+      ]},
+      { title: 'Output', fields: [
+        { key:'output.content_summary_tokens', type:'number', label:'Summary Tokens', hint:'Token budget for the task\'s output summary included in the final synthesis prompt.' },
+        { key:'output.max_size_mb',            type:'number', label:'Max Size (MB)',  hint:'Maximum output artifact size. Outputs exceeding this are truncated.' },
+      ]},
+      { title: 'Validation', fields: [
+        { key:'validation_notes', type:'textarea', label:'Validation Notes', hint:'Free-text rules the LLM validation gate uses to evaluate this task\'s output quality.' },
+      ]},
+    ]
+  },
+
+  tool_server_detail: {
+    groups: [
+      { title: 'Connection', fields: [
+        { key:'url',                      type:'text',   label:'URL',               hint:'Full URL of the MCP server (e.g. http://localhost:3000/sse, ws://localhost:4000).' },
+        { key:'transport',                type:'select', label:'Transport', options:['sse','stdio','websocket'], hint:'sse: HTTP-based. stdio: local subprocess. websocket: persistent connection.' },
+        { key:'startup_timeout_seconds',  type:'number', label:'Startup Timeout (s)', hint:'Seconds to wait for the server to become ready during framework startup.' },
+        { key:'command',                  type:'text',   label:'Command',            hint:'Executable command for stdio transport (e.g. npx @modelcontextprotocol/server-filesystem).' },
+      ]},
+      { title: 'Auth', fields: [
+        { key:'auth.type',               type:'select', label:'Auth Type', options:['none','bearer','api_key','basic','oauth2'], hint:'Authentication method for this server.' },
+        { key:'auth.token_env_var',      type:'text',   label:'Token Env Var',    hint:'Env var name containing the bearer token. Value is read at runtime, never stored here.' },
+        { key:'auth.key_env_var',        type:'text',   label:'Key Env Var',      hint:'Env var name for the API key.' },
+        { key:'auth.header',             type:'text',   label:'Header',           hint:'Header name for API key injection (default: X-Api-Key).' },
+        { key:'auth.username_env_var',   type:'text',   label:'Username Env Var', hint:'Env var for basic auth username.' },
+        { key:'auth.password_env_var',   type:'text',   label:'Password Env Var', hint:'Env var for basic auth password.' },
+      ]},
+      { title: 'TLS', fields: [
+        { key:'tls.enabled',       type:'toggle', label:'TLS Enabled',    hint:'Enable TLS for this server connection.' },
+        { key:'tls.verify_cert',   type:'toggle', label:'Verify Cert',    hint:'Verify the server\'s TLS certificate. Disable only for development with self-signed certs.' },
+        { key:'tls.ca_cert_file',  type:'text',   label:'CA Cert File',   hint:'Path to a custom CA certificate file for verification.' },
+        { key:'tls.client_cert_file', type:'text',label:'Client Cert',    hint:'Path to the client certificate for mutual TLS.' },
+        { key:'tls.client_key_file',  type:'text',label:'Client Key',     hint:'Path to the client private key for mutual TLS.' },
+      ]},
+      { title: 'Connection Tuning', fields: [
+        { key:'connection.timeout_seconds',      type:'number', label:'Connect Timeout (s)',hint:'Connection establishment timeout.' },
+        { key:'connection.read_timeout_seconds', type:'number', label:'Read Timeout (s)',   hint:'Read timeout for individual MCP tool calls.' },
+        { key:'connection.max_retries',          type:'number', label:'Max Retries',        hint:'Retry count on connection failure.' },
+        { key:'connection.retry_backoff_ms',     type:'number', label:'Retry Backoff (ms)', hint:'Initial backoff before retry (doubles each attempt).' },
+      ]},
+      { title: 'Connection Pool', fields: [
+        { key:'pool.min_connections', type:'number', label:'Min Connections', hint:'Connections to pre-warm at startup.' },
+        { key:'pool.max_connections', type:'number', label:'Max Connections', hint:'Maximum concurrent connections to this server.' },
+      ]},
+      { title: 'Discovery', fields: [
+        { key:'discovery.auto',             type:'toggle', label:'Auto-Discover',     hint:'Auto-discover and cache capabilities from this server at startup.' },
+        { key:'discovery.capability_hints', type:'list',   label:'Capability Hints',  hint:'Capability category tags to associate with this server before discovery runs.' },
+        { key:'discovery.domain_hints',     type:'list',   label:'Domain Hints',      hint:'Domain keywords (e.g. database, email) to help the capability scout route tasks here.' },
+      ]},
+      { title: 'Health Check', fields: [
+        { key:'health_check.endpoint',           type:'text',   label:'Endpoint',           hint:'HTTP path to poll for liveness (e.g. /health). Leave blank to skip health monitoring.' },
+        { key:'health_check.interval_seconds',   type:'number', label:'Interval (s)',        hint:'Seconds between health checks.' },
+        { key:'health_check.failure_threshold',  type:'number', label:'Failure Threshold',   hint:'Consecutive failures before marking the server as down.' },
+        { key:'health_check.recovery_threshold', type:'number', label:'Recovery Threshold',  hint:'Consecutive successes needed to mark the server as recovered.' },
+      ]},
+    ]
+  },
+
+  llm_provider_detail: {
+    fields: [
+      { key:'provider',         type:'select', label:'Provider Type', options:['anthropic','openai','bedrock','azure','local','custom'], hint:'LLM provider backend type.' },
+      { key:'model',            type:'text',   label:'Model',         hint:'Model identifier (e.g. claude-sonnet-4-6, gpt-4o, gemma3:12b).' },
+      { key:'max_tokens',       type:'number', label:'Max Tokens',    hint:'Maximum tokens in the completion response.' },
+      { key:'api_key_env_var',  type:'text',   label:'API Key Env Var', hint:'Env var name containing the API key. Never put the key value here.' },
+      { key:'base_url',         type:'text',   label:'Base URL',      hint:'Override the API base URL. Used for local LLMs (e.g. Ollama at http://localhost:11434/v1).' },
+      { key:'region_env_var',   type:'text',   label:'AWS Region Env Var',  hint:'Env var for AWS region (Bedrock).' },
+      { key:'access_key_env_var',type:'text',  label:'AWS Access Key Env',  hint:'Env var for AWS access key ID (Bedrock).' },
+      { key:'secret_key_env_var',type:'text',  label:'AWS Secret Key Env',  hint:'Env var for AWS secret access key (Bedrock).' },
+      { key:'endpoint_env_var', type:'text',   label:'Azure Endpoint Env',  hint:'Env var containing the Azure OpenAI endpoint URL.' },
+      { key:'api_version',      type:'text',   label:'Azure API Version',   hint:'Azure OpenAI API version string (e.g. 2024-02-01).' },
+    ]
+  },
+
+  blueprints: {
+    fields: [
+      { key:'blueprint.enabled',              type:'toggle', label:'Enabled',              hint:'Enable blueprint injection globally. When disabled, no blueprint is loaded even if a task type has a blueprint pointer.' },
+      { key:'blueprint.storage_mode',         type:'select', label:'Storage Mode', options:['filesystem','backend'], hint:'filesystem: markdown files under blueprint.dir. backend: stored via configured StorageBackend (Redis/SQLite).' },
+      { key:'blueprint.dir',                  type:'text',   label:'Directory',            hint:'Directory path (relative to storage.base_path) where blueprint .md files are stored.' },
+      { key:'blueprint.auto_update',          type:'toggle', label:'Auto Update',          hint:'Automatically update a task\'s blueprint after each successful run using validation report and learned lessons.' },
+      { key:'blueprint.inject_max_chars',     type:'number', label:'Inject Max Chars',     hint:'Maximum characters of blueprint content injected into the system prompt. Large blueprints are truncated from the bottom.' },
+      { key:'blueprint.staleness_warning_days', type:'number', label:'Staleness Warning (days)', hint:'Show a warning if a blueprint hasn\'t been updated in this many days.' },
+    ]
+  },
+
+  code_registry: {
+    fields: [
+      { key:'code_sandbox.enabled',         type:'toggle', label:'Enabled',              hint:'Allow the agent to generate and execute Python scripts. Disable in production environments where untrusted code execution is not acceptable.' },
+      { key:'code_sandbox.timeout_seconds', type:'number', label:'Timeout (s)',           hint:'Maximum execution time for any generated script. Scripts exceeding this are killed.' },
+      { key:'code_sandbox.allow_network',   type:'toggle', label:'Allow Network',         hint:'Allow generated scripts to make outbound network requests. Disable for strict sandboxing.' },
+      { key:'code_sandbox.auto_add_to_yaml',type:'toggle', label:'Auto Add to YAML',      hint:'After a validated script succeeds, automatically add it as a handler in the matching task type in cortex.yaml.' },
+    ]
+  },
+
+  auto_mcps: {
+    fields: [
+      { key:'external_discovery.enabled',             type:'toggle', label:'Enabled',             hint:'Allow the scout to query public MCP registries for MCPs the agent doesn\'t already know about.' },
+      { key:'external_discovery.registry_sources',    type:'list',   label:'Registry Sources',    hint:'Ordered list of public MCP registry URLs. Failures are swallowed so one dead registry doesn\'t block others.' },
+      { key:'external_discovery.max_new_per_session', type:'number', label:'Max New / Session',   hint:'Cap on how many new external MCPs can be registered in a single session.' },
+      { key:'external_discovery.max_stale_days',      type:'number', label:'Max Stale Days',      hint:'Re-verify external MCPs whose last_verified is older than this many days.' },
+      { key:'external_discovery.search_timeout_s',    type:'number', label:'Search Timeout (s)',  hint:'Per-registry HTTP request timeout in seconds.' },
+    ]
+  },
+
+  ant_colony: {
+    groups: [
+      { title: 'Colony Settings', fields: [
+        { key:'ant_colony.enabled',           type:'toggle', label:'Enabled',           hint:'Enable the ant colony subsystem. When disabled, the primary agent handles all tasks without spawning sub-agents.' },
+        { key:'ant_colony.base_port',         type:'number', label:'Base Port',          hint:'Starting port for ant agents. First ant gets this port, each subsequent ant increments by one.' },
+        { key:'ant_colony.max_ants',          type:'number', label:'Max Ants',           hint:'Maximum number of live ant agents at any time. New hatching requests are queued until a slot opens.' },
+        { key:'ant_colony.auto_restart',      type:'toggle', label:'Auto Restart',       hint:'Automatically restart a crashed ant agent.' },
+        { key:'ant_colony.auto_hatch_on_gap', type:'toggle', label:'Auto Hatch on Gap',  hint:'Automatically hatch a new ant when the primary agent detects a capability gap it can\'t fill with existing tools.' },
+      ]},
+      { title: 'Ant LLM Config', fields: [
+        { key:'ant_colony.llm_provider',    type:'text', label:'LLM Provider',    hint:'Provider key used to generate each ant\'s cortex.yaml at hatch time.' },
+        { key:'ant_colony.llm_model',       type:'text', label:'Model',           hint:'Model used for ant YAML generation (can differ from the primary agent\'s model).' },
+        { key:'ant_colony.api_key_env_var', type:'text', label:'API Key Env Var', hint:'Env var override for the ant-generation LLM\'s API key.' },
+      ]},
+    ]
+  },
+
+  system: {
+    groups: [
+      { title: 'Learning Engine', fields: [
+        { key:'learning.enabled',                  type:'toggle', label:'Enabled',                   hint:'Master switch for autonomic learning. When enabled, the framework tracks ad-hoc task patterns and proposes new task types.' },
+        { key:'learning.validation_threshold',     type:'number', label:'Validation Threshold',      hint:'Minimum composite validation score a session must achieve for its pattern to be considered for learning. Range: 0–1.' },
+        { key:'learning.complexity_threshold',     type:'number', label:'Complexity Threshold',      hint:'Minimum complexity score — very simple tasks are not worth learning as new task types. Range: 0–1.' },
+        { key:'learning.require_user_identity',    type:'toggle', label:'Require User Identity',     hint:'Only count confirmations from authenticated users (not anonymous) toward delta confidence.' },
+        { key:'learning.auto_apply_delta',         type:'toggle', label:'Auto Apply Delta',          hint:'Automatically promote deltas to cortex.yaml when confidence is reached. Disable to require manual review.' },
+        { key:'learning.auto_apply_min_confidence',type:'select', label:'Min Confidence Level', options:['low','medium','high'], hint:'Minimum confidence level before auto-applying a delta.' },
+        { key:'learning.auto_apply_min_confirmations', type:'number', label:'Min Confirmations',    hint:'Distinct principals required before auto-apply triggers.' },
+        { key:'learning.max_lesson_chars',         type:'number', label:'Max Lesson Chars',          hint:'Character limit for lessons stored in a blueprint. Older lessons are trimmed when exceeded.' },
+      ]},
+      { title: 'Validation', fields: [
+        { key:'validation.threshold',            type:'number', label:'Threshold',             hint:'Composite score below which a session is marked as a partial failure. Range: 0–1.' },
+        { key:'validation.critical_threshold',   type:'number', label:'Critical Threshold',   hint:'Score below which a session is marked critically failed and logged as a quality event. Range: 0–1.' },
+        { key:'validation.timeout_seconds',      type:'number', label:'Timeout (s)',           hint:'Time budget for the LLM-based validation gate.' },
+        { key:'validation.expose_score_to_user', type:'toggle', label:'Expose Score to User', hint:'Include the validation score in the API response payload returned to the caller.' },
+        { key:'validation.wave_gate_llm_provider', type:'text', label:'Wave Gate LLM Provider', hint:'LLM provider key used for wave-level output validation.' },
+      ]},
+      { title: 'History', fields: [
+        { key:'history.enabled',                 type:'toggle', label:'Enabled',             hint:'Persist session history to disk/storage backend.' },
+        { key:'history.retention_days',          type:'number', label:'Retention Days',      hint:'Delete history records older than this many days.' },
+        { key:'history.max_sessions_in_context', type:'number', label:'Max Sessions in Context', hint:'Maximum past sessions injected into the primary agent\'s context for continuity.' },
+        { key:'history.encryption_enabled',      type:'toggle', label:'Encryption',          hint:'Encrypt history records at rest.' },
+        { key:'history.encryption_key_env_var',  type:'text',   label:'Encryption Key Env',  hint:'Env var name containing the AES-256 encryption key for history records.' },
+      ]},
+      { title: 'Storage', fields: [
+        { key:'storage.base_path',              type:'text',   label:'Base Path',               hint:'Root directory for all runtime-generated files (blueprints, agent_tools, ants, history, etc.).' },
+        { key:'storage.session_quota_mb',       type:'number', label:'Session Quota (MB)',      hint:'Per-session storage quota for output artifacts.' },
+        { key:'storage.health_warning_free_gb', type:'number', label:'Warning Free Space (GB)', hint:'Show a health warning when available disk space drops below this threshold.' },
+        { key:'storage.health_critical_free_gb',type:'number', label:'Critical Free Space (GB)',hint:'Mark storage as critical when available disk space drops below this threshold.' },
+      ]},
+      { title: 'SQLite', fields: [
+        { key:'sqlite.enabled',            type:'toggle', label:'Enabled',           hint:'Use SQLite as the session storage backend. Suitable for single-node deployments.' },
+        { key:'sqlite.path',               type:'text',   label:'DB Path',           hint:'Path to the SQLite database file (relative to storage.base_path).' },
+        { key:'sqlite.wal_mode',           type:'toggle', label:'WAL Mode',          hint:'Enable Write-Ahead Logging for better concurrent read performance.' },
+        { key:'sqlite.ttl_session_data_seconds', type:'number', label:'Session Data TTL (s)', hint:'Time-to-live for session data records in SQLite.' },
+      ]},
+      { title: 'Redis', fields: [
+        { key:'redis.enabled',             type:'toggle', label:'Enabled',           hint:'Use Redis as the session storage backend. Required for multi-node deployments.' },
+        { key:'redis.host',                type:'text',   label:'Host',              hint:'Redis server hostname.' },
+        { key:'redis.port',                type:'number', label:'Port',              hint:'Redis server port.' },
+        { key:'redis.db',                  type:'number', label:'DB Index',          hint:'Redis database index.' },
+        { key:'redis.password_env_var',    type:'text',   label:'Password Env Var',  hint:'Env var containing the Redis password.' },
+        { key:'redis.pool_max_connections',type:'number', label:'Max Connections',   hint:'Maximum connections in the Redis connection pool.' },
+        { key:'redis.key_prefix',          type:'text',   label:'Key Prefix',        hint:'Prefix added to all Redis keys used by this framework instance.' },
+      ]},
+      { title: 'Security', fields: [
+        { key:'security.max_input_tokens',    type:'number', label:'Max Input Tokens',    hint:'Reject user inputs exceeding this token count. Prevents prompt injection via extremely long inputs.' },
+        { key:'security.secret_scrub_patterns', type:'list', label:'Scrub Patterns',     hint:'Regex patterns applied to all LLM inputs/outputs to redact secrets. One pattern per item.' },
+      ]},
+      { title: 'Startup', fields: [
+        { key:'startup.require_all_servers',     type:'toggle', label:'Require All Servers', hint:'Abort startup if any tool server fails to connect. Disable to allow degraded-mode startup.' },
+        { key:'startup.log_discovered_tools',    type:'toggle', label:'Log Discovered Tools', hint:'Print discovered tools from all tool servers to the console at startup.' },
+        { key:'startup.eager_discovery',         type:'toggle', label:'Eager Discovery',      hint:'Run full capability discovery at startup (not lazily on first use).' },
+        { key:'startup.discovery_timeout_seconds', type:'number', label:'Discovery Timeout (s)', hint:'Timeout for capability discovery at startup.' },
+      ]},
+      { title: 'Cortex UI Auth', fields: [
+        { key:'ui.enabled',             type:'toggle', label:'UI Enabled',          hint:'Enable the chat monitoring dashboard UI.' },
+        { key:'ui.host',                type:'text',   label:'Host',                hint:'Host to bind the UI server to.' },
+        { key:'ui.port',                type:'number', label:'Port',                hint:'Port for the UI server.' },
+        { key:'ui.auth.mode',           type:'select', label:'Auth Mode', options:['none','token','basic'], hint:'Authentication mode for the monitoring dashboard UI.' },
+      ]},
+    ]
+  },
+};
+
+// ── Alpine.js app ─────────────────────────────────────────────────────────────
+function app() {
+  return {
+    sections: SECTIONS,
+    SCHEMAS: SCHEMAS,
+    activeSection: 'core_agent',
+    sidebarCollapsed: false,
+    activeTheme: 'cyan',
+    themes: [
+      { id:'cyan',    label:'Cyan',    color:'#06b6d4' },
+      { id:'violet',  label:'Violet',  color:'#a855f7' },
+      { id:'emerald', label:'Emerald', color:'#10b981' },
+      { id:'rose',    label:'Rose',    color:'#f43f5e' },
+      { id:'amber',   label:'Amber',   color:'#f59e0b' },
+      { id:'indigo',  label:'Indigo',  color:'#6366f1' },
+    ],
+    serverStatus: null,
+    sectionData: {},
+    formValues: {},
+    dirty: {},
+    runtimeData: {},
+    saving: false,
+    toast: null,
+    modal: null,
+    // list+detail state
+    selectedTaskType: null,
+    selectedServer: null,
+    selectedProvider: '__default__',
+    // list field input buffers
+    listInputs: {},
+    // auto_mcps filter
+    mcpFilter: 'all',
+    mcpSearch: '',
+
+    async init() {
+      try {
+        const r = await fetch('/api/status');
+        this.serverStatus = await r.json();
+      } catch(e) {
+        this.serverStatus = { config_path: '(error connecting)' };
+      }
+      await this.navigate('core_agent');
+    },
+
+    async navigate(id) {
+      this.activeSection = id;
+      if (!this.sectionData[id]) {
+        await this.loadSection(id);
+      } else {
+        this.formValues = JSON.parse(JSON.stringify(this.sectionData[id]));
+      }
+      const runtimeSections = ['blueprints','code_registry','auto_mcps','ant_colony','system'];
+      if (runtimeSections.includes(id) && !this.runtimeData[id]) {
+        await this.loadRuntime(id);
+      }
+      if (id === 'system' && !this.runtimeData.delta_queue) {
+        await this.loadRuntime('delta_queue');
+      }
+    },
+
+    async loadSection(id) {
+      try {
+        const r = await fetch(`/api/section/${id}`);
+        const j = await r.json();
+        if (j.ok) {
+          this.sectionData[id] = j.data;
+          this.formValues = JSON.parse(JSON.stringify(j.data));
+          // auto-select first items in list+detail sections
+          if (id === 'task_types' && j.data.task_types?.length) this.selectedTaskType = 0;
+          if (id === 'tool_servers') {
+            const keys = Object.keys(j.data.tool_servers || {});
+            if (keys.length) this.selectedServer = keys[0];
+          }
+        }
+      } catch(e) {
+        this.showToast('Load error: ' + e.message, 'error');
+      }
+    },
+
+    async loadRuntime(id) {
+      try {
+        const r = await fetch(`/api/runtime/${id}`);
+        const j = await r.json();
+        if (j.ok) this.runtimeData[id] = j.data;
+      } catch(e) {
+        this.runtimeData[id] = null;
+      }
+    },
+
+    async saveSection(id) {
+      this.saving = true;
+      try {
+        const r = await fetch(`/api/section/${id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: this.formValues }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          this.sectionData[id] = JSON.parse(JSON.stringify(this.formValues));
+          this.dirty[id] = false;
+          this.showToast('Saved ✓', 'success');
+        } else {
+          this.showToast('Error: ' + j.error, 'error');
+        }
+      } catch(e) {
+        this.showToast('Network error: ' + e.message, 'error');
+      }
+      this.saving = false;
+    },
+
+    async reloadAll() {
+      this.sectionData = {};
+      this.runtimeData = {};
+      this.dirty = {};
+      await this.navigate(this.activeSection);
+      this.showToast('Reloaded from disk ✓', 'success');
+    },
+
+    resetSection(id) {
+      if (!confirm('Reset all fields in this section to their saved values?')) return;
+      this.formValues = JSON.parse(JSON.stringify(this.sectionData[id] || {}));
+      this.dirty[id] = false;
+    },
+
+    markDirty() {
+      this.dirty[this.activeSection] = true;
+    },
+
+    // ── Generic field get/set (dot-notation paths) ──
+    getVal(path) {
+      const val = path.split('.').reduce((o, k) => (o != null ? o[k] : undefined), this.formValues);
+      return val ?? '';
+    },
+
+    setVal(path, value) {
+      this.markDirty();
+      const parts = path.split('.');
+      let obj = this.formValues;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (obj[parts[i]] == null || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {};
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = value;
+    },
+
+    getListVal(path) {
+      const v = path.split('.').reduce((o, k) => (o != null ? o[k] : undefined), this.formValues);
+      return Array.isArray(v) ? v : [];
+    },
+
+    addListItem(path) {
+      const val = (this.listInputs[path] || '').trim();
+      if (!val) return;
+      const list = [...this.getListVal(path), val];
+      this.setVal(path, list);
+      this.listInputs[path] = '';
+    },
+
+    removeListItem(path, item) {
+      this.setVal(path, this.getListVal(path).filter(x => x !== item));
+    },
+
+    // ── Task type item get/set ──
+    getTTVal(key) {
+      if (this.selectedTaskType === null) return '';
+      const tt = this.formValues.task_types?.[this.selectedTaskType];
+      if (!tt) return '';
+      const val = key.split('.').reduce((o, k) => (o != null ? o[k] : undefined), tt);
+      return val ?? '';
+    },
+
+    setTTVal(key, value) {
+      this.markDirty();
+      if (this.selectedTaskType === null) return;
+      if (!this.formValues.task_types) return;
+      let obj = this.formValues.task_types[this.selectedTaskType];
+      const parts = key.split('.');
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (obj[parts[i]] == null) obj[parts[i]] = {};
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = value;
+    },
+
+    getTTListVal(key) {
+      const v = this.getTTVal(key);
+      return Array.isArray(v) ? v : [];
+    },
+
+    addTTListItem(key) {
+      const val = (this.listInputs['tt_'+key] || '').trim();
+      if (!val) return;
+      this.setTTVal(key, [...this.getTTListVal(key), val]);
+      this.listInputs['tt_'+key] = '';
+    },
+
+    removeTTListItem(key, item) {
+      this.setTTVal(key, this.getTTListVal(key).filter(x => x !== item));
+    },
+
+    addTaskType() {
+      if (!this.formValues.task_types) this.formValues.task_types = [];
+      this.formValues.task_types.push({ name:'new_task_type', description:'', output_format:'text', complexity:'adaptive', tool_servers:[], depends_on:[], retry:{max_attempts:2,backoff_initial_ms:500}, output:{content_summary_tokens:400,max_size_mb:100}, timeout_seconds:40, llm_provider:'default', human_in_loop:false, mandatory:true, capability_hint:'auto' });
+      this.selectedTaskType = this.formValues.task_types.length - 1;
+      this.markDirty();
+    },
+
+    removeTaskType(idx) {
+      if (!confirm('Remove this task type?')) return;
+      this.formValues.task_types.splice(idx, 1);
+      if (this.selectedTaskType >= this.formValues.task_types.length) {
+        this.selectedTaskType = this.formValues.task_types.length - 1;
+      }
+      this.markDirty();
+    },
+
+    // ── Tool server item get/set ──
+    getSrvVal(key) {
+      if (!this.selectedServer) return '';
+      const srv = this.formValues.tool_servers?.[this.selectedServer];
+      if (!srv) return '';
+      const val = key.split('.').reduce((o, k) => (o != null ? o[k] : undefined), srv);
+      return val ?? '';
+    },
+
+    setSrvVal(key, value) {
+      this.markDirty();
+      if (!this.selectedServer || !this.formValues.tool_servers) return;
+      let obj = this.formValues.tool_servers[this.selectedServer];
+      const parts = key.split('.');
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (obj[parts[i]] == null) obj[parts[i]] = {};
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = value;
+    },
+
+    getSrvListVal(key) {
+      const v = this.getSrvVal(key);
+      return Array.isArray(v) ? v : [];
+    },
+
+    addSrvListItem(key) {
+      const val = (this.listInputs['srv_'+key] || '').trim();
+      if (!val) return;
+      this.setSrvVal(key, [...this.getSrvListVal(key), val]);
+      this.listInputs['srv_'+key] = '';
+    },
+
+    removeSrvListItem(key, item) {
+      this.setSrvVal(key, this.getSrvListVal(key).filter(x => x !== item));
+    },
+
+    addToolServer() {
+      const name = prompt('Server name (e.g. my_mcp_server):');
+      if (!name || !name.trim()) return;
+      const n = name.trim();
+      if (!this.formValues.tool_servers) this.formValues.tool_servers = {};
+      this.formValues.tool_servers[n] = { url:'', transport:'sse', auth:{type:'none'}, tls:{enabled:false,verify_cert:true}, connection:{timeout_seconds:10,read_timeout_seconds:60,max_retries:3,retry_backoff_ms:500}, pool:{min_connections:1,max_connections:10}, discovery:{auto:true,capability_hints:[],domain_hints:[]}, health_check:{enabled:true,endpoint:'',interval_seconds:30}, startup_timeout_seconds:10 };
+      this.selectedServer = n;
+      this.markDirty();
+    },
+
+    removeToolServer(name) {
+      if (!confirm(`Remove server "${name}"?`)) return;
+      delete this.formValues.tool_servers[name];
+      const keys = Object.keys(this.formValues.tool_servers);
+      this.selectedServer = keys.length ? keys[0] : null;
+      this.markDirty();
+    },
+
+    // ── LLM provider get/set ──
+    getLLMVal(key) {
+      if (!this.formValues.llm_access) return '';
+      let src;
+      if (this.selectedProvider === '__default__') {
+        src = this.formValues.llm_access.default || {};
+      } else {
+        src = this.formValues.llm_access.providers?.[this.selectedProvider] || {};
+      }
+      return key.split('.').reduce((o, k) => (o != null ? o[k] : undefined), src) ?? '';
+    },
+
+    setLLMVal(key, value) {
+      this.markDirty();
+      if (!this.formValues.llm_access) return;
+      let obj;
+      if (this.selectedProvider === '__default__') {
+        if (!this.formValues.llm_access.default) this.formValues.llm_access.default = {};
+        obj = this.formValues.llm_access.default;
+      } else {
+        if (!this.formValues.llm_access.providers) this.formValues.llm_access.providers = {};
+        if (!this.formValues.llm_access.providers[this.selectedProvider]) this.formValues.llm_access.providers[this.selectedProvider] = {};
+        obj = this.formValues.llm_access.providers[this.selectedProvider];
+      }
+      const parts = key.split('.');
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!obj[parts[i]]) obj[parts[i]] = {};
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = value;
+    },
+
+    addLLMProvider() {
+      const name = prompt('Provider name (e.g. fast_model):');
+      if (!name?.trim()) return;
+      if (!this.formValues.llm_access) this.formValues.llm_access = {};
+      if (!this.formValues.llm_access.providers) this.formValues.llm_access.providers = {};
+      this.formValues.llm_access.providers[name.trim()] = { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', max_tokens: 2048 };
+      this.selectedProvider = name.trim();
+      this.markDirty();
+    },
+
+    removeLLMProvider(name) {
+      if (!confirm(`Remove provider "${name}"?`)) return;
+      delete this.formValues.llm_access.providers[name];
+      this.selectedProvider = '__default__';
+      this.markDirty();
+    },
+
+    // ── Auto MCP helpers ──
+    get filteredMCPs() {
+      const records = this.runtimeData.auto_mcps?.records || [];
+      return records.filter(r => {
+        const tierOk = this.mcpFilter === 'all' || r.trust_tier === this.mcpFilter;
+        const searchOk = !this.mcpSearch || (r.name||'').toLowerCase().includes(this.mcpSearch.toLowerCase()) || (r.description||'').toLowerCase().includes(this.mcpSearch.toLowerCase());
+        return tierOk && searchOk;
+      });
+    },
+
+    async updateTrust(name, tier) {
+      try {
+        const r = await fetch('/api/runtime/auto_mcps/trust', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, trust_tier: tier }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          await this.loadRuntime('auto_mcps');
+          this.showToast(`${name} → ${tier} ✓`, 'success');
+        }
+      } catch(e) {
+        this.showToast('Error: ' + e.message, 'error');
+      }
+    },
+
+    async deltaAction(taskName, action) {
+      try {
+        const r = await fetch('/api/runtime/delta/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_name: taskName, action }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          await this.loadRuntime('delta_queue');
+          if (action === 'promote') { this.sectionData['task_types'] = null; }
+          this.showToast(action === 'promote' ? 'Promoted to cortex.yaml ✓' : 'Discarded ✓', 'success');
+        }
+      } catch(e) {
+        this.showToast('Error: ' + e.message, 'error');
+      }
+    },
+
+    // ── Field renderers (return HTML strings for x-html) ──
+    renderField(f) {
+      const v = this.getVal(f.key);
+      return this._renderFieldHtml(f, v,
+        `setVal('${f.key}', $event.target.value)`,
+        `setVal('${f.key}', $event.target.checked)`,
+        `setVal('${f.key}', Number($event.target.value))`,
+        f.key, 'getListVal', 'addListItem', 'removeListItem', 'listInputs'
+      );
+    },
+
+    renderTaskTypeField(f) {
+      const v = this.getTTVal(f.key);
+      return this._renderFieldHtml(f, v,
+        `setTTVal('${f.key}', $event.target.value)`,
+        `setTTVal('${f.key}', $event.target.checked)`,
+        `setTTVal('${f.key}', Number($event.target.value))`,
+        f.key, 'getTTListVal', 'addTTListItem', 'removeTTListItem', 'listInputs', 'tt_'
+      );
+    },
+
+    renderServerField(f) {
+      const v = this.getSrvVal(f.key);
+      return this._renderFieldHtml(f, v,
+        `setSrvVal('${f.key}', $event.target.value)`,
+        `setSrvVal('${f.key}', $event.target.checked)`,
+        `setSrvVal('${f.key}', Number($event.target.value))`,
+        f.key, 'getSrvListVal', 'addSrvListItem', 'removeSrvListItem', 'listInputs', 'srv_'
+      );
+    },
+
+    renderLLMField(f) {
+      const v = this.getLLMVal(f.key);
+      return this._renderFieldHtml(f, v,
+        `setLLMVal('${f.key}', $event.target.value)`,
+        `setLLMVal('${f.key}', $event.target.checked)`,
+        `setLLMVal('${f.key}', Number($event.target.value))`,
+        f.key, null, null, null, null
+      );
+    },
+
+    _renderFieldHtml(f, v, textCb, checkCb, numCb, key, getListFn, addListFn, removeListFn, listInputsKey, listPrefix='') {
+      if (f.type === 'toggle') {
+        const chk = v === true || v === 'true' ? 'checked' : '';
+        return `<label class="toggle"><input type="checkbox" ${chk} @change="${checkCb}"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>`;
+      }
+      if (f.type === 'text') {
+        const safe = String(v ?? '').replace(/"/g,'&quot;');
+        return `<input type="text" class="form-input" value="${safe}" @input="${textCb}" placeholder="${f.placeholder||''}">`;
+      }
+      if (f.type === 'number') {
+        const safe = v ?? '';
+        return `<input type="number" class="form-input" value="${safe}" @input="${numCb}" step="any">`;
+      }
+      if (f.type === 'textarea') {
+        const safe = String(v ?? '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<textarea class="form-textarea" @input="${textCb}">${safe}</textarea>`;
+      }
+      if (f.type === 'select') {
+        const opts = (f.options||[]).map(o => `<option value="${o}" ${v===o?'selected':''}>${o}</option>`).join('');
+        return `<select class="form-select" @change="${textCb}">${opts}</select>`;
+      }
+      if (f.type === 'list' && getListFn) {
+        const bufKey = listPrefix + key;
+        const chips = (Array.isArray(v) ? v : []).map(item =>
+          `<span class="chip">${item}<span class="chip-remove" @click="${removeListFn}('${key}','${item}')">×</span></span>`
+        ).join('');
+        return `<div>
+          <div class="chip-list">${chips}</div>
+          <div style="display:flex;gap:6px">
+            <input type="text" class="form-input" style="flex:1" placeholder="Type and press Enter"
+              x-model="listInputs['${bufKey}']"
+              @keydown.enter.prevent="${addListFn}('${key}')">
+            <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px" @click="${addListFn}('${key}')">Add</button>
+          </div>
+        </div>`;
+      }
+      return `<span style="color:var(--text-muted);font-size:12px">${v ?? ''}</span>`;
+    },
+
+    // ── Utilities ──
+    trustBadge(tier) {
+      if (tier === 'trusted') return 'badge-green';
+      if (tier === 'blocked') return 'badge-red';
+      return 'badge-amber';
+    },
+
+    antStatusBadge(status) {
+      if (status === 'running') return 'badge-green';
+      if (status === 'crashed') return 'badge-red';
+      return 'badge-muted';
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        const now = new Date();
+        const diff = (now - d) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+        return d.toLocaleDateString();
+      } catch { return iso; }
+    },
+
+    openModal(type, data) {
+      const titles = { blueprint: `Blueprint: ${data.task_name||data.name}`, script: `Script: ${data.task_name}`, ant: `Ant: ${data.name}` };
+      this.modal = { type, data, title: titles[type] || type };
+    },
+
+    setTheme(id) {
+      this.activeTheme = id;
+    },
+
+    showToast(msg, type) {
+      this.toast = { msg, type };
+      clearTimeout(this._toastTimer);
+      this._toastTimer = setTimeout(() => { this.toast = null; }, 3500);
+    },
+  };
+}
+</script>
+</body>
+</html>

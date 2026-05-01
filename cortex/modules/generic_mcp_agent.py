@@ -2,7 +2,9 @@
 import asyncio
 import importlib
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from cortex.config.schema import TaskTypeConfig
@@ -59,6 +61,20 @@ async def _select_tool_for_task(
     return None
 
 
+def _extract_field(text: str, field: str) -> Optional[str]:
+    """Extract a labelled field from a structured instruction block.
+
+    Matches ``FIELD: value`` or ``FIELD:\\nvalue`` patterns, returning the
+    value up to (but not including) the next field or end of string.
+    """
+    pattern = re.compile(
+        rf'^{re.escape(field)}:\s*(.+?)(?=\n[A-Z_]+:|\Z)',
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    m = pattern.search(text)
+    return m.group(1).strip() if m else None
+
+
 def _extract_content_summary(full_content: str, max_tokens: int) -> str:
     """
     Extract a compact excerpt bounded by max_tokens (approx 4 chars/token).
@@ -96,6 +112,8 @@ class GenericMCPAgent:
         discovery_callback=None, # async callable(capability: str) -> bool
                                  # injected by CortexFramework; triggers CapabilityScout
                                  # mid-run when no tool server is found for a capability.
+        workspace_bash=None,     # cortex.modules.workspace_bash.WorkspaceBash instance
+        hitl_relay_url: Optional[str] = None,  # URL of per-session HITL relay (for ant calls)
     ):
         self._session_storage_path = session_storage_path
         self._scrubber = scrubber or CredentialScrubber()
@@ -103,6 +121,8 @@ class GenericMCPAgent:
         self._code_store = code_store
         self._sandbox_config = sandbox_config
         self._discovery_callback = discovery_callback
+        self._workspace_bash = workspace_bash
+        self._hitl_relay_url = hitl_relay_url
 
     async def execute_task(
         self,
@@ -187,6 +207,12 @@ class GenericMCPAgent:
         if event_queue is None:
             return None
 
+        # When running inside an ant subprocess, relay through the parent's HITL relay.
+        import os as _os
+        hitl_url = _os.environ.get("CORTEX_HITL_URL")
+        if hitl_url:
+            return await self._relay_hitl(hitl_url, question, task)
+
         # Local imports avoid a circular import at module load time.
         import uuid
         from cortex.framework import _PENDING_TASK_CLARIFICATIONS
@@ -221,6 +247,106 @@ class GenericMCPAgent:
                 task.task_id, timeout_seconds,
             )
             return None
+
+    @staticmethod
+    async def _relay_hitl(hitl_url: str, question: str, task) -> Optional[str]:
+        """Relay a HITL question to the parent framework when running in an ant subprocess."""
+        import aiohttp
+
+        payload = {
+            "session_id": task.task_id.split("/")[0],
+            "question": question,
+            "task_id": task.task_id,
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=310)
+            async with aiohttp.ClientSession(timeout=timeout) as sess:
+                async with sess.post(f"{hitl_url}/hitl", json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("answer")
+        except Exception as exc:
+            logger.warning(
+                "HITL relay to %s failed for task %s: %s — auto-denying",
+                hitl_url, task.task_id, exc,
+            )
+        return None
+
+    async def _call_workspace_bash(
+        self,
+        task: RuntimeTask,
+        instruction: str,
+        session_id: str,
+        event_queue,
+    ) -> str:
+        """Dispatch a workspace_bash task: parse the operation from the instruction,
+        then call the appropriate WorkspaceBash method.
+
+        Expects the instruction to encode the operation in one of these forms::
+
+            ACTION: <verb>
+            PATH: <rel_path>
+            WORKSPACE: /abs/path/to/workspace
+            [CONTENT: <file content for write operations>]
+            [COMMAND: <shell command for execute operations>]
+
+        For backwards compatibility the instruction may also be a free-form
+        natural language string, in which case the entire text is treated as a
+        shell command with the workspace path extracted via
+        ``extract_workspace_path``.
+        """
+        from cortex.modules.workspace_bash import extract_workspace_path
+
+        if self._workspace_bash is None:
+            return "[workspace_bash not enabled — add workspace_bash.enabled: true to cortex.yaml]"
+
+        # Update the workspace_bash event_queue for this session
+        self._workspace_bash._event_queue = event_queue
+
+        # Try structured format first
+        action = _extract_field(instruction, "ACTION")
+        rel_path = _extract_field(instruction, "PATH")
+        workspace = _extract_field(instruction, "WORKSPACE")
+        content = _extract_field(instruction, "CONTENT")
+        command = _extract_field(instruction, "COMMAND")
+
+        # Fall back to free-form: treat whole instruction as a command
+        if not action:
+            workspace = workspace or extract_workspace_path(instruction)
+            if not workspace:
+                return "[workspace_bash: no workspace path found in instruction]"
+            command = command or instruction
+            action = "execute"
+
+        if not workspace:
+            workspace = extract_workspace_path(instruction)
+        if not workspace:
+            return "[workspace_bash: no workspace path found in instruction]"
+
+        verb = (action or "").strip().lower()
+        try:
+            if verb in ("read", "read_file"):
+                return await self._workspace_bash.read_file(workspace, rel_path or ".")
+            elif verb in ("list", "list_dir", "ls"):
+                return await self._workspace_bash.list_dir(workspace, rel_path or ".")
+            elif verb in ("write", "write_file"):
+                if not content:
+                    return "[workspace_bash write: no CONTENT provided]"
+                return await self._workspace_bash.write_file(
+                    workspace, rel_path or "output.txt", content, task, session_id
+                )
+            elif verb in ("execute", "exec", "run", "bash"):
+                cmd = command or instruction
+                return await self._workspace_bash.execute(workspace, cmd, task, session_id)
+            else:
+                # Unknown verb — treat entire instruction as a command
+                return await self._workspace_bash.execute(workspace, instruction, task, session_id)
+        except Exception as exc:
+            from cortex.exceptions import CortexHITLDeniedError
+            if isinstance(exc, CortexHITLDeniedError):
+                return f"[workspace_bash: operation denied by user — {exc}]"
+            logger.error("workspace_bash error for task %s: %s", task.task_id, exc)
+            return f"[workspace_bash error: {exc}]"
 
     async def _execute_once(
         self,
@@ -306,6 +432,16 @@ class GenericMCPAgent:
             sandbox = BashSandbox(self._session_storage_path)
             output_content = await sandbox.execute(full_instruction)
             tool_trace.append("bash_sandbox")
+
+        # Workspace bash — reads/writes/executes in the user's own workspace directory
+        elif config.capability_hint == "workspace_bash":
+            output_content = await self._call_workspace_bash(
+                task=task,
+                instruction=full_instruction,
+                session_id=session_id,
+                event_queue=event_queue,
+            )
+            tool_trace.append("workspace_bash")
 
         # LLM synthesis
         elif config.capability_hint == "llm_synthesis":
@@ -603,10 +739,15 @@ class GenericMCPAgent:
         if not base_url:
             raise CortexToolUnavailableError(f"Tool server '{server_name}' has no URL", server_name=server_name)
 
+        # Inject HITL relay URL into ant calls so the ant can relay HITL back
+        invoke_params = dict(params)
+        if info.trust_tier == "ant" and self._hitl_relay_url:
+            invoke_params["hitl_url"] = self._hitl_relay_url
+
         try:
             async with conn.session.post(
                 f"{base_url}/tools/{tool_name}/invoke",
-                json={"params": params},
+                json={"params": invoke_params},
             ) as resp:
                 if resp.status >= 400:
                     raise CortexToolUnavailableError(
@@ -670,9 +811,25 @@ class GenericMCPAgent:
 
         session_id = task.task_id.split("/")[0]
         task_name = task.task_name
-        output_dir = str(
-            __import__("pathlib").Path(self._session_storage_path) / "code_output" / task.task_id.replace("/", "_")
+
+        # If the instruction mentions a user workspace path, write code there so the
+        # file lands exactly where the user asked. Matches patterns like:
+        #   "workspace folder is: /some/path"  "workspace_path: /some/path"
+        # Falls back to the managed session path when no valid absolute path is found.
+        _ws_match = re.search(
+            r"workspace[_\s]*(?:folder|path|dir(?:ectory)?)?\s*(?:is\s*)?[:\s]+([/~][^\s\n,;]+)",
+            instruction,
+            re.IGNORECASE,
         )
+        if _ws_match:
+            candidate = _ws_match.group(1).rstrip(".,;")
+            output_dir = candidate if Path(candidate).is_absolute() else str(
+                Path(self._session_storage_path) / "code_output" / task.task_id.replace("/", "_")
+            )
+        else:
+            output_dir = str(
+                Path(self._session_storage_path) / "code_output" / task.task_id.replace("/", "_")
+            )
 
         # ── Step 1: check for persisted script ───────────────────────────────
         if self._code_store and self._code_store.has_script(task_name):

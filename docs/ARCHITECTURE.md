@@ -273,6 +273,16 @@ Isolated subprocess for running LLM-generated Python code. Blocks a configurable
 
 **Directory:** [`cortex/sandbox/`](../cortex/sandbox/)
 
+#### WorkspaceBash
+Workspace-aware file and command execution with hardcoded Human-in-the-Loop (HITL) gating. The Generic MCP Agent uses `WorkspaceBash` when a task instruction references a workspace directory. All operations are sandboxed to a declared workspace root — path traversal is blocked at resolve time.
+
+- **Read-only operations** (`read_file`, `list_dir`) — no HITL prompt, no approval required.
+- **Mutating operations** (`write_file`, `execute`) — fire a mandatory `ClarificationRequestEvent` before acting. `write_file` shows a unified diff when the file already exists. `execute` blocks obviously dangerous patterns (e.g. `rm -rf /`, `sudo`) before the HITL fires.
+- **`hitl_enabled` is enforced `True`** in `framework.py` regardless of the config value — it cannot be disabled at runtime.
+- **`HITLRelayServer`** — a lightweight aiohttp server spawned per-session so that ant subprocesses can relay their HITL prompts to the parent framework event queue via the `CORTEX_HITL_URL` env var, instead of hanging without a queue.
+
+**File:** [`cortex/modules/workspace_bash.py`](../cortex/modules/workspace_bash.py)
+
 ### LLM & configuration
 
 #### LLM Client
@@ -338,8 +348,8 @@ Here's what actually happens when you call `framework.run_session()`, in the ord
     - Check the session deadline; extend it if the user grants an extension.
 12. **LLM call #2 — synthesise.** The Primary Agent assembles context (Tier 1 smart excerpts + Tier 2 concurrent per-file LLM summaries) from the stored result envelopes, injects the `_scratchpad` as a **Session Reasoning** block, and streams the final response. When tasks produced file outputs the synthesis is also written to `synthesis_{session_id}.md` and announced via a `ResultEvent` with `metadata.output_type="file"`.
 13. **Final validation.** The Validation Agent scores the response on intent / completeness / coherence and applies remediation if below threshold.
-14. **Evolution consent.** If ad-hoc tasks produced reusable scripts and validation passed, prompt the user (skipped in `rpc` mode). On consent, the Learning Engine stages new task types and the Agent Code Store persists the scripts.
-15. **Blueprint auto-update.** If the user consented and `blueprint.auto_update` is enabled, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
+14. **Autonomic learning gate.** The Learning Engine runs a two-stage gate: skip guards (chat turn, RPC without principal, `learning.enabled: false`) exit immediately; if both the `TaskComplexityScorer` score and composite validation score clear their thresholds, the session is eligible. Ad-hoc tasks are staged as `DeltaProposal` entries in `cortex_delta/pending.yaml` with a draft blueprint seeded; known tasks have their blueprints refined. When `auto_apply_delta: true` (default), proposals promote themselves into `cortex.yaml` once the distinct-principal confidence threshold is met. A single `LearningEvent` is emitted per session recording the gate decision.
+15. **Blueprint auto-update.** For any session that was eligible for learning, the Primary Agent generates blueprint patches in a batched LLM call and merges them into the Blueprint Store.
 16. **Session complete.** The Session Manager marks done and cleans up result envelopes (kept only if the session timed out, for resume).
 17. **Surface auth-required external MCPs.** Any server discovered mid-run that needs credentials is reported to the caller.
 18. **Emit `session_end`** and queue the SSE sentinel.
