@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-05-01
+
+### Added
+
+- **`WorkspaceBash`** (`cortex/modules/workspace_bash.py`) — workspace-scoped file read/write and command execution with hardcoded HITL gating. Read-only ops (`read_file`, `list_dir`) never prompt; mutating ops (`write_file`, `execute`) fire a mandatory `ClarificationRequestEvent` before acting. `write_file` shows a unified diff when the file already exists. `hitl_enabled` is enforced `true` at runtime.
+- **`HITLRelayServer`** — lightweight aiohttp server spawned per-session so ant subprocesses can relay HITL prompts to the parent framework event queue via `CORTEX_HITL_URL`.
+- **`cortex config-ui`** CLI command — launches the Cortex Config Studio browser UI at `localhost:7801` for inspecting and editing `cortex.yaml`, blueprints, staged deltas, and session metadata (`cortex/config_ui/`).
+- **`CortexHITLDeniedError`** — exported from the top-level `cortex` package; raised when a WorkspaceBash HITL prompt is denied or times out.
+- **`workspace_bash` config block** — `WorkspaceBashConfig` added to `CortexConfig` schema with `enabled` (default `true`) and `hitl_enabled` (enforced `true`).
+
+### Fixed
+
+- `cortex.config_ui` static files added to `pyproject.toml` package-data so the Config Studio assets are bundled in the wheel.
+- `.gitignore` updated to suppress generated local files (`Dockerfile.cortex`, `META_PROMPT_CONFIG_UI.md`, `docs/WORKSPACE_BASH_DESIGN.md`).
+- Stale lifecycle steps in `ARCHITECTURE.md` (steps 14–15) corrected — replaced old consent-prompt language with the autonomic learning gate description introduced in 1.3.0.
+- Docs fully updated across `ARCHITECTURE.md`, `CONFIGURATION.md`, `CLI.md`, `FEATURES.md`, and `GETTING_STARTED.md` to cover WorkspaceBash, Config Studio, `CORTEX_HITL_URL`, and the autonomic learning gate.
+
+---
+
 ## [1.3.0] - 2026-04-24
 
 ### Added
@@ -165,6 +184,7 @@ Initial public release of the Cortex Agent Framework.
 - PyPI metadata, classifiers, and project URLs.
 - GitHub Actions CI running pytest on Python 3.11 and 3.12 plus a ruff lint job.
 
+[1.3.1]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.3.1
 [1.3.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.3.0
 [1.2.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.2.0
 [1.1.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.1.0
