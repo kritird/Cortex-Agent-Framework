@@ -365,11 +365,17 @@ class CortexFramework:
                     "workspace_bash.hitl_enabled is False — overriding to True "
                     "(HITL cannot be disabled for workspace operations)"
                 )
+            # CORTEX_DEFAULT_WORKSPACE env var overrides cortex.yaml (useful for Docker)
+            env_workspace = _os.environ.get("CORTEX_DEFAULT_WORKSPACE", "").strip() or None
+            default_workspace = env_workspace or cfg.workspace_bash.default_workspace
+            if env_workspace:
+                logger.info("WorkspaceBash default_workspace overridden by CORTEX_DEFAULT_WORKSPACE=%s", env_workspace)
             self._workspace_bash = WorkspaceBash(
                 event_queue=None,   # set per-session at execution time
                 hitl_enabled=True,  # always enforced
+                default_workspace=default_workspace,
             )
-            logger.info("WorkspaceBash enabled")
+            logger.info("WorkspaceBash enabled (default_workspace=%s)", default_workspace or "none")
 
         # Register built-in capabilities so they surface in the system prompt
         self._tool_registry.register_builtin_capabilities([

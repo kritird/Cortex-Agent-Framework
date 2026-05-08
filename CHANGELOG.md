@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-05-08
+
+### Fixed
+
+#### Workspace path resolution — first-class `default_workspace` config
+
+Previously, `WorkspaceBash` had no concept of a default workspace. It relied on a regex (`extract_workspace_path`) that tried to fish an absolute path out of free-form task instruction text, and the Synapse UI worked around this by prepending `WORKSPACE: /path\n\n` to every outgoing message. This was fragile (paths in instruction text could be misidentified as the workspace) and broken for Docker deployments where host paths are invalid inside the container.
+
+**Changes:**
+
+- **`WorkspaceBashConfig`** — new `default_workspace: Optional[str]` field in `cortex.yaml` under `workspace_bash:`.
+- **`WorkspaceBash`** — accepts `default_workspace` at init; exposes `set_default_workspace(path)` for runtime updates.
+- **`framework.py`** — `CORTEX_DEFAULT_WORKSPACE` environment variable overrides `cortex.yaml` at startup (useful for Docker `docker run -e CORTEX_DEFAULT_WORKSPACE=/workspace`).
+- **`GenericMCPAgent._call_workspace_bash`** — workspace resolution is now: (1) `WORKSPACE:` field in structured instruction (per-task MCP override), then (2) `_default_workspace`. The `extract_workspace_path` regex is removed entirely.
+- **Synapse UI** — `GET /api/workspace` seeds the sidebar on page load from the server-configured default. `POST /api/workspace` persists the user's sidebar input back to `cortex.yaml` and updates the live instance. The `WORKSPACE:` message prepend is removed; workspace is now server-side state.
+
+**Precedence (highest → lowest):** `WORKSPACE:` in instruction → `CORTEX_DEFAULT_WORKSPACE` env var → `workspace_bash.default_workspace` in `cortex.yaml` (updated live via UI sidebar).
+
 ## [1.4.0] - 2026-05-07
 
 ### Added

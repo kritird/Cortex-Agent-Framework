@@ -106,6 +106,7 @@ code_sandbox:
 workspace_bash:
   enabled: true
   hitl_enabled: true
+  # default_workspace: ~/projects/myapp   # set via Synapse sidebar, CORTEX_DEFAULT_WORKSPACE env var, or here
 ant_colony:
   enabled: true
   llm_model: gemma4:e4b

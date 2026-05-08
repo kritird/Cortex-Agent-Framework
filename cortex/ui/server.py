@@ -645,6 +645,49 @@ async def handle_service_launch(request: web.Request) -> web.Response:
     )
 
 
+# ── Workspace ────────────────────────────────────────────────────────────────
+
+async def handle_workspace_get(request: web.Request) -> web.Response:
+    framework: CortexFramework = request.app["framework"]
+    user_id = _resolve_user(request)
+    if user_id is None:
+        return _unauthorised(framework)
+    wb = framework._workspace_bash
+    path = wb._default_workspace if wb is not None else None
+    return web.json_response({"path": path or ""})
+
+
+async def handle_workspace_set(request: web.Request) -> web.Response:
+    framework: CortexFramework = request.app["framework"]
+    user_id = _resolve_user(request)
+    if user_id is None:
+        return _unauthorised(framework)
+    wb = framework._workspace_bash
+    if wb is None:
+        return web.json_response(
+            {"error": "workspace_bash not enabled"}, status=400
+        )
+    try:
+        body = await request.json()
+        path = (body.get("path") or "").strip()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    wb.set_default_workspace(path)
+
+    # Persist to cortex.yaml so the setting survives restart
+    try:
+        import yaml
+        config_path = Path(framework._config_path)
+        raw = yaml.safe_load(config_path.read_text()) or {}
+        raw.setdefault("workspace_bash", {})["default_workspace"] = path or None
+        config_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
+    except Exception as exc:
+        logger.warning("Could not persist default_workspace to cortex.yaml: %s", exc)
+
+    return web.json_response({"path": wb._default_workspace or ""})
+
+
 # ── App wiring ────────────────────────────────────────────────────────────────
 
 def build_app(framework: CortexFramework) -> web.Application:
@@ -667,6 +710,8 @@ def build_app(framework: CortexFramework) -> web.Application:
     app.router.add_delete("/api/ants/{ant_id}", handle_ant_stop)
     app.router.add_post("/api/runtime/delta/action", handle_delta_action)
     app.router.add_post("/api/services/{service}/launch", handle_service_launch)
+    app.router.add_get("/api/workspace", handle_workspace_get)
+    app.router.add_post("/api/workspace", handle_workspace_set)
 
     return app
 

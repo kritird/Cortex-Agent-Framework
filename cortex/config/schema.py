@@ -496,6 +496,7 @@ class WorkspaceBashConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     enabled: bool = True
     hitl_enabled: bool = True  # cannot be False in production — enforced in framework init
+    default_workspace: Optional[str] = None  # fallback path used when no WORKSPACE field in instruction
 
 
 class AntColonyConfig(BaseModel):

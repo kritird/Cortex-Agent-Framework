@@ -288,42 +288,42 @@ class GenericMCPAgent:
 
             ACTION: <verb>
             PATH: <rel_path>
-            WORKSPACE: /abs/path/to/workspace
+            WORKSPACE: /abs/path/to/workspace   (optional — overrides default_workspace)
             [CONTENT: <file content for write operations>]
             [COMMAND: <shell command for execute operations>]
 
-        For backwards compatibility the instruction may also be a free-form
-        natural language string, in which case the entire text is treated as a
-        shell command with the workspace path extracted via
-        ``extract_workspace_path``.
+        If WORKSPACE is absent, falls back to WorkspaceBash._default_workspace (set via
+        the UI sidebar, CORTEX_DEFAULT_WORKSPACE env var, or workspace_bash.default_workspace
+        in cortex.yaml).
         """
-        from cortex.modules.workspace_bash import extract_workspace_path
-
         if self._workspace_bash is None:
             return "[workspace_bash not enabled — add workspace_bash.enabled: true to cortex.yaml]"
 
         # Update the workspace_bash event_queue for this session
         self._workspace_bash._event_queue = event_queue
 
-        # Try structured format first
+        # Parse structured fields
         action = _extract_field(instruction, "ACTION")
         rel_path = _extract_field(instruction, "PATH")
-        workspace = _extract_field(instruction, "WORKSPACE")
+        workspace = _extract_field(instruction, "WORKSPACE") or self._workspace_bash._default_workspace
         content = _extract_field(instruction, "CONTENT")
         command = _extract_field(instruction, "COMMAND")
 
-        # Fall back to free-form: treat whole instruction as a command
+        # Free-form fallback: treat whole instruction as a shell command
         if not action:
-            workspace = workspace or extract_workspace_path(instruction)
             if not workspace:
-                return "[workspace_bash: no workspace path found in instruction]"
+                return (
+                    "[workspace_bash: no workspace set — configure it in the Synapse sidebar, "
+                    "set CORTEX_DEFAULT_WORKSPACE, or add workspace_bash.default_workspace to cortex.yaml]"
+                )
             command = command or instruction
             action = "execute"
 
         if not workspace:
-            workspace = extract_workspace_path(instruction)
-        if not workspace:
-            return "[workspace_bash: no workspace path found in instruction]"
+            return (
+                "[workspace_bash: no workspace set — configure it in the Synapse sidebar, "
+                "set CORTEX_DEFAULT_WORKSPACE, or add workspace_bash.default_workspace to cortex.yaml]"
+            )
 
         verb = (action or "").strip().lower()
         try:

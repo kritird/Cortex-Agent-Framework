@@ -292,7 +292,7 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
     </div>
     <template x-if="workspaceExpanded">
       <div>
-        <input class="workspace-input" type="text" placeholder="/path/to/your/project" x-model="workspacePath" @input="localStorage.setItem('cortex_workspace',workspacePath)" @keydown.enter="workspaceExpanded=false">
+        <input class="workspace-input" type="text" placeholder="/path/to/your/project" x-model="workspacePath" @input="saveWorkspace()" @keydown.enter="workspaceExpanded=false">
         <div class="workspace-active" x-show="workspacePath" x-text="'📂 '+workspacePath.split('/').filter(Boolean).pop()"></div>
       </div>
     </template>
@@ -998,9 +998,23 @@ navTabs:[
         if(cfg.file_input.allowed_mime_types?.length) this.allowedMime=cfg.file_input.allowed_mime_types;
       }
     }catch(e){}
+    // Seed workspace from server (cortex.yaml / env var); fall back to localStorage
+    try{
+      const ws=await fetch('/api/workspace').then(r=>r.json());
+      if(ws.path) this.workspacePath=ws.path;
+    }catch(e){}
     await this.loadThreads();
     document.addEventListener('dragover',e=>e.preventDefault());
     document.addEventListener('drop',e=>{e.preventDefault();this.pageDropActive=false;});
+  },
+
+  _workspaceSaveTimer:null,
+  saveWorkspace(){
+    localStorage.setItem('cortex_workspace',this.workspacePath);
+    clearTimeout(this._workspaceSaveTimer);
+    this._workspaceSaveTimer=setTimeout(()=>{
+      fetch('/api/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:this.workspacePath})}).catch(()=>{});
+    },600);
   },
 
   openPanel(p){
@@ -1078,8 +1092,7 @@ navTabs:[
     this.$nextTick(()=>this.scrollToBottom());
 
     const fd=new FormData();
-    const wsText=this.workspacePath?'WORKSPACE: '+this.workspacePath+'\n\n'+text:text;
-    if(wsText)fd.append('text',wsText);
+    if(text)fd.append('text',text);
     files.forEach(f=>fd.append('files',f,f.name));
 
     let uiId;

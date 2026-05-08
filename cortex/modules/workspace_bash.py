@@ -16,21 +16,6 @@ logger = logging.getLogger(__name__)
 _BLOCKED_PATTERNS = frozenset(["rm -rf /", "sudo", "> /dev/", ":(){ :|:& };:"])
 
 
-def extract_workspace_path(instruction: str) -> Optional[str]:
-    """Return the first absolute or ~-rooted directory path found in *instruction*.
-
-    Used by GenericMCPAgent._call_workspace_bash to extract the workspace root
-    from the task instruction without embedding regex logic in the agent.
-    """
-    pattern = re.compile(r'(?:^|\s)((?:~|/)[^\s,;\'\"]+)', re.MULTILINE)
-    for match in pattern.finditer(instruction):
-        candidate = match.group(1).strip().rstrip(".,;")
-        expanded = os.path.expanduser(candidate)
-        if os.path.isdir(expanded):
-            return expanded
-    return None
-
-
 class WorkspaceBash:
     """Workspace-aware file read/write and command execution.
 
@@ -38,14 +23,27 @@ class WorkspaceBash:
     disabled regardless of the task config. Read-only operations
     (read_file, list_dir) never prompt.
 
-    The workspace_path is NOT stored at init; it is supplied per-call so
-    the same instance can serve any workspace directory.
+    default_workspace is used as a fallback when no WORKSPACE field is
+    present in a task instruction. It can be updated at runtime via
+    set_default_workspace() (called by the UI /api/workspace endpoint).
     """
 
-    def __init__(self, event_queue: Optional[asyncio.Queue], hitl_enabled: bool = True):
+    def __init__(
+        self,
+        event_queue: Optional[asyncio.Queue],
+        hitl_enabled: bool = True,
+        default_workspace: Optional[str] = None,
+    ):
         self._event_queue = event_queue
         # hitl_enabled is informational — framework init enforces it cannot be False.
         self._hitl_enabled = hitl_enabled
+        self._default_workspace: Optional[str] = (
+            os.path.expanduser(default_workspace) if default_workspace else None
+        )
+
+    def set_default_workspace(self, path: str) -> None:
+        """Update the default workspace at runtime (e.g. from the UI sidebar)."""
+        self._default_workspace = os.path.expanduser(path) if path else None
 
     async def _emit_workspace_event(
         self,
