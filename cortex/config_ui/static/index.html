@@ -886,6 +886,9 @@ const SCHEMAS = {
       { title: 'Clarification', fields: [
         { key:'agent.clarification.enabled', type:'toggle', label:'Allow Clarification', hint:'Allow the agent to pause and ask the user one clarifying question before decomposing a task. Only active in interactive mode.' },
       ]},
+      { title: 'Web Search', fields: [
+        { key:'agent.builtin_web_search_enabled', type:'toggle', label:'Built-in Web Search (DuckDuckGo)', hint:'When no external web_search tool server is configured or reachable, fall back to built-in DuckDuckGo search. Disable to prevent the agent from making any automatic web requests.' },
+      ]},
     ]
   },
 

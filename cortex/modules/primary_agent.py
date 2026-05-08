@@ -102,11 +102,27 @@ def build_system_prompt(
         lines.append("")
     # Always surface available capabilities so the decomposition LLM can set
     # the <capability> field even when task_types or scout tools are defined.
+    _CAPABILITY_DESCRIPTIONS = {
+        "web_search":           "Search the internet, look up live data (weather, news, prices, etc.)",
+        "llm_synthesis":        "Reason, write, summarise, generate text/code/documents — no live data",
+        "workspace_bash":       "Read, write, or execute files in the user's workspace directory",
+        "bash":                 "Run shell commands in a sandboxed environment",
+        "code_exec":            "Generate and run Python code in a sandbox",
+        "document_generation":  "Create structured documents (PDF, DOCX, reports)",
+        "image_generation":     "Generate or manipulate images",
+    }
     if capabilities:
+        lines += ["## Available Capabilities"]
+        lines.append("Choose the capability that best matches each task's needs:")
+        for cap in sorted(capabilities):
+            desc = _CAPABILITY_DESCRIPTIONS.get(cap, "")
+            lines.append(f"  - {cap}" + (f": {desc}" if desc else ""))
         lines += [
-            "## Available Capabilities",
-            "Use these capability names in the <capability> field of each task block:",
-            f"{', '.join(sorted(capabilities))}",
+            "",
+            "IMPORTANT: Use 'web_search' for ANY task needing live/current information "
+            "(weather, news, prices, recent events). Use 'workspace_bash' for creating "
+            "or editing files. Use 'llm_synthesis' only for pure reasoning/writing with "
+            "no live data or file I/O needed.",
             "",
         ]
 
@@ -124,19 +140,46 @@ def build_system_prompt(
             lines.append("")
 
     # ── Decomposition format ────────────────────────────────────────────────
-    lines += [
-        "## Decomposition Output Format",
-        "Decompose the user request into tasks. For each task, output a block:",
-        "```",
-        "<task>",
-        "  <name>task_type_name</name>",
-        "  <capability>capability_name</capability>",
-        "  <instruction>specific instruction for this task</instruction>",
-        "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
-        "</task>",
-        "```",
-        "Set <capability> to the best matching capability from the Available Capabilities list.",
-    ]
+    amr = config.adaptive_model_routing
+    if amr.enabled:
+        lines += [
+            "## Decomposition Output Format",
+            "Decompose the user request into tasks. For each task, output a block:",
+            "```",
+            "<task>",
+            "  <name>task_type_name</name>",
+            "  <capability>capability_name</capability>",
+            "  <model_tier>low|medium|high</model_tier>",
+            "  <instruction>specific instruction for this task</instruction>",
+            "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
+            "</task>",
+            "```",
+            "Set <capability> to the best matching capability from the Available Capabilities list.",
+            "",
+            "## Model Tier Assessment",
+            "For <model_tier>, assess each task's inherent complexity independently and objectively:",
+            "  low    — direct retrieval, format conversion, short text generation, single-fact lookup,",
+            "           simple translation, data extraction from a clearly structured source.",
+            "  medium — multi-step reasoning, moderate code generation (< ~100 lines), single-document",
+            "           analysis, structured writing with a defined template, data aggregation.",
+            "  high   — complex architecture design, multi-file code generation, deep research synthesis,",
+            "           long-form content (> 1000 words), advanced algorithms, cross-domain reasoning.",
+            "Assess based solely on the task's own requirements — not on the capabilities of any model.",
+        ]
+    else:
+        lines += [
+            "## Decomposition Output Format",
+            "Decompose the user request into tasks. For each task, output a block:",
+            "```",
+            "<task>",
+            "  <name>task_type_name</name>",
+            "  <capability>capability_name</capability>",
+            "  <instruction>specific instruction for this task</instruction>",
+            "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
+            "</task>",
+            "```",
+            "Set <capability> to the best matching capability from the Available Capabilities list.",
+        ]
     guidance_parts = []
     if has_scripts:
         guidance_parts.append("prefer pre-built script names when they match")
@@ -174,16 +217,19 @@ def _parse_task_blocks(text: str) -> List[DecomposedTask]:
         r'<task>\s*'
         r'<name>(.*?)</name>\s*'
         r'(?:<capability>(.*?)</capability>\s*)?'
+        r'(?:<model_tier>(.*?)</model_tier>\s*)?'
         r'<instruction>(.*?)</instruction>\s*'
         r'(?:<depends_on>(.*?)</depends_on>\s*)?'
         r'</task>',
         re.DOTALL | re.IGNORECASE,
     )
+    _valid_tiers = {"low", "medium", "high"}
     for match in pattern.finditer(text):
         name = match.group(1).strip()
         capability_raw = (match.group(2) or "").strip()
-        instruction = match.group(3).strip()
-        depends_on_raw = (match.group(4) or "").strip()
+        tier_raw = (match.group(3) or "").strip().lower()
+        instruction = match.group(4).strip()
+        depends_on_raw = (match.group(5) or "").strip()
         depends_on = [d.strip() for d in depends_on_raw.split(",") if d.strip()] if depends_on_raw else []
         if name:
             tasks.append(DecomposedTask(
@@ -191,6 +237,7 @@ def _parse_task_blocks(text: str) -> List[DecomposedTask]:
                 instruction=instruction,
                 depends_on=depends_on,
                 capability_hint=capability_raw or None,
+                complexity_tier=tier_raw if tier_raw in _valid_tiers else None,
             ))
     return tasks
 
@@ -199,6 +246,46 @@ def _parse_clarification(text: str) -> Optional[str]:
     """Extract clarification question from stream."""
     match = re.search(r'<clarification>(.*?)</clarification>', text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else None
+
+
+def _amr_resolve_provider(config: "CortexConfig", task: "DecomposedTask") -> Optional[str]:
+    """Return the AMR-assigned provider key for a task, or None if AMR is off.
+
+    Only applies when adaptive_model_routing.enabled is True and the task has
+    no explicit provider override (i.e. it is ad-hoc or its static config uses
+    "default"). The tier emitted by the decomposer drives the lookup; unknown
+    or missing tiers fall back to "medium".
+    """
+    amr = config.adaptive_model_routing
+    if not amr.enabled:
+        return None
+    tier = task.complexity_tier or "medium"
+    tiers = amr.tiers
+    mapping = {"low": tiers.low, "medium": tiers.medium, "high": tiers.high}
+    return mapping.get(tier, tiers.medium) or "default"
+
+
+def _amr_validation_provider(config: "CortexConfig") -> str:
+    """Return the provider key to use for wave-level task validation.
+
+    Priority:
+      1. adaptive_model_routing.validation_provider (explicit non-empty value)
+      2. Auto-select: first key in llm_access.providers that is not "default"
+      3. Fallback: "default"
+
+    When AMR is disabled, falls back to validation.wave_gate_llm_provider
+    (legacy field) or "default".
+    """
+    amr = config.adaptive_model_routing
+    if not amr.enabled:
+        return config.validation.wave_gate_llm_provider or "default"
+    if amr.validation_provider:
+        return amr.validation_provider
+    # Auto-select first non-default named provider
+    for key in config.llm_access.providers:
+        if key != "default":
+            return key
+    return "default"
 
 
 class PrimaryAgent:
@@ -427,6 +514,7 @@ class PrimaryAgent:
                             for task in tasks:
                                 if task.task_name not in dispatched_tasks:
                                     dispatched_tasks.add(task.task_name)
+                                    task.llm_provider = _amr_resolve_provider(self._config, task)
                                     yield task
                         return
                     except asyncio.TimeoutError:
@@ -437,6 +525,7 @@ class PrimaryAgent:
             for task in tasks:
                 if task.task_name not in dispatched_tasks:
                     dispatched_tasks.add(task.task_name)
+                    task.llm_provider = _amr_resolve_provider(self._config, task)
                     await event_queue.put(StatusEvent(
                         message=f"Planning task: {task.task_name}",
                         session_id=session_id,
@@ -509,7 +598,7 @@ class PrimaryAgent:
 
         for envelope in result_envelopes:
             status_icon = "✓" if envelope.status == "complete" else "✗"
-            task_label = envelope.task_id.split("_", 1)[-1] if "_" in envelope.task_id else envelope.task_id
+            task_label = envelope.task_id.split("/", 1)[-1] if "/" in envelope.task_id else envelope.task_id
 
             if envelope.status == "complete":
                 summaries.append(
@@ -604,7 +693,7 @@ class PrimaryAgent:
             tier2_targets = file_envelopes[:_ITERATIVE_MAX_FILES]
             tier2_results = await asyncio.gather(*[
                 self._summarise_file_for_synthesis(
-                    task_label=e.task_id.split("_", 1)[-1] if "_" in e.task_id else e.task_id,
+                    task_label=e.task_id.split("/", 1)[-1] if "/" in e.task_id else e.task_id,
                     file_path=e.output_value,
                     instruction=e.content_summary or "",
                 )
@@ -612,7 +701,7 @@ class PrimaryAgent:
             ])
             for envelope, summary in zip(tier2_targets, tier2_results):
                 if summary:
-                    label = envelope.task_id.split("_", 1)[-1] if "_" in envelope.task_id else envelope.task_id
+                    label = envelope.task_id.split("/", 1)[-1] if "/" in envelope.task_id else envelope.task_id
                     all_excerpts[label] = summary  # replaces Tier 1 excerpt for this file
 
         has_envelopes = bool(result_envelopes)
@@ -644,7 +733,9 @@ class PrimaryAgent:
             synthesis_system = (
                 f"You are {self._config.agent.name}. "
                 f"Synthesise the task results into a complete, coherent response for the user. "
-                f"Use the task summaries provided — do not invent information not present in the summaries."
+                f"Use the task summaries provided — do not invent information not present in the summaries. "
+                f"Do NOT cite internal task IDs, task names, or task summary references in your response. "
+                f"If you reference a source, use the actual URL, document title, or resource name — never internal labels like task IDs."
             )
         else:
             synthesis_system = (
@@ -906,7 +997,7 @@ class PrimaryAgent:
         """
         provider = "default"
         try:
-            provider = self._config.validation.wave_gate_llm_provider or "default"
+            provider = _amr_validation_provider(self._config)
         except Exception:
             pass
 
@@ -998,7 +1089,7 @@ class PrimaryAgent:
         # Summarise completed work (cap to last 10 envelopes to keep prompt small)
         completed_lines = []
         for env in completed_envelopes[-10:]:
-            label = env.task_id.split("_", 1)[-1] if "_" in env.task_id else env.task_id
+            label = env.task_id.split("/", 1)[-1] if "/" in env.task_id else env.task_id
             icon = "✓" if env.status == "complete" else "✗"
             snippet = (env.content_summary or "")[:300].replace("\n", " ")
             completed_lines.append(f"- {label} [{icon}]: {snippet}")

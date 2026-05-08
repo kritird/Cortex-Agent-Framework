@@ -18,7 +18,9 @@ history:         # (optional) Session history settings
 validation:      # (optional) Quality validation settings
 learning:        # (optional) Delta learning settings
 ant_colony:      # (optional) Self-spawning specialist agent mesh
+tool_forge:      # (optional) Runtime MCP server generation from LLM-generated code
 workspace_bash:  # (optional) Workspace-aware file/command execution with HITL
+code_sandbox:    # (optional) Sandboxed Python code execution
 ui:              # (optional) Built-in chat UI served by `cortex publish ui`
 ```
 
@@ -32,6 +34,9 @@ agent:
   description: A helpful AI assistant   # Required.
   system_prompt_extra: |                # Optional. Appended to system prompt.
     Always respond in British English.
+  synthesis_guidance: |                 # Optional. Extra instruction injected into the
+    Always cite sources with [n] markers.  # synthesis LLM call — useful for citation
+                                           # style, tone, or output structure guidance.
   interaction_mode: interactive         # "interactive" | "rpc" — see below.
   time:
     default_max_wait_seconds: 120       # Session-level timeout
@@ -46,6 +51,10 @@ agent:
     heuristic_confidence_threshold: 0.7
     llm_provider: default
     timeout_seconds: 5.0
+  capability_scout:                     # Controls tool server discovery at session start
+    timeout_seconds: 10
+    external_discovery:
+      search_timeout_s: 10
 ```
 
 ### `interaction_mode`
@@ -169,12 +178,14 @@ Tells the router which kind of tool server this task needs:
 | Hint | Purpose |
 |---|---|
 | `auto` | Let the agent pick |
-| `llm_synthesis` | No external tools — pure LLM reasoning |
-| `web_search` | Needs a web search tool server |
-| `bash` | Needs a shell execution sandbox |
-| `code_exec` | Needs a code interpreter |
-| `document_generation` | Needs a document writer tool |
-| `image_generation` | Needs an image generator tool |
+| `llm_synthesis` | No external tools — pure LLM reasoning, writing, summarisation |
+| `web_search` | Search the web for live/current information. Tries configured tool servers first; falls back to built-in DuckDuckGo (no API key needed) |
+| `workspace_bash` | Read, write, or execute files in the user's workspace directory (requires HITL approval for mutating ops) |
+| `bash` | Run shell commands in a sandboxed environment |
+| `code_exec` | Generate and run Python code in a sandbox |
+| `document_generation` | Create structured documents (PDF, DOCX, reports) |
+| `image_generation` | Generate or manipulate images |
+| `forge_mcp` | Generate a new MCP server from code and register it with Ant Colony at the wave boundary (requires `tool_forge.enabled`, `code_sandbox.enabled`, and `ant_colony.enabled`) |
 
 ---
 
@@ -193,7 +204,18 @@ tool_servers:
     capabilities:
       - web_search
 
-  # stdio transport — spawns a subprocess
+  # stdio transport — spawns a subprocess; tools discovered via JSON-RPC tools/list
+  brave_search:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    startup_timeout_seconds: 100
+    connection:
+      timeout_seconds: 100
+      read_timeout_seconds: 600
+    env:
+      BRAVE_API_KEY: ${BRAVE_API_KEY}   # env vars merged with system env at spawn time
+
   filesystem:
     transport: stdio
     command: npx
@@ -334,6 +356,88 @@ cortex ants stop my-ant                           # Stop a specific ant
 cortex ants stop-all                              # Stop all running ants
 cortex ants status my-ant                         # Detailed status for one ant
 ```
+
+---
+
+## `tool_forge`
+
+Enables runtime MCP server generation. When active and both `code_sandbox` and `ant_colony` are enabled, the decomposer gains access to the `forge_mcp` capability — it can assign tasks that generate FastMCP server scripts, write them to disk, and register them with Ant Colony at wave boundaries. Dependent tasks in the same session can use the new server immediately.
+
+```yaml
+tool_forge:
+  enabled: false                        # Master switch. Requires code_sandbox.enabled
+                                        # AND ant_colony.enabled to be effective.
+  persist_by_default: false             # When true, forged servers survive framework
+                                        # restart (auto_restart=true in ants.yaml).
+                                        # When false, the entry is written but not
+                                        # re-hatched on next startup (session-scoped).
+  spawn_timeout_seconds: 30             # Seconds to wait for the generated server
+                                        # subprocess to pass /health check.
+  codegen_llm_provider: default         # Provider alias for MCP server code generation.
+                                        # May warrant a stronger model than the default.
+```
+
+### How ToolForge works
+
+1. A `forge_mcp` task is decomposed by the Primary Agent and dispatched to Generic MCP Agent.
+2. The agent sends a FastMCP-specific code generation prompt to the configured LLM, then validates and executes the output in the code sandbox.
+3. The generated script is written to `{storage_base}/ants/{task_name}/server.py`.
+4. At the **wave boundary** (after all tasks in the wave complete), the framework calls `AntColony.hatch_from_script()` with the script path.
+5. The new server is spawned, health-checked (HTTP 200 on `/health`), and registered in the Tool Server Registry.
+6. Tasks in subsequent waves can use the new capability like any other tool server.
+
+Forged servers are tracked in `ants.yaml` with `source: forged`. They are supervised and auto-restarted by Ant Colony like any hand-hatched ant.
+
+### Guards
+
+All three of the following must be true for `forge_mcp` to appear in the decomposition prompt:
+
+- `tool_forge.enabled: true`
+- `code_sandbox.enabled: true`
+- `ant_colony.enabled: true`
+
+If only `tool_forge` is enabled but the other two are not, the framework logs a warning and the capability is not registered.
+
+---
+
+## `adaptive_model_routing`
+
+**Adaptive Model Routing (AMR)** — decomposer-driven per-task LLM selection. When enabled, the decomposition LLM emits a `<model_tier>` tag (low / medium / high) for each task it creates. AMR maps that tier to the named provider configured in `tiers`. Explicit `llm_provider` on a `task_type` entry always wins over AMR.
+
+```yaml
+adaptive_model_routing:
+  enabled: true
+
+  tiers:
+    low: fast        # simple retrieval, formatting, short text generation
+    medium: default  # multi-step reasoning, moderate code, single-doc analysis
+    high: powerful   # complex architecture, deep synthesis, multi-file codegen
+
+  validation_provider: ""  # "" = auto-select first non-default provider
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Master switch for AMR |
+| `tiers.low` | `"default"` | Provider key for low-complexity tasks |
+| `tiers.medium` | `"default"` | Provider key for medium-complexity tasks |
+| `tiers.high` | `"default"` | Provider key for high-complexity tasks |
+| `validation_provider` | `""` | Provider for wave-level task validation. Empty string → auto-select first non-default provider from `llm_access.providers`; falls back to `"default"` when none are configured |
+
+**Complexity criteria emitted by the decomposition LLM:**
+- `low` — direct retrieval, format conversion, short text generation, single-fact lookup, simple translation
+- `medium` — multi-step reasoning, moderate code generation (< ~100 lines), single-document analysis, structured writing
+- `high` — complex architecture design, multi-file code generation, deep research synthesis, long-form content, advanced algorithms
+
+The assessment is objective — the LLM grades based solely on task characteristics. The tier→provider mapping lives entirely in your config; no training-time bias can influence routing.
+
+**Precedence:**
+1. `task_types[n].llm_provider` (explicit in cortex.yaml) — always wins
+2. AMR tier-resolved provider — applies when the task's static config uses `"default"`
+3. `"default"` — fallback when AMR is disabled or the tier is unrecognised
+
+**Ant Colony interaction:**
+Ant agents themselves always decompose using their configured `llm_provider` (default). Sub-tasks spawned inside an ant's decomposition inherit the parent's full AMR config and provider pool, so they are also adaptively routed.
 
 ---
 

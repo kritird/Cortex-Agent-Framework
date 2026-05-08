@@ -107,6 +107,7 @@ class AgentConfig(BaseModel):
     clarification: AgentClarificationConfig = Field(default_factory=AgentClarificationConfig)
     capability_scout: CapabilityScoutConfig = Field(default_factory=CapabilityScoutConfig)
     intent_gate: IntentGateConfig = Field(default_factory=IntentGateConfig)
+    builtin_web_search_enabled: bool = True
 
 
 class TaskRetryConfig(BaseModel):
@@ -250,6 +251,41 @@ class LLMAccessConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     default: LLMProviderConfig
     providers: Dict[str, LLMProviderConfig] = Field(default_factory=dict)
+
+
+class ComplexityTierMap(BaseModel):
+    """Maps task complexity tiers to named LLM provider keys from llm_access.providers."""
+    model_config = ConfigDict(extra='allow')
+    low: str = "default"     # simple retrieval, formatting, translation, short text
+    medium: str = "default"  # multi-step reasoning, moderate code, single-doc analysis
+    high: str = "default"    # complex architecture, multi-file codegen, deep synthesis
+
+
+class AdaptiveModelRoutingConfig(BaseModel):
+    """Adaptive Model Routing (AMR) — decomposer-driven per-task LLM selection.
+
+    When enabled, the decomposition LLM emits a <model_tier> (low/medium/high) for
+    each task it creates. AMR maps that tier to the provider key configured in tiers.
+    An explicit llm_provider on a task_type in cortex.yaml always wins over AMR.
+
+    The complexity assessment is objective — the LLM grades based on task nature, not
+    provider preference. The tier→provider mapping lives entirely in config so no
+    training-time bias can creep into the routing decision.
+
+    validation_provider:
+      ""  (empty) — auto-select: picks the first non-default key in llm_access.providers;
+                    falls back to "default" when no named providers are configured.
+      "<key>"     — use exactly that provider key for wave-level task validation.
+
+    Ant sub-tasks inherit this config and its provider pool, so tasks spawned inside
+    an ant's decomposition are also adaptively routed. The ant primary agent itself
+    always decomposes on its own configured llm_provider (default).
+    """
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = False
+    tiers: ComplexityTierMap = Field(default_factory=ComplexityTierMap)
+    # "" = auto-select first non-default provider from llm_access.providers
+    validation_provider: str = ""
 
 
 class StorageConfig(BaseModel):
@@ -477,6 +513,39 @@ class AntColonyConfig(BaseModel):
     api_key_env_var: str = "ANTHROPIC_API_KEY"
 
 
+class ToolForgeConfig(BaseModel):
+    """Configuration for the ToolForge capability.
+
+    ToolForge registers ``forge_mcp`` as a builtin capability when this section
+    is enabled alongside ``code_sandbox`` and ``ant_colony``. The decomposition
+    LLM can then create forge tasks that generate, spawn, and register new MCP
+    servers at wave boundaries — available to dependent tasks in the same session.
+
+    Forged servers persist to ``ants.yaml`` (``source='forged'``) and are
+    supervised and restarted by AntColony exactly like developer-hatched ants.
+
+    The ``forge_mcp`` capability only appears in the decomposition prompt when
+    all three guards are true:
+      - ``tool_forge.enabled``
+      - ``code_sandbox.enabled``
+      - ``ant_colony.enabled``
+    """
+    model_config = ConfigDict(extra='allow')
+    enabled: bool = False
+    # When True, forged servers survive framework restart (auto_restart=True in
+    # ants.yaml). When False, the entry is written with auto_restart=False —
+    # the server is not re-hatched on next startup, acting as session-scoped.
+    persist_by_default: bool = False
+    # Seconds to wait for the generated server process to pass health-check.
+    # Separate from code_sandbox.timeout_seconds (codegen+exec) because spawn
+    # failures have different causes and acceptable wait times.
+    spawn_timeout_seconds: int = 30
+    # LLM provider key used for MCP server code generation. Generating valid
+    # FastMCP/stdio server code may warrant a more capable model than a typical
+    # code_exec task. Defaults to "default" (the primary agent's provider).
+    codegen_llm_provider: str = "default"
+
+
 class CortexConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
     agent: AgentConfig
@@ -498,3 +567,5 @@ class CortexConfig(BaseModel):
     blueprint: BlueprintConfig = Field(default_factory=BlueprintConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     ant_colony: AntColonyConfig = Field(default_factory=AntColonyConfig)
+    tool_forge: ToolForgeConfig = Field(default_factory=ToolForgeConfig)
+    adaptive_model_routing: AdaptiveModelRoutingConfig = Field(default_factory=AdaptiveModelRoutingConfig)

@@ -18,17 +18,26 @@ Cortex ships four deployment targets out of the box: **Docker**, **Python packag
 ```bash
 cortex publish docker --tag my-agent:latest
 docker build -f Dockerfile.cortex -t my-agent:latest .
-docker run -p 8080:8080 --env-file .env my-agent:latest
+docker run --rm -p 8090:8090 -e ANTHROPIC_API_KEY=your_key my-agent:latest
+```
+
+Pass `--with-ui` to generate a Dockerfile that runs the built-in Cortex Synapse chat UI on port 8090:
+
+```bash
+cortex publish docker --with-ui --tag my-agent:latest
+docker build -f Dockerfile.cortex -t my-agent:latest .
+docker run --rm -p 8090:8090 -e ANTHROPIC_API_KEY=your_key my-agent:latest
+# open http://localhost:8090
 ```
 
 ### Production checklist
 
 - **Storage backend**: use **Redis** (not SQLite) for multi-replica deployments.
-- **Secrets**: pass API keys via `--env-file` or a secret manager, not baked into the image.
+- **Secrets**: pass API keys via `-e KEY=val` or a secret manager — never bake them into the image.
 - **Concurrency limits**: set `max_concurrent_sessions` in `cortex.yaml` to match your instance size.
 - **Logging**: set `CORTEX_LOG_LEVEL=INFO` (or `DEBUG` for investigation) and forward container stdout to your log aggregator.
 - **OpenTelemetry**: Cortex ships an OTLP exporter — point it at your collector with standard OTEL env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, etc.).
-- **Health check**: hit `/health` (if you expose one in your wrapper) to fail fast on broken configs.
+- **Health check**: the UI server exposes `/health` — use it in your container orchestrator's readiness probe.
 
 ### Example: FastAPI + Docker + Redis
 
@@ -43,7 +52,7 @@ agent:
 llm_access:
   default:
     provider: anthropic
-    model: claude-sonnet-4-5
+    model: claude-sonnet-4-6
     api_key_env_var: ANTHROPIC_API_KEY
 
 redis:
@@ -58,7 +67,6 @@ redis:
 
 ```bash
 cortex publish package --output-dir dist
-# Distribute the wheel
 pip install dist/cortex_agent_framework-*.whl
 ```
 
@@ -67,7 +75,7 @@ Use this when:
 - You want to ship a pre-configured agent to internal users.
 - You don't want to run a separate service.
 
-Once installed, you just import and call it:
+Once installed, import and call it directly:
 
 ```python
 from cortex.framework import CortexFramework
@@ -77,6 +85,14 @@ await framework.initialize()
 result = await framework.run_session(user_id="u1", request="Hello")
 ```
 
+Then start it with:
+
+```bash
+export ANTHROPIC_API_KEY=your_key
+cortex publish ui --config cortex.yaml
+# open http://localhost:8090
+```
+
 No new deployment target to operate. Cortex is just a dependency.
 
 ---
@@ -84,18 +100,30 @@ No new deployment target to operate. Cortex is just a dependency.
 ## Option C: MCP server
 
 ```bash
-cortex publish mcp --port 8080
+cortex publish mcp --config cortex.yaml --port 8080
+# MCP server running at http://localhost:8080/mcp
 ```
 
-Runs the agent as an MCP server. Any MCP client — another Cortex agent, Claude Desktop, an IDE, or a custom tool — can consume it:
+Runs the agent as a live aiohttp HTTP server. Any MCP client — another Cortex agent, Claude Desktop, an IDE, or a custom tool — can call it:
 
 ```yaml
 # consumer's cortex.yaml
 tool_servers:
   my_specialist_agent:
     transport: sse
-    url: http://host:8080/sse
+    url: http://host:8080/mcp
 ```
+
+Or call it directly via REST (convenience alias `/run`):
+
+```bash
+curl -X POST http://localhost:8080/run \
+  -H 'Content-Type: application/json' \
+  -d '{"input": "Summarise the latest AI news"}'
+# → {"output": "..."}
+```
+
+**Interaction mode:** `cortex publish mcp` automatically sets `CORTEX_INTERACTION_MODE=rpc` so the agent never blocks on interactive clarifications — MCP clients cannot answer them.
 
 Use this when:
 - You're building a **multi-agent system**.
@@ -104,23 +132,30 @@ Use this when:
 
 ---
 
-## Option D: Chat UI
+## Option D: Chat UI (Cortex Synapse)
 
 ```bash
 cortex publish ui --config cortex.yaml
-# → Cortex chat UI: http://0.0.0.0:8090
+# Cortex chat UI: http://localhost:8090
 ```
 
-Serves a clean, single-page web frontend backed by your agent. Users get:
+Serves **Cortex Synapse** — a fully-featured single-page web frontend backed by your agent. Open `http://localhost:8090` in your browser.
 
-- **Text + file uploads** — files are validated against `file_input` MIME / size limits.
-- **SSE-streamed responses** — status pills ("decomposing → running 3 tasks → synthesising") update live.
-- **Persistent session history** — threads listed in a sidebar, backed by your existing History Store.
+### What users get
+
+- **Text + file uploads** — files validated against `file_input` MIME / size limits; mid-session uploads also supported.
+- **Live streaming** — SSE-pushed status chips ("decomposing → running 3 tasks → synthesising") update in real time.
+- **Task blueprint view** — after decomposition, the full task DAG (waves, dependencies) is shown before execution begins.
+- **Intent classification indicator** — shows whether the turn was routed as chat or task, with confidence.
+- **Token usage display** — cumulative input/output/cache token counts per session.
+- **Workspace events** — file reads, writes, and executions in WorkspaceBash are streamed as live events.
+- **Persistent session history** — threads listed in a sidebar; full-text search across all sessions.
+- **Artifact download** — download all output files for a session as a single ZIP.
+- **HITL inline answers** — clarification questions from the agent appear inline; answer without leaving the chat.
 - **Per-user identity** — anonymous cookie (`auth.mode: none`), shared token, or HTTP Basic.
+- **Service launcher** — open Config Studio or Setup Wizard from inside the chat UI without a separate terminal.
 
 ### Configuration
-
-All settings live under the `ui` block in `cortex.yaml`:
 
 ```yaml
 ui:
@@ -135,14 +170,35 @@ ui:
     # password: changeme          # for mode: basic
 ```
 
-These can also be configured through the **Chat UI** section in the setup wizard (`cortex setup`).
+Configure through the **Chat UI** section in the setup wizard (`cortex setup`) or by hand.
+
+### REST API
+
+The UI server also exposes a REST API for headless / programmatic access:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/session` | POST | Start a new session |
+| `/api/session/{id}/events` | GET | SSE stream of events |
+| `/api/session/{id}/clarify` | POST | Answer a HITL clarification |
+| `/api/session/{id}/upload` | POST | Upload additional files mid-session |
+| `/api/history` | GET | List session history |
+| `/api/history/search?q=...` | GET | Full-text search over sessions |
+| `/api/history/{sid}` | GET | Session detail |
+| `/api/history/{sid}/files/{task}/{name}` | GET | Download a task output file |
+| `/api/history/{sid}/artifacts/zip` | GET | Download all outputs as ZIP |
+| `/api/history/{sid}` | DELETE | Delete a session |
+| `/api/ants/{ant_id}` | DELETE | Cancel a running ant task |
+| `/api/runtime/delta/action` | POST | Promote or discard a learning delta |
+| `/api/services/{service}/launch` | POST | Ensure config-ui or wizard is running |
 
 ### Docker with Chat UI
 
 ```bash
 cortex publish docker --with-ui --tag my-agent:latest
 docker build -f Dockerfile.cortex -t my-agent:latest .
-docker run -p 8090:8090 --env-file .env my-agent:latest
+docker run --rm -p 8090:8090 -e ANTHROPIC_API_KEY=your_key my-agent:latest
+# open http://localhost:8090
 ```
 
 The generated Dockerfile runs `cortex publish ui` as its entrypoint and exposes port 8090.
@@ -150,9 +206,10 @@ The generated Dockerfile runs `cortex publish ui` as its entrypoint and exposes 
 ### Tips
 
 - **Enable history** (`history.enabled: true`) so conversations survive page reloads.
-- **Use SQLite or Redis** for the storage backend — in-memory storage loses all chat history on restart.
-- **Auth for public access**: if exposing to the internet, switch from `none` to `token` or `basic`.
+- **Use SQLite or Redis** — in-memory storage loses all chat history on restart.
+- **Auth for public access**: switch from `none` to `token` or `basic` before exposing to the internet.
 - Host and port can be overridden on the CLI: `cortex publish ui --host 127.0.0.1 --port 9000`.
+- The printed URL always shows `localhost` even when the server binds to `0.0.0.0`.
 
 ---
 
@@ -207,10 +264,10 @@ cortex setup --port 7801
 tool_servers:
   research:
     transport: sse
-    url: http://localhost:8081/sse
+    url: http://localhost:8081/mcp
   code_review:
     transport: sse
-    url: http://localhost:8082/sse
+    url: http://localhost:8082/mcp
 
 task_types:
   - name: research
@@ -251,16 +308,34 @@ result = await framework.run_session(
 
 The orchestrator fans out `research` and `review_code` in parallel to the two sub-agents over MCP, waits for both, then runs `write_report`.
 
+### ToolForge: dynamic capability creation at runtime
+
+When `tool_forge`, `ant_colony`, and `code_sandbox` are all enabled, an orchestrator can instruct the decomposer to generate a **new MCP server from code** during a session:
+
+```yaml
+ant_colony:
+  enabled: true
+tool_forge:
+  enabled: true
+  persist_by_default: false    # session-scoped by default; set true to survive restarts
+  spawn_timeout_seconds: 30
+code_sandbox:
+  enabled: true
+```
+
+A `forge_mcp` task generates a FastMCP server script, writes it to `cortex_storage/ants/<task_name>/server.py`, and registers it at the wave boundary — dependent tasks in later waves can use the new capability immediately. Forged servers are supervised by Ant Colony like any hand-hatched ant.
+
 ### Multi-agent pitfalls
 
 1. **Never share a SQLite file between running agents.** SQLite locks the DB; two agents pointing at the same `sqlite.path` will fail intermittently. Give each its own `storage.base_path`.
-2. **Redis is safe to share** if you want centralised storage — but use a different `key_prefix` per agent so sessions don't collide.
-3. **Don't run two agents from the same directory.** They'd fight over `cortex.yaml`, storage, and ports. `cd` into each agent's own folder or use `--config /abs/path/cortex.yaml`.
+2. **Redis is safe to share** — use a different `key_prefix` per agent so sessions don't collide.
+3. **Don't run two agents from the same directory.** They'd fight over `cortex.yaml`, storage, and ports.
 4. **Wizard is one-at-a-time per port.** Configure multiple agents with `cortex setup --port 7800`, `--port 7801`, etc.
 5. **Pick a port allocation scheme up front.** Conventions like wizard `7799+N` and MCP `8080+N` make a mesh readable.
 6. **Avoid circular tool_server references.** Agent A → Agent B → Agent A will deadlock. Keep the call graph a DAG.
 7. **Kill orphaned MCP servers before restarting.** `cortex publish mcp` holds the port until the process exits — `lsof -i :8081` to find a lingering PID.
 8. **Use `CORTEX_CONFIG` for sticky shells.** `export CORTEX_CONFIG=~/agents/research-agent/cortex.yaml` lets you run `cortex dev` from anywhere targeting that agent.
+9. **MCP endpoint is `/mcp`, not `/sse`.** Consumer `tool_servers` entries should point at `http://host:PORT/mcp`.
 
 ### Scaling a multi-agent mesh
 
@@ -284,3 +359,4 @@ The orchestrator fans out `research` and `review_code` in parallel to the two su
 - ☐ Per-user concurrency caps set to prevent one user from starving others
 - ☐ Session timeouts set generous enough for worst-case task graphs
 - ☐ `cortex dry-run` wired into CI so bad configs fail at build time
+- ☐ Chat UI auth mode set to `token` or `basic` if exposed beyond localhost

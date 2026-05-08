@@ -688,6 +688,83 @@ class LearningEngine:
         await self._blueprint_store.save(draft)
         return permanent_name
 
+    # ── manual promote / discard ──────────────────────────────────────────────
+
+    async def promote_delta(self, task_name: str) -> ApplyResult:
+        """Force-apply a single staged delta by task name, bypassing the confidence gate.
+
+        Reads the task from pending.yaml, merges it into cortex.yaml exactly
+        like apply_delta does for a single task, then removes it from pending
+        and triggers hot-reload.  Other pending tasks are not touched.
+        Raises KeyError if task_name is not found in pending.yaml.
+        """
+        if not self._pending_path.exists():
+            raise KeyError("No pending deltas found (pending.yaml missing)")
+
+        with open(self._pending_path, "r") as f:
+            pending = yaml.safe_load(f) or {}
+
+        pending_tasks = pending.get("task_types", [])
+        task = next((t for t in pending_tasks if t.get("name") == task_name), None)
+        if task is None:
+            raise KeyError(f"Delta not found in pending.yaml: {task_name!r}")
+
+        # Temporarily swap pending to contain only this task (confidence forced
+        # to high so apply_delta's filter passes).  Restore others afterwards.
+        others = [t for t in pending_tasks if t.get("name") != task_name]
+        patched = dict(task)
+        patched["confidence"] = "high"
+        pending["task_types"] = [patched]
+        with open(self._pending_path, "w") as f:
+            yaml.dump(pending, f, default_flow_style=False, sort_keys=False)
+
+        try:
+            result = await self.apply_delta(
+                delta_path=None,
+                cortex_yaml_path=self._cortex_yaml_path,
+                min_confidence="high",
+            )
+        except Exception:
+            # Restore full pending on failure so nothing is lost
+            pending["task_types"] = pending_tasks
+            with open(self._pending_path, "w") as f:
+                yaml.dump(pending, f, default_flow_style=False, sort_keys=False)
+            raise
+
+        # apply_delta already truncated applied tasks from pending; re-add others
+        with open(self._pending_path, "r") as f:
+            current = yaml.safe_load(f) or {}
+        current.setdefault("task_types", []).extend(others)
+        with open(self._pending_path, "w") as f:
+            yaml.dump(current, f, default_flow_style=False, sort_keys=False)
+
+        logger.info("Manual promote: applied delta '%s'", task_name)
+        return result
+
+    async def discard_delta(self, task_name: str) -> None:
+        """Remove a staged delta from pending.yaml without applying it."""
+        if not self._pending_path.exists():
+            return
+
+        with open(self._pending_path, "r") as f:
+            pending = yaml.safe_load(f) or {}
+
+        task_list = pending.get("task_types", [])
+        original_len = len(task_list)
+        pending["task_types"] = [t for t in task_list if t.get("name") != task_name]
+
+        with open(self._pending_path, "w") as f:
+            yaml.dump(pending, f, default_flow_style=False, sort_keys=False)
+
+        if len(pending["task_types"]) < original_len:
+            logger.info("Discarded delta '%s' from pending.yaml", task_name)
+        else:
+            logger.warning("discard_delta: '%s' not found in pending.yaml", task_name)
+
+    def set_cortex_yaml_path(self, path: str) -> None:
+        """Store the config path so promote_delta can call apply_delta."""
+        self._cortex_yaml_path = path
+
     # ── misc ──────────────────────────────────────────────────────────────────
 
     def hot_reload(self, new_config) -> None:

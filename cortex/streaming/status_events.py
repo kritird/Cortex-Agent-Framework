@@ -19,6 +19,13 @@ class EventType(str, Enum):
     ANT_HATCHED = "ant_hatched"    # ant agent spawned and registered
     ANT_STOPPED = "ant_stopped"    # ant agent stopped or crashed
     LEARNING = "learning"          # autonomic learning gate decision
+    TASK_TOOL_CALL = "task_tool_call"          # sub-agent invoked a tool
+    TASK_BLUEPRINT = "task_blueprint"          # full DAG after decomposition
+    INTENT_CLASSIFIED = "intent_classified"    # intent gate result
+    SYNTHESIS_TIER = "synthesis_tier"          # synthesis excerpt tier chosen
+    WORKSPACE_EVENT = "workspace_event"        # file-system change in workspace
+    FILE_OUTPUT = "file_output"                # agent produced a downloadable file
+    SESSION_TOKEN_USAGE = "session_token_usage"  # cumulative token counters
 
 
 @dataclass
@@ -181,3 +188,170 @@ class ExternalMCPAuthRequiredEvent:
             "timestamp": self.timestamp,
         }
         return f"event: external_mcp_auth_required\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class TaskToolCallEvent:
+    """Emitted when a task sub-agent invokes a tool (MCP or built-in)."""
+    session_id: str
+    task_id: str
+    task_name: str
+    tool_name: str
+    tool_input: Dict[str, Any] = field(default_factory=dict)
+    event_type: EventType = EventType.TASK_TOOL_CALL
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "task_name": self.task_name,
+            "tool_name": self.tool_name,
+            "tool_input": self.tool_input,
+            "timestamp": self.timestamp,
+        }
+        return f"event: task_tool_call\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class TaskBlueprintEvent:
+    """Emitted after decomposition — describes the full task DAG before execution."""
+    session_id: str
+    tasks: list   # list of {id, name, description, depends_on, wave}
+    waves: int = 0
+    event_type: EventType = EventType.TASK_BLUEPRINT
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "tasks": self.tasks,
+            "waves": self.waves,
+            "timestamp": self.timestamp,
+        }
+        return f"event: task_blueprint\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class IntentClassifiedEvent:
+    """Emitted by Intent Gate immediately after classifying a request."""
+    session_id: str
+    intent_mode: str          # chat | task | hybrid
+    confidence: float = 0.0
+    reasoning: str = ""
+    event_type: EventType = EventType.INTENT_CLASSIFIED
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "intent_mode": self.intent_mode,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "timestamp": self.timestamp,
+        }
+        return f"event: intent_classified\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class SynthesisTierEvent:
+    """Emitted when a synthesis excerpt tier is determined."""
+    session_id: str
+    tier: str           # short | medium | full | structured
+    reason: str = ""
+    event_type: EventType = EventType.SYNTHESIS_TIER
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "tier": self.tier,
+            "reason": self.reason,
+            "timestamp": self.timestamp,
+        }
+        return f"event: synthesis_tier\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class WorkspaceEvent:
+    """Emitted by WorkspaceBash or file-writing tools to report workspace changes."""
+    session_id: str
+    task_id: str
+    task_name: str
+    action: str         # created | modified | deleted | listed
+    path: str           # relative path inside workspace
+    is_dir: bool = False
+    event_type: EventType = EventType.WORKSPACE_EVENT
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "task_name": self.task_name,
+            "action": self.action,
+            "path": self.path,
+            "is_dir": self.is_dir,
+            "timestamp": self.timestamp,
+        }
+        return f"event: workspace_event\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class FileOutputEvent:
+    """Emitted when an agent writes a downloadable output file."""
+    session_id: str
+    task_name: str
+    filename: str
+    mime_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    event_type: EventType = EventType.FILE_OUTPUT
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "task_name": self.task_name,
+            "filename": self.filename,
+            "mime_type": self.mime_type,
+            "size_bytes": self.size_bytes,
+            "timestamp": self.timestamp,
+        }
+        return f"event: file_output\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class SessionTokenUsageEvent:
+    """Emitted periodically to report cumulative token consumption."""
+    session_id: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    event_type: EventType = EventType.SESSION_TOKEN_USAGE
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "timestamp": self.timestamp,
+        }
+        return f"event: session_token_usage\ndata: {json.dumps(data)}\n\n"

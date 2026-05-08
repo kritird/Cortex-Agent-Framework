@@ -90,6 +90,5 @@ cortex_sessions.db-shm
 *.log
 
 # Generated / local-only files
-Dockerfile.cortex
 META_PROMPT_CONFIG_UI.md
 docs/WORKSPACE_BASH_DESIGN.md

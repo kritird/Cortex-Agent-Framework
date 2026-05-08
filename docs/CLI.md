@@ -129,14 +129,14 @@ Publishes your agent as a Docker image, Python package, MCP server, or Chat UI.
 cortex publish docker [--tag cortex-agent:latest] [--with-ui] [--config cortex.yaml]
 ```
 
-Generates a `Dockerfile.cortex` next to your config. You then build it yourself:
+Generates `Dockerfile.cortex` next to your config. Build and run it yourself:
 
 ```bash
 docker build -f Dockerfile.cortex -t my-agent:latest .
-docker run -p 8080:8080 --env-file .env my-agent:latest
+docker run --rm -p 8090:8090 -e ANTHROPIC_API_KEY=your_key my-agent:latest
 ```
 
-Pass `--with-ui` to generate a Dockerfile that starts the built-in chat UI (`cortex publish ui`) on port 8090 instead of the bare framework.
+Pass `--with-ui` to generate a Dockerfile that starts Cortex Synapse (`cortex publish ui`) on port 8090. Without `--with-ui`, the bare framework runs on the MCP/REST port instead.
 
 ### `cortex publish package`
 
@@ -144,24 +144,38 @@ Pass `--with-ui` to generate a Dockerfile that starts the built-in chat UI (`cor
 cortex publish package [--output-dir dist]
 ```
 
-Runs `python -m build` under the hood and produces a wheel + sdist in `dist/`. Install with `pip install dist/*.whl`.
+Runs `python -m build` (using the current Python interpreter) and produces a wheel + sdist in `dist/`. Install with `pip install dist/*.whl`.
 
 ### `cortex publish mcp`
 
 ```bash
 cortex publish mcp [--config cortex.yaml] [--port 8080]
+# MCP server running at http://localhost:8080/mcp
 ```
 
-Runs the agent as an MCP server on the given port. Other Cortex agents (or any MCP client) can now consume this agent as a tool:
+Starts a live aiohttp HTTP server. The agent is callable at two endpoints:
+
+- `POST /mcp` — primary MCP endpoint; body: `{"input": "your request"}`, returns `{"output": "..."}`
+- `POST /run` — convenience alias for `/mcp`
+
+Other Cortex agents consume it by pointing a `tool_servers` entry at `/mcp`:
 
 ```yaml
 tool_servers:
   my_agent:
     transport: sse
-    url: http://host:8080/sse
+    url: http://host:8080/mcp
 ```
 
-**Interaction mode:** this command automatically sets `CORTEX_INTERACTION_MODE=rpc` in the child process so every turn runs the full task pipeline and never blocks on interactive clarifications. Override with an explicit export if you genuinely need interactive mode behind MCP.
+Or call it directly via curl:
+
+```bash
+curl -X POST http://localhost:8080/run \
+  -H 'Content-Type: application/json' \
+  -d '{"input": "Summarise the latest AI news"}'
+```
+
+**Interaction mode:** this command automatically sets `CORTEX_INTERACTION_MODE=rpc` so the agent never blocks on interactive clarifications — MCP clients cannot answer them. Override with an explicit `export CORTEX_INTERACTION_MODE=interactive` only if you genuinely need chat-mode behind MCP.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for multi-agent mesh setups.
 
@@ -169,16 +183,18 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for multi-agent mesh setups.
 
 ```bash
 cortex publish ui [--config cortex.yaml] [--host 0.0.0.0] [--port 8090]
+# Cortex chat UI: http://localhost:8090
 ```
 
-Serves the built-in chat UI — a single-page web frontend backed by your agent. Features:
+Serves **Cortex Synapse** — the built-in web frontend. The printed URL always resolves to `localhost` even when the server binds `0.0.0.0`. Features:
 
-- Text + file uploads (validated against `file_input` MIME / size limits)
-- SSE-streamed status and result events ("decomposing → running 3 tasks → synthesising")
-- Persistent per-user session history (backed by the existing History Store)
+- Text + file uploads (validated against `file_input` MIME / size limits); mid-session uploads also supported
+- SSE-streamed status events, task blueprint display, intent classification, workspace events, and token usage
+- Full-text history search, per-session artifact ZIP download, inline HITL clarification answers
+- Service launcher: open Config Studio or Setup Wizard from inside the chat without a separate terminal
 - Auth modes: `none` (anonymous cookie), `token`, `basic` — configured under the `ui.auth` block in `cortex.yaml`
 
-CLI flags override `ui.host` and `ui.port` from config. Enable `history.enabled: true` so threads survive restarts. See [Deployment → Chat UI](DEPLOYMENT.md#option-d-chat-ui) for production tips.
+CLI flags override `ui.host` and `ui.port` from config. Enable `history.enabled: true` so threads survive restarts. See [Deployment → Chat UI](DEPLOYMENT.md#option-d-chat-ui-cortex-synapse) for the full REST API and production tips.
 
 ---
 

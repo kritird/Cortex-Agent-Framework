@@ -1,540 +1,1331 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cortex Agent</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Synapse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
-  :root {
-    --bg: #faf9f7;
-    --panel: #ffffff;
-    --border: #e6e4df;
-    --text: #1a1a1a;
-    --muted: #6b6b6b;
-    --accent: #c96442;
-    --accent-hover: #b8573a;
-    --assistant: #f4f3ef;
-    --user: #ffffff;
-    --pill: #eef2f7;
-    --pill-text: #334155;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    display: flex;
-    overflow: hidden;
-  }
-  /* Sidebar */
-  aside {
-    width: 260px;
-    flex-shrink: 0;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-  }
-  aside header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  aside header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  .newchat {
-    background: var(--accent);
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 12px;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .newchat:hover { background: var(--accent-hover); }
-  .threads {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-  }
-  .thread {
-    padding: 10px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--text);
-    margin-bottom: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-  .thread:hover { background: var(--assistant); }
-  .thread.active { background: var(--assistant); font-weight: 500; }
-  .thread .del {
-    opacity: 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 14px;
-    padding: 0 4px;
-  }
-  .thread:hover .del { opacity: 1; }
-  /* Main */
-  main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px 0;
-  }
-  .msg {
-    max-width: 760px;
-    margin: 0 auto 20px;
-    padding: 0 24px;
-  }
-  .msg .role {
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 6px;
-    font-weight: 500;
-  }
-  .msg .body {
-    font-size: 15px;
-    line-height: 1.65;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-  .msg.assistant .body { color: var(--text); }
-  .msg .attachments {
-    margin-top: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .chip {
-    background: var(--pill);
-    color: var(--pill-text);
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .chip:hover { background: #dde5f0; }
-  .status-pill {
-    max-width: 760px;
-    margin: 0 auto 20px;
-    padding: 0 24px;
-  }
-  .status-pill .inner {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--pill);
-    color: var(--pill-text);
-    padding: 6px 12px;
-    border-radius: 14px;
-    font-size: 12px;
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 1.2s infinite ease-in-out;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
-  }
-  /* Composer */
-  .composer-wrap {
-    border-top: 1px solid var(--border);
-    background: var(--panel);
-    padding: 16px 24px;
-  }
-  .composer {
-    max-width: 760px;
-    margin: 0 auto;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--panel);
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .composer.drag { border-color: var(--accent); background: #fff8f4; }
-  .composer textarea {
-    width: 100%;
-    border: none;
-    outline: none;
-    resize: none;
-    font-family: inherit;
-    font-size: 14px;
-    line-height: 1.5;
-    background: transparent;
-    color: var(--text);
-    min-height: 24px;
-    max-height: 200px;
-  }
-  .composer-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .attach-list { display: flex; flex-wrap: wrap; gap: 6px; }
-  .attach-item {
-    background: var(--assistant);
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .attach-item button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 14px;
-    padding: 0;
-    line-height: 1;
-  }
-  .icon-btn {
-    background: none;
-    border: 1px solid var(--border);
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--muted);
-  }
-  .icon-btn:hover { background: var(--assistant); color: var(--text); }
-  .send-btn {
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 30px;
-    height: 30px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .send-btn:disabled { background: #d4d4d4; cursor: not-allowed; }
-  .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
-  .empty {
-    text-align: center;
-    color: var(--muted);
-    margin-top: 15vh;
-    font-size: 15px;
-  }
-  .empty h2 { color: var(--text); font-weight: 600; margin-bottom: 6px; }
+:root {
+  --bg-base:#07070f; --bg-surface:#0f0f1a;
+  --bg-card:rgba(255,255,255,0.035); --bg-card-hover:rgba(255,255,255,0.06);
+  --border:rgba(255,255,255,0.07); --border-focus:var(--accent-focus);
+  --accent:#06b6d4; --accent-focus:rgba(6,182,212,0.55);
+  --accent-dim:rgba(6,182,212,0.12); --accent-glow:rgba(6,182,212,0.18);
+  --text-primary:#eeeef8; --text-secondary:#9898b8; --text-muted:#55556a;
+  --success:#22c55e; --warning:#f59e0b; --danger:#ef4444; --info:#3b82f6;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg-base);color:var(--text-primary);font-family:'Inter',sans-serif;font-size:14px;line-height:1.5;overflow:hidden}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
+
+body{display:grid;grid-template-rows:56px 1fr auto;grid-template-columns:220px 1fr 320px;height:100vh}
+body.rail-hidden{grid-template-columns:220px 1fr 0px}
+body.sidebar-collapsed{grid-template-columns:52px 1fr 320px}
+body.sidebar-collapsed.rail-hidden{grid-template-columns:52px 1fr 0px}
+
+.topbar{grid-column:1/-1;grid-row:1;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:10px;z-index:50}
+.logo{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;color:var(--accent);letter-spacing:-.3px;text-decoration:none;flex-shrink:0;cursor:pointer}
+.logo img{height:26px;width:auto}
+.agent-badge{background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-secondary);cursor:pointer;transition:all .15s;white-space:nowrap}
+.agent-badge:hover{border-color:var(--accent-focus);color:var(--accent)}
+.status-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:500;border:1px solid var(--border);color:var(--text-muted)}
+.status-chip.running{background:var(--accent-dim);border-color:var(--accent-focus);color:var(--accent)}
+.status-chip.done{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.3);color:var(--success)}
+.status-chip.error{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--danger)}
+.intent-badge{display:inline-flex;align-items:center;gap:4px;background:var(--accent-dim);border:1px solid var(--accent-focus);border-radius:6px;padding:3px 9px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);cursor:pointer}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--text-muted);cursor:pointer;font-size:14px;transition:all .15s;flex-shrink:0}
+.icon-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+
+.token-badge{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);padding:0 4px}
+
+.sidebar{grid-column:1;grid-row:2;background:var(--bg-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-header{padding:10px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.new-chat-btn{flex:1;background:var(--accent);color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;transition:filter .15s}
+.new-chat-btn:hover{filter:brightness(1.1)}
+.sidebar-search{padding:8px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.search-input{width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--text-primary);font-family:inherit;font-size:12px;outline:none;transition:border-color .15s}
+.search-input:focus{border-color:var(--accent-focus)}
+.search-input::placeholder{color:var(--text-muted)}
+.threads{flex:1;overflow-y:auto;padding:4px 0}
+.thread-item{display:flex;align-items:center;gap:6px;padding:9px 12px;cursor:pointer;transition:background .12s;border-left:2px solid transparent}
+.thread-item:hover{background:var(--bg-card-hover)}
+.thread-item.active{background:var(--bg-card);border-left-color:var(--accent)}
+.thread-title{flex:1;font-size:12.5px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-meta{font-size:10.5px;color:var(--text-muted);white-space:nowrap}
+.score-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.thread-del{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px;opacity:0;transition:opacity .12s}
+.thread-item:hover .thread-del{opacity:1}
+.thread-del:hover{color:var(--danger)}
+.nav-tabs{border-top:1px solid var(--border);padding:4px 0;flex-shrink:0}
+.nav-tab{display:flex;align-items:center;gap:9px;padding:9px 14px;cursor:pointer;color:var(--text-secondary);font-size:12.5px;border-left:2px solid transparent;transition:all .12s}
+.nav-tab:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.nav-tab.active{background:var(--accent-dim);border-left-color:var(--accent);color:var(--accent);font-weight:500}
+.nav-tab-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
+.sidebar-toggle{display:flex;align-items:center;justify-content:center;padding:8px;border-top:1px solid var(--border);cursor:pointer;color:var(--text-muted);font-size:13px;transition:color .12s;flex-shrink:0}
+.sidebar-toggle:hover{color:var(--text-primary)}
+.workspace-section{padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.workspace-header{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;user-select:none;padding:3px 2px;border-radius:5px;transition:color .12s}
+.workspace-header:hover{color:var(--text-primary)}
+.workspace-input{width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11.5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;outline:none;margin-top:5px;box-sizing:border-box;transition:border-color .15s}
+.workspace-input:focus{border-color:var(--accent-focus)}
+.workspace-active{font-size:10.5px;color:var(--accent);margin-top:4px;font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 1px}
+
+.center{grid-column:2;grid-row:2;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;position:relative}
+
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:40px 20px;text-align:center;min-height:300px}
+.empty-logo{height:48px;width:auto;margin-bottom:16px;opacity:.85}
+.empty-title{font-size:22px;font-weight:600;color:var(--text-primary);letter-spacing:-.3px;margin-bottom:6px}
+.empty-sub{font-size:13.5px;color:var(--text-secondary);margin-bottom:28px}
+.preset-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;max-width:480px}
+.preset-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all .18s;text-align:left}
+.preset-card:hover{background:var(--bg-card-hover);border-color:var(--accent-focus);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.preset-icon{font-size:22px;margin-bottom:8px}
+.preset-name{font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:3px}
+.preset-desc{font-size:11.5px;color:var(--text-secondary);line-height:1.5}
+
+.msg-wrap{display:flex;flex-direction:column;gap:6px}
+.msg-user{align-self:flex-end;max-width:74%;background:var(--accent-dim);border:1px solid var(--accent-focus);border-radius:14px 14px 4px 14px;padding:12px 16px}
+.msg-assistant{align-self:flex-start;max-width:82%;background:var(--bg-card);border:1px solid var(--border);border-radius:4px 14px 14px 14px;padding:14px 18px}
+.msg-role{font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px}
+.msg-content{font-size:14px;line-height:1.7;color:var(--text-primary);word-wrap:break-word}
+.msg-content p{margin-bottom:.6em}.msg-content p:last-child{margin-bottom:0}
+.msg-content pre{background:rgba(0,0,0,.4);border-radius:8px;padding:12px;overflow-x:auto;margin:.6em 0}
+.msg-content code:not(pre code){background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:12.5px}
+.msg-content h1,.msg-content h2,.msg-content h3{color:var(--text-primary);font-weight:600;margin:.6em 0 .3em}
+.msg-content h1{font-size:18px}.msg-content h2{font-size:16px}.msg-content h3{font-size:14px}
+.msg-content ul,.msg-content ol{padding-left:1.4em;margin:.3em 0}
+.msg-content li{margin:.2em 0}
+.msg-content a{color:var(--accent)}
+.msg-content blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--text-secondary);margin:.5em 0}
+.msg-content table{border-collapse:collapse;width:100%;margin:.5em 0;font-size:13px}
+.msg-content th,.msg-content td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.msg-content th{background:var(--bg-card);font-weight:600}
+.output-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.file-chip{display:inline-flex;align-items:center;gap:5px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:12px;color:var(--text-secondary);text-decoration:none;cursor:pointer;transition:all .12s}
+.file-chip:hover{border-color:var(--accent-focus);color:var(--accent)}
+
+.task-stream{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12px;align-self:stretch}
+.wave-header{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.task-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.task-row:last-child{border-bottom:none}
+.task-name{flex:1;font-weight:500;color:var(--text-primary)}
+.task-meta{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);display:flex;gap:6px;flex-wrap:wrap}
+.blueprint-tag{font-size:10px;background:var(--accent-dim);color:var(--accent);border-radius:4px;padding:1px 5px}
+.status-pill-row{display:inline-flex;align-items:center;gap:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:999px;padding:6px 14px;font-size:12px;color:var(--text-secondary);align-self:flex-start}
+.pulse-dot{width:11px;height:11px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite;flex-shrink:0}
+
+.hitl-card{background:var(--bg-card);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:16px;align-self:stretch}
+.hitl-title{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--warning);margin-bottom:8px}
+.hitl-question{font-size:13px;color:var(--text-primary);margin-bottom:10px;line-height:1.6}
+.hitl-code{background:rgba(0,0,0,.4);border-radius:6px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#86efac;margin-bottom:10px;white-space:pre-wrap;word-break:break-all}
+.hitl-answer-wrap{margin-bottom:12px;border-top:1px solid rgba(245,158,11,.15);padding-top:10px}
+.hitl-answer-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:5px}
+.hitl-answer-input{width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(245,158,11,.25);border-radius:6px;padding:7px 10px;font-size:13px;color:var(--text-primary);font-family:'Inter',sans-serif;outline:none;resize:vertical;box-sizing:border-box;line-height:1.5;transition:border-color .15s}
+.hitl-answer-input:focus{border-color:rgba(245,158,11,.55)}
+.hitl-answer-input::placeholder{color:var(--text-muted)}
+.mcp-auth-card{background:var(--bg-card);border:1px solid var(--accent-focus);border-radius:10px;padding:16px;align-self:stretch}
+.learning-card{background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.25);border-radius:10px;padding:14px;align-self:stretch}
+
+.score-bar-wrap{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px}
+.score-bar-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;display:flex;justify-content:space-between}
+.score-bar-track{height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+.score-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+
+.composer-wrap{grid-column:1/-1;grid-row:3;background:var(--bg-surface);border-top:1px solid var(--border);padding:10px 16px;position:relative;z-index:30}
+.composer-inner{max-width:860px;margin:0 auto;position:relative}
+.composer-box{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
+.composer-box:focus-within{border-color:var(--accent-focus);box-shadow:0 0 0 3px var(--accent-glow)}
+.composer-box.drag-over{border-color:var(--accent);border-style:dashed}
+.staged-files{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.attach-pill{display:inline-flex;align-items:center;gap:5px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:3px 10px;font-size:12px;color:var(--text-secondary)}
+.attach-pill-del{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:0 2px;line-height:1}
+.attach-pill-del:hover{color:var(--danger)}
+.reject-pill{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:var(--danger)}
+.composer-textarea{width:100%;background:transparent;border:none;outline:none;color:var(--text-primary);font-family:'Inter',sans-serif;font-size:14px;line-height:1.6;resize:none;min-height:24px;max-height:200px}
+.composer-textarea::placeholder{color:var(--text-muted)}
+.composer-actions{display:flex;align-items:center;gap:6px;padding-top:8px;border-top:1px solid rgba(255,255,255,.04);margin-top:4px}
+.forced-mode-chip{font-size:11px;font-family:'JetBrains Mono',monospace;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-focus);border-radius:4px;padding:2px 7px;cursor:pointer}
+.send-btn{width:30px;height:30px;border-radius:50%;background:var(--accent);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .15s;flex-shrink:0;margin-left:auto}
+.send-btn:hover:not(:disabled){filter:brightness(1.15);box-shadow:0 0 12px var(--accent-glow)}
+.send-btn:disabled{opacity:.4;cursor:not-allowed}
+.send-btn.stop{background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4);color:var(--danger)}
+
+.cmd-palette{position:absolute;bottom:calc(100% + 6px);left:0;right:0;background:#0a0a14;border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 -8px 32px rgba(0,0,0,.6);z-index:200;max-height:320px;display:flex;flex-direction:column}
+.cmd-header{padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted);flex-shrink:0}
+.cmd-list{overflow-y:auto;flex:1}
+.cmd-item{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;transition:background .1s}
+.cmd-item:hover,.cmd-item.sel{background:var(--bg-card-hover)}
+.cmd-name{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);min-width:130px;flex-shrink:0}
+.cmd-desc{font-size:12px;color:var(--text-secondary)}
+
+.rail{grid-column:3;grid-row:2;background:var(--bg-surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+body.rail-hidden .rail{border-left:none;overflow:hidden}
+.rail-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px;gap:2px;flex-shrink:0;overflow-x:auto}
+.rail-tab{padding:10px 10px 9px;font-size:12px;cursor:pointer;color:var(--text-muted);border-bottom:2px solid transparent;white-space:nowrap;transition:all .12s}
+.rail-tab:hover{color:var(--text-primary)}
+.rail-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.rail-body{flex:1;overflow-y:auto;padding:14px}
+.rail-empty{text-align:center;padding:40px 16px;color:var(--text-muted);font-size:12.5px}
+.rail-section-title{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+
+.dag-wave{margin-bottom:14px}
+.dag-wave-header{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+.dag-node{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:5px;font-size:12px}
+.dag-node.running{border-color:var(--accent-focus);background:var(--accent-dim)}
+.dag-node.done{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.05)}
+.dag-node.failed{border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.05)}
+.dag-node.paused{border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.05)}
+.dag-node-header{display:flex;align-items:center;gap:7px}
+.dag-node-name{flex:1;font-weight:500;color:var(--text-primary)}
+.dag-node-meta{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+
+.artifact-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.artifact-row:last-child{border-bottom:none}
+.artifact-info{flex:1;min-width:0}
+.artifact-name{color:var(--text-primary);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+.artifact-meta{font-size:10.5px;color:var(--text-muted);font-family:'JetBrains Mono',monospace}
+.artifact-actions{display:flex;gap:4px;flex-shrink:0}
+.art-btn{background:var(--bg-card);border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:11px;cursor:pointer;color:var(--text-secondary);text-decoration:none;display:inline-flex;align-items:center;transition:all .12s}
+.art-btn:hover{border-color:var(--accent-focus);color:var(--accent)}
+
+.help-section{margin-bottom:4px;border-bottom:1px solid var(--border)}
+.help-section summary{cursor:pointer;font-size:12.5px;font-weight:500;color:var(--text-primary);padding:9px 0;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none}
+.help-section summary::-webkit-details-marker{display:none}
+.help-section summary::after{content:'›';color:var(--text-muted);font-size:16px;transition:transform .15s}
+.help-section[open] summary::after{transform:rotate(90deg)}
+.help-content{font-size:12.5px;color:var(--text-secondary);line-height:1.65;padding:4px 0 10px}
+.help-content p{margin-bottom:.5em}
+.help-content code{font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;color:var(--text-primary)}
+.cmd-ref{display:flex;gap:8px;padding:3px 0;font-size:12px}
+.cmd-ref-name{font-family:'JetBrains Mono',monospace;color:var(--accent);min-width:130px;flex-shrink:0}
+.cmd-ref-desc{color:var(--text-secondary)}
+.kbd{background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-secondary)}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:7px;font-size:12.5px;font-weight:500;cursor:pointer;border:none;font-family:inherit;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{filter:brightness(1.1)}
+.btn-secondary{background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text-secondary)}.btn-secondary:hover{background:rgba(255,255,255,.1);color:var(--text-primary)}
+.btn-danger{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:var(--danger)}.btn-danger:hover{background:rgba(239,68,68,.18)}
+.btn-ghost{background:transparent;color:var(--accent);padding:6px 10px}.btn-ghost:hover{background:var(--accent-dim)}
+.btn-sm{padding:4px 10px;font-size:11.5px}
+
+.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:400;display:flex;align-items:center;justify-content:center}
+.modal-box{background:#0a0a14;border:1px solid var(--border);border-radius:14px;width:780px;max-width:94vw;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.modal-header h3{font-size:14px;font-weight:600;color:var(--text-primary);flex:1}
+.modal-body{flex:1;overflow:auto;padding:16px 20px}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.preview-frame{width:100%;height:480px;border:none;border-radius:8px;background:#000}
+.preview-img{max-width:100%;max-height:480px;border-radius:8px;display:block;margin:0 auto}
+
+.toast-wrap{position:fixed;bottom:88px;right:20px;z-index:500;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toast{padding:11px 16px;border-radius:10px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;animation:slideIn .25s ease;pointer-events:all}
+.toast-success{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#4ade80}
+.toast-error{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#f87171}
+.toast-info{background:var(--accent-dim);border:1px solid var(--accent-focus);color:var(--accent)}
+
+.debug-event{font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);color:var(--text-secondary);display:flex;gap:8px}
+.debug-time{color:var(--text-muted);flex-shrink:0}
+.debug-type{color:var(--accent);flex-shrink:0;min-width:90px}
+.debug-data{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+
+/* Drop overlay */
+.drop-overlay{position:fixed;inset:56px 0 60px 0;background:rgba(6,182,212,.07);border:2px dashed var(--accent);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--accent);z-index:100;pointer-events:none;transition:opacity .15s}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes slideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+[x-cloak]{display:none!important}
 </style>
 </head>
-<body>
-<aside>
-  <header>
-    <h1 id="title">Cortex Agent</h1>
-    <button class="newchat" id="newchat">New</button>
-  </header>
-  <div class="threads" id="threads"></div>
-</aside>
-<main>
-  <div class="messages" id="messages">
-    <div class="empty">
-      <h2>How can I help?</h2>
-      <div>Attach files or type a message below.</div>
-    </div>
+<body x-data="synapse()" x-init="init()" :class="{'rail-hidden':railHidden,'sidebar-collapsed':sidebarCollapsed}" x-cloak>
+
+<!-- drop overlay for full-page drag -->
+<div class="drop-overlay" x-show="pageDropActive" style="pointer-events:none">⬇ Drop files to attach</div>
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="logo" @click="resetView()">
+    <img src="/static/cortex-logo.svg" alt="Cortex" onerror="this.style.display='none'">
+    <span>Cortex Synapse</span>
   </div>
-  <div class="composer-wrap">
-    <div class="composer" id="composer">
-      <div class="attach-list" id="attach-list"></div>
-      <textarea id="input" placeholder="Message the agent…" rows="1"></textarea>
-      <div class="composer-row">
-        <button class="icon-btn" id="attach-btn" title="Attach files">📎</button>
-        <button class="send-btn" id="send-btn" title="Send" disabled>→</button>
+  <span class="agent-badge" @click="openPanel('config')" x-text="agentName" title="Open config"></span>
+  <span class="status-chip" :class="streaming?'running':(messages.length?'done':'')">
+    <span class="pulse-dot" x-show="streaming"></span>
+    <span x-text="streaming?('Running'+(activeTaskCount?' ('+activeTaskCount+')':'')):(messages.length?'Done':'Idle')"></span>
+  </span>
+  <span class="intent-badge" x-show="intentBadge" x-cloak title="Intent gate result">
+    <span x-text="intentBadge?.mode"></span>
+    <span x-text="intentBadge?Math.round((intentBadge.confidence??1)*100)+'%':''"></span>
+  </span>
+  <span class="token-badge" x-show="tokenUsage" x-cloak x-text="tokenUsage?'🔢 '+(tokenUsage.input+tokenUsage.output).toLocaleString():''"></span>
+  <div style="flex:1"></div>
+  <button class="icon-btn" @click="railHidden=!railHidden" :title="railHidden?'Show panel':'Hide panel'" style="width:32px;height:32px;color:var(--text-secondary)">
+    <svg x-show="!railHidden" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+    <svg x-show="railHidden" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+  </button>
+</header>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <button class="new-chat-btn" @click="resetView()" x-show="!sidebarCollapsed">+ New Chat</button>
+    <button class="icon-btn" @click="resetView()" x-show="sidebarCollapsed" title="New chat" style="width:32px;height:32px">✦</button>
+  </div>
+  <!-- Workspace folder selector -->
+  <div class="workspace-section" x-show="!sidebarCollapsed">
+    <div class="workspace-header" @click="workspaceExpanded=!workspaceExpanded">
+      <span>📁</span>
+      <span>Workspace</span>
+      <span style="margin-left:auto;font-size:10px" x-text="workspaceExpanded?'▾':'▸'"></span>
+    </div>
+    <template x-if="workspaceExpanded">
+      <div>
+        <input class="workspace-input" type="text" placeholder="/path/to/your/project" x-model="workspacePath" @input="localStorage.setItem('cortex_workspace',workspacePath)" @keydown.enter="workspaceExpanded=false">
+        <div class="workspace-active" x-show="workspacePath" x-text="'📂 '+workspacePath.split('/').filter(Boolean).pop()"></div>
       </div>
-      <input type="file" id="file-input" multiple style="display:none">
+    </template>
+  </div>
+  <div x-show="sidebarCollapsed" style="display:flex;justify-content:center;padding:6px 0;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button class="icon-btn" @click="sidebarCollapsed=false;workspaceExpanded=true" title="Set workspace folder" style="width:30px;height:30px;font-size:15px">📁</button>
+  </div>
+  <div class="sidebar-search" x-show="!sidebarCollapsed">
+    <input class="search-input" type="text" placeholder="🔍 Search sessions…" x-model="threadSearch">
+  </div>
+  <div class="threads">
+    <template x-for="t in filteredThreads" :key="t.session_id">
+      <div class="thread-item" :class="{active:activeSessionId===t.session_id}" @click="openThread(t.session_id)">
+        <span class="score-dot" :style="`background:${scoreColor(t.validation_score??t.score??null)}`" :title="t.validation_score!=null?'Score '+(t.validation_score*100).toFixed(0)+'%':'No score'"></span>
+        <template x-if="!sidebarCollapsed">
+          <div style="flex:1;min-width:0">
+            <div class="thread-title" x-text="t.title"></div>
+            <div class="thread-meta" x-text="fmtTs(t.timestamp)"></div>
+          </div>
+        </template>
+        <button class="thread-del" @click.stop="deleteThread(t.session_id,$event)" x-show="!sidebarCollapsed" title="Delete">×</button>
+      </div>
+    </template>
+    <div style="padding:20px;text-align:center;font-size:12px;color:var(--text-muted)" x-show="filteredThreads.length===0">
+      <span x-text="threadSearch?'No matches':'No sessions yet'"></span>
     </div>
   </div>
+  <nav class="nav-tabs">
+    <template x-for="tab in navTabs" :key="tab.id">
+      <div class="nav-tab" :class="{active:navTab===tab.id}" @click="setNavTab(tab.id)" :title="tab.label">
+        <span class="nav-tab-icon" x-text="tab.icon"></span>
+        <span x-show="!sidebarCollapsed" x-text="tab.label"></span>
+      </div>
+    </template>
+  </nav>
+  <div class="sidebar-toggle" @click="sidebarCollapsed=!sidebarCollapsed" :title="sidebarCollapsed?'Expand sidebar':'Collapse sidebar'">
+    <span x-text="sidebarCollapsed?'›':'‹'"></span>
+  </div>
+</aside>
+
+<!-- CENTER -->
+<main class="center"
+  @dragenter.prevent="pageDropActive=true"
+  @dragover.prevent
+  @dragleave="pageDropActive=false"
+  @drop.prevent="pageDropActive=false;stageFiles($event.dataTransfer.files)">
+
+  <div class="messages" id="messages">
+    <!-- Empty state -->
+    <div class="empty-state" x-show="messages.length===0">
+      <img class="empty-logo" src="/static/cortex-logo.svg" alt="" onerror="this.style.display='none'">
+      <div class="empty-title">Cortex Synapse</div>
+      <div class="empty-sub">One-stop agentic workspace · type / for commands</div>
+      <div class="preset-grid">
+        <template x-for="p in presets" :key="p.label">
+          <div class="preset-card" @click="usePreset(p)">
+            <div class="preset-icon" x-text="p.icon"></div>
+            <div class="preset-name" x-text="p.label"></div>
+            <div class="preset-desc" x-text="p.desc"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Message list -->
+    <template x-for="msg in messages" :key="msg.id">
+      <div class="msg-wrap">
+        <!-- User bubble -->
+        <div x-show="msg.role==='user'" class="msg-user">
+          <div class="msg-role">You</div>
+          <div style="font-size:14px;line-height:1.7;white-space:pre-wrap;word-wrap:break-word;color:var(--text-primary)" x-text="msg.content"></div>
+          <div class="output-chips" x-show="msg.files&&msg.files.length>0">
+            <template x-for="f in msg.files" :key="f.filename">
+              <a class="file-chip" :href="fileUrl({...f,sessionId:msg.sessionId})" download>
+                <span x-text="mimeIcon(f.mimeType||f.mime_type||'')"></span>
+                <span x-text="f.filename"></span>
+              </a>
+            </template>
+          </div>
+        </div>
+        <!-- Assistant bubble -->
+        <div x-show="msg.role==='assistant'" class="msg-assistant">
+          <div class="msg-role">Assistant</div>
+          <div class="msg-content" :id="'msg-'+msg.id" :data-raw="msg.content"></div>
+          <span x-show="msg.streaming" style="display:inline-block;width:8px;height:14px;background:var(--accent);border-radius:2px;animation:pulse .8s infinite;margin-left:2px;vertical-align:middle"></span>
+          <!-- Output file chips -->
+          <div class="output-chips" x-show="msg.files&&msg.files.length>0">
+            <template x-for="f in msg.files" :key="f.filename+(f.taskName||'')">
+              <a class="file-chip" :href="fileUrl({...f,sessionId:msg.sessionId})" download :title="'Download '+f.filename">
+                <span x-text="mimeIcon(f.mimeType||f.mime_type||'')"></span>
+                <span x-text="f.filename"></span>
+                <span style="color:var(--text-muted);margin-left:2px">⬇</span>
+              </a>
+            </template>
+            <span class="file-chip" @click="openPanel('artifacts')" style="color:var(--accent);border-color:var(--accent-focus);cursor:pointer">View all →</span>
+          </div>
+          <!-- Score bar on last assistant msg -->
+          <div x-show="!msg.streaming&&validationScore!=null&&msg.id===lastAssistantId" class="score-bar-wrap">
+            <div class="score-bar-label">
+              <span>Validation</span>
+              <span :style="`color:${scoreColor(validationScore)};font-weight:600`" x-text="(validationScore*100).toFixed(0)+'%'"></span>
+            </div>
+            <div class="score-bar-track">
+              <div class="score-bar-fill" :style="`width:${(validationScore??0)*100}%;background:${scoreColor(validationScore)}`"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- HITL cards after last user msg -->
+        <template x-if="msg.role==='user'&&msg.id===lastUserMsgId">
+          <template x-for="card in hitlCards.filter(c=>!c.dismissed)" :key="card.clarification_id">
+            <div class="hitl-card">
+              <div class="hitl-title">⏸ HITL — <span x-text="card.task_name"></span></div>
+              <div class="hitl-question" x-text="card.question"></div>
+              <div class="hitl-code" x-show="card.context" x-text="card.context"></div>
+              <div class="hitl-answer-wrap">
+                <div class="hitl-answer-label">Your answer</div>
+                <textarea class="hitl-answer-input" x-model="card.hitlAnswer" placeholder="Type a custom answer…" rows="2" @keydown.ctrl.enter="card.hitlAnswer.trim()&&answerHitl(card,card.hitlAnswer.trim())"></textarea>
+                <div style="margin-top:6px">
+                  <button class="btn btn-primary btn-sm" @click="answerHitl(card,card.hitlAnswer.trim())" :disabled="!card.hitlAnswer.trim()">↩ Send Answer</button>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-primary btn-sm" @click="answerHitl(card,'approve')">✓ Approve</button>
+                <button class="btn btn-danger btn-sm" @click="answerHitl(card,'deny')">✗ Deny</button>
+                <button class="btn btn-secondary btn-sm" @click="card.dismissed=true">Skip</button>
+              </div>
+            </div>
+          </template>
+        </template>
+      </div>
+    </template>
+
+    <!-- Task stream during session -->
+    <div class="task-stream" x-show="streaming&&waves.length>0">
+      <template x-for="wave in waves" :key="wave.num">
+        <div class="dag-wave" style="margin-bottom:8px">
+          <div class="wave-header">
+            Wave <span x-text="wave.num"></span>
+            <span x-show="waveCount>0" style="opacity:.6" x-text="'/ '+waveCount"></span>
+            <span style="color:var(--accent);margin-left:4px" x-text="wave.tasks.filter(t=>t.status==='running').length+' running'"></span>
+          </div>
+          <template x-for="task in wave.tasks" :key="task.name">
+            <div class="task-row">
+              <span style="width:16px;text-align:center;flex-shrink:0" x-html="taskStatusIcon(task.status)"></span>
+              <span class="task-name" x-text="task.name"></span>
+              <span class="task-meta">
+                <span x-show="task.toolCalls>0" x-text="task.toolCalls+'c'"></span>
+                <span x-show="task.elapsed>0" x-text="task.elapsed+'s'"></span>
+                <span x-show="task.blueprint!=null" class="blueprint-tag" x-text="'📋'+task.blueprint"></span>
+              </span>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Status pill -->
+    <div class="status-pill-row" x-show="streaming&&statusText">
+      <span class="pulse-dot"></span>
+      <span style="font-size:12px" x-text="statusText"></span>
+    </div>
+
+    <!-- Learning card -->
+    <div class="learning-card" x-show="learningToast">
+      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--success);margin-bottom:8px">📚 Autonomic Learning</div>
+      <div style="font-size:13px;color:var(--text-primary);margin-bottom:6px" x-show="learningToast">
+        <span x-text="learningToast?.action==='staged'?'Staged:':'Action: '+learningToast?.action"></span>
+        <template x-if="learningToast?.staged_tasks?.length">
+          <strong style="color:var(--accent)" x-text="' '+learningToast.staged_tasks.join(', ')"></strong>
+        </template>
+      </div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);margin-bottom:10px" x-show="learningToast">
+        complexity: <span x-text="learningToast?.complexity_score?.toFixed(2)??'—'"></span> ·
+        validation: <span x-text="learningToast?.validation_score?.toFixed(2)??'—'"></span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" @click="promoteDeltas()">Promote ✓</button>
+        <button class="btn btn-secondary btn-sm" @click="learningToast=null">Dismiss</button>
+        <button class="btn btn-ghost btn-sm" @click="openPanel('deltas')">View deltas →</button>
+      </div>
+    </div>
+
+    <!-- External MCP auth card -->
+    <div class="mcp-auth-card" x-show="mcpAuthCard">
+      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);margin-bottom:10px">🔌 New MCP Server Discovered</div>
+      <template x-if="mcpAuthCard">
+        <div>
+          <template x-for="srv in (mcpAuthCard.servers||[])" :key="srv.url||srv.name">
+            <div style="margin-bottom:8px;font-size:13px">
+              <strong style="color:var(--text-primary)" x-text="srv.name||srv.url"></strong>
+              <span style="color:var(--text-muted);font-size:11px;margin-left:8px" x-text="(srv.capabilities||[]).join(', ')"></span>
+            </div>
+          </template>
+          <details style="margin-bottom:10px">
+            <summary style="font-size:12px;color:var(--accent);cursor:pointer;user-select:none">View YAML snippet ▾</summary>
+            <pre style="background:rgba(0,0,0,.4);border-radius:6px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#86efac;margin-top:6px;white-space:pre-wrap;word-break:break-all" x-text="mcpAuthCard.cortex_yaml_snippet"></pre>
+          </details>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" @click="openPanel('mcp')">Open MCP Manager</button>
+            <button class="btn btn-secondary btn-sm" @click="mcpAuthCard=null">Dismiss</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+  </div><!-- /messages -->
 </main>
+
+<!-- RIGHT RAIL -->
+<aside class="rail" x-show="!railHidden">
+  <div class="rail-tabs">
+    <template x-for="rt in railTabs" :key="rt.id">
+      <div class="rail-tab" :class="{active:railPanel===rt.id}" @click="railPanel=rt.id" x-text="rt.label"></div>
+    </template>
+  </div>
+  <div class="rail-body">
+
+    <!-- Task DAG -->
+    <div x-show="railPanel==='dag'">
+      <div class="rail-empty" x-show="waves.length===0&&!validationScore&&!intentBadge">
+        <div style="font-size:28px;margin-bottom:10px">⬡</div>
+        Task graph appears here when a session runs
+      </div>
+      <div x-show="intentBadge" style="margin-bottom:14px" x-cloak>
+        <div class="rail-section-title">Intent Gate</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+          <span class="intent-badge" x-text="intentBadge?.mode"></span>
+          <span style="color:var(--text-muted);font-family:'JetBrains Mono',monospace;font-size:11px" x-text="intentBadge?Math.round((intentBadge.confidence??1)*100)+'%':''"></span>
+        </div>
+      </div>
+      <div x-show="waves.length>0" style="margin-bottom:14px">
+        <div class="rail-section-title">Task Graph</div>
+        <template x-for="wave in waves" :key="wave.num">
+          <div class="dag-wave">
+            <div class="dag-wave-header">Wave <span x-text="wave.num"></span></div>
+            <template x-for="task in wave.tasks" :key="task.name">
+              <div class="dag-node" :class="task.status">
+                <div class="dag-node-header">
+                  <span x-html="taskStatusIcon(task.status)"></span>
+                  <span class="dag-node-name" x-text="task.name"></span>
+                </div>
+                <div class="dag-node-meta">
+                  <span x-show="task.toolCalls>0" x-text="task.toolCalls+' calls'"></span>
+                  <span x-show="task.elapsed>0" x-text="task.elapsed+'s'"></span>
+                  <span x-show="task.server" x-text="task.server" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                  <span x-show="task.blueprint!=null" style="color:var(--accent)" x-text="'📋 '+task.blueprint"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+      <div x-show="validationScore!=null" style="margin-bottom:14px">
+        <div class="rail-section-title">Validation</div>
+        <div class="score-bar-wrap" style="margin-top:0">
+          <div class="score-bar-label">
+            <span>Score</span>
+            <span :style="`color:${scoreColor(validationScore)};font-weight:600`" x-text="(validationScore*100).toFixed(0)+'%'"></span>
+          </div>
+          <div class="score-bar-track">
+            <div class="score-bar-fill" :style="`width:${(validationScore??0)*100}%;background:${scoreColor(validationScore)}`"></div>
+          </div>
+        </div>
+      </div>
+      <div x-show="synthesisTier" style="margin-bottom:14px" x-cloak>
+        <div class="rail-section-title">Synthesis</div>
+        <div style="font-size:12.5px;color:var(--text-secondary)">Tier <span x-text="synthesisTier" style="color:var(--accent);font-weight:600"></span></div>
+      </div>
+    </div>
+
+    <!-- Artifacts -->
+    <div x-show="railPanel==='artifacts'">
+      <div class="rail-empty" x-show="artifacts.length===0">
+        <div style="font-size:28px;margin-bottom:10px">📁</div>
+        Output files appear here during and after a session
+      </div>
+      <div x-show="artifacts.length>0">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span style="font-size:12px;color:var(--text-secondary)" x-text="artifacts.length+' file'+(artifacts.length!==1?'s':'')"></span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" @click="downloadAllZip()">⬇ ZIP</button>
+            <button class="btn btn-secondary btn-sm" @click="$refs.midUpload.click()">+ Upload</button>
+          </div>
+        </div>
+        <template x-for="art in artifacts" :key="art.filename+(art.taskName||'')">
+          <div class="artifact-row">
+            <span style="font-size:18px;flex-shrink:0" x-text="mimeIcon(art.mimeType||'')"></span>
+            <div class="artifact-info">
+              <div class="artifact-name" x-text="art.filename"></div>
+              <div class="artifact-meta" x-text="(art.sizePretty?art.sizePretty+' · ':'')+art.taskName"></div>
+            </div>
+            <div class="artifact-actions">
+              <button class="art-btn" @click="openPreview(art)" title="Preview">👁</button>
+              <a class="art-btn" :href="fileUrl(art)" download :title="'Download'">⬇</a>
+              <button class="art-btn" @click="copyLink(art)" title="Copy link">🔗</button>
+            </div>
+          </div>
+        </template>
+        <input type="file" x-ref="midUpload" multiple style="display:none" @change="stageFiles($event.target.files);$event.target.value=''">
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <button class="btn btn-ghost btn-sm" @click="showToast('Cross-session carry — coming soon','info')">↗ New session with these files</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deltas -->
+    <div x-show="railPanel==='deltas'">
+      <div class="rail-section-title">Pending Learning Deltas</div>
+      <div class="rail-empty" x-show="pendingDeltas.length===0">
+        <div style="font-size:28px;margin-bottom:10px">📚</div>
+        Learned task patterns appear here after complex sessions
+      </div>
+      <template x-for="d in pendingDeltas" :key="d.task_name">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+          <div style="font-weight:600;font-size:12.5px;color:var(--text-primary);margin-bottom:4px" x-text="d.task_name"></div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);margin-bottom:10px">
+            confidence: <span x-text="d.confidence?.toFixed(2)??'—'"></span> ·
+            validation: <span x-text="d.validation_score?.toFixed(2)??'—'"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-primary btn-sm" @click="promoteDelta(d)">Promote ✓</button>
+            <button class="btn btn-danger btn-sm" @click="discardDelta(d)">Discard</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Ants -->
+    <div x-show="railPanel==='ants'">
+      <div class="rail-section-title">Ant Colony</div>
+      <div class="rail-empty" x-show="ants.length===0">
+        <div style="font-size:28px;margin-bottom:10px">🐜</div>
+        Specialist agents appear here when spawned
+      </div>
+      <template x-for="ant in ants" :key="ant.ant_id">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span>🐜</span>
+            <span style="font-weight:600;font-size:12.5px;color:var(--text-primary);flex:1" x-text="ant.ant_id"></span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px" :style="`color:${ant.status==='running'?'var(--success)':'var(--text-muted)'}`" x-text="':'+ant.port"></span>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:6px" x-text="(ant.capabilities||[]).join(', ')"></div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px" x-show="ant.parent_task" x-text="'parent: '+ant.parent_task"></div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" @click="showToast('Direct ant messaging — coming soon','info')">Message</button>
+            <button class="btn btn-danger btn-sm" @click="killAnt(ant)">Kill</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- MCP -->
+    <div x-show="railPanel==='mcp'">
+      <div class="rail-section-title">MCP Servers</div>
+      <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6">
+        Manage tool servers connected to this agent. Full management is available in Config Studio.
+      </div>
+      <button class="btn btn-secondary" @click="launchService('config')" style="width:100%;justify-content:center;margin-bottom:8px;display:flex" :disabled="launchingService==='config'">
+        <span x-text="launchingService==='config' ? 'Starting Config Studio…' : 'Open Config Studio ↗'"></span>
+      </button>
+      <button class="btn btn-secondary" @click="launchService('wizard')" style="width:100%;justify-content:center;display:flex" :disabled="launchingService==='wizard'">
+        <span x-text="launchingService==='wizard' ? 'Starting Setup Wizard…' : 'Open Setup Wizard ↗'"></span>
+      </button>
+    </div>
+
+    <!-- Config -->
+    <div x-show="railPanel==='config'">
+      <div class="rail-section-title">Agent Config</div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Agent Name</div>
+        <div style="font-size:13px;color:var(--text-primary);font-weight:500" x-text="agentName"></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6">
+        Edit agent name, task types, LLM providers, and system settings in Config Studio.
+      </div>
+      <button class="btn btn-secondary" @click="launchService('config')" style="width:100%;justify-content:center;margin-bottom:8px;display:flex" :disabled="launchingService==='config'">
+        <span x-text="launchingService==='config' ? 'Starting Config Studio…' : 'Open Config Studio ↗'"></span>
+      </button>
+      <button class="btn btn-secondary" @click="launchService('wizard')" style="width:100%;justify-content:center;display:flex" :disabled="launchingService==='wizard'">
+        <span x-text="launchingService==='wizard' ? 'Starting Setup Wizard…' : 'Open Setup Wizard ↗'"></span>
+      </button>
+    </div>
+
+    <!-- History -->
+    <div x-show="railPanel==='history'">
+      <div class="rail-section-title">Session History</div>
+      <input class="search-input" type="text" placeholder="🔍 Search sessions…" x-model="historySearch" @input.debounce.300ms="loadHistorySearch()" style="margin-bottom:10px;width:100%">
+      <template x-for="s in (historySearch?historyResults:threads)" :key="s.session_id">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <span class="score-dot" :style="`background:${scoreColor(s.validation_score??s.score??null)}`"></span>
+            <span style="flex:1;font-size:12px;font-weight:500;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.title"></span>
+            <span style="font-size:10.5px;color:var(--text-muted)" x-text="fmtTs(s.timestamp)"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" @click="openThread(s.session_id)">Open</button>
+            <a class="btn btn-secondary btn-sm" :href="'/api/session/'+encodeURIComponent(s.session_id)+'/artifacts/zip'" download>⬇ ZIP</a>
+          </div>
+        </div>
+      </template>
+      <div class="rail-empty" x-show="historySearch&&historyResults.length===0" style="padding:20px">No matches</div>
+    </div>
+
+    <!-- Debug -->
+    <div x-show="railPanel==='debug'">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="rail-section-title" style="margin-bottom:0">Raw SSE Stream</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" @click="debugEvents=[]">Clear</button>
+          <button class="btn btn-secondary btn-sm" @click="copyDebug()">Copy</button>
+        </div>
+      </div>
+      <div class="rail-empty" x-show="debugEvents.length===0" style="padding:20px">No events yet — start a session</div>
+      <template x-for="ev in debugEvents" :key="ev.idx">
+        <div class="debug-event">
+          <span class="debug-time" x-text="ev.time"></span>
+          <span class="debug-type" x-text="ev.type"></span>
+          <span class="debug-data" x-text="ev.data"></span>
+        </div>
+      </template>
+    </div>
+
+    <!-- Help -->
+    <div x-show="railPanel==='help'">
+      <div class="rail-section-title">Help</div>
+      <input class="search-input" type="text" placeholder="🔍 Search help…" x-model="helpSearch" style="margin-bottom:12px;width:100%">
+      <template x-for="topic in filteredHelp" :key="topic.title">
+        <details class="help-section">
+          <summary x-text="topic.title"></summary>
+          <div class="help-content" x-html="topic.html"></div>
+        </details>
+      </template>
+    </div>
+
+  </div><!-- /rail-body -->
+</aside>
+
+<!-- COMPOSER -->
+<div class="composer-wrap">
+  <div class="composer-inner">
+    <!-- Command palette -->
+    <div class="cmd-palette" x-show="showPalette&&paletteCmds.length>0" x-cloak @mousedown.prevent>
+      <div class="cmd-header">/ Commands <span style="float:right;font-size:11px">↑↓ navigate · Enter select · Esc close</span></div>
+      <div class="cmd-list">
+        <template x-for="(cmd,i) in paletteCmds" :key="cmd.name">
+          <div class="cmd-item" :class="{sel:paletteIndex===i}" @click="runCmd(cmd)" @mouseenter="paletteIndex=i">
+            <span class="cmd-name" x-text="cmd.name"></span>
+            <span class="cmd-desc" x-text="cmd.desc"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="composer-box" :class="{'drag-over':composerDrag}"
+         @dragenter.prevent="composerDrag=true"
+         @dragover.prevent
+         @dragleave="composerDrag=false"
+         @drop.prevent="composerDrag=false;stageFiles($event.dataTransfer.files)">
+
+      <!-- Staged & rejected file chips -->
+      <div class="staged-files" x-show="pendingFiles.length>0||rejectedFiles.length>0">
+        <template x-for="(f,i) in pendingFiles" :key="f.name+i">
+          <span class="attach-pill">
+            <span x-text="mimeIcon(f.type||'')"></span>
+            <span x-text="f.name"></span>
+            <span style="font-size:10px;color:var(--text-muted)" x-text="fmtBytes(f.size)"></span>
+            <button class="attach-pill-del" @click="pendingFiles.splice(i,1)">×</button>
+          </span>
+        </template>
+        <template x-for="f in rejectedFiles" :key="f.name">
+          <span class="attach-pill reject-pill">⚠ <span x-text="f.name+' — '+f.reason"></span></span>
+        </template>
+      </div>
+
+      <textarea id="composer-input"
+        class="composer-textarea"
+        :placeholder="streaming?'Session running… (Cmd+Enter to cancel)':'Message the agent… (/ for commands, Cmd+Enter to send)'"
+        x-model="inputText"
+        @input="handleInput($event)"
+        @keydown="handleKeydown($event)"
+        rows="1"></textarea>
+
+      <div class="composer-actions">
+        <button class="icon-btn" @click="$refs.fileInput.click()" title="Attach files">📎</button>
+        <button class="icon-btn" @click="toggleVoice()" :title="voiceActive?'Stop recording':'Voice input'"
+          :style="voiceActive?'border-color:var(--danger);color:var(--danger);animation:pulse .8s infinite':''">🎙</button>
+        <span class="forced-mode-chip" x-show="forcedMode" x-text="'mode: '+forcedMode"
+          @click="forcedMode=null;showToast('Intent mode: auto','info')" title="Click to reset to auto"></span>
+        <button class="send-btn" :class="{stop:streaming}" @click="streaming?cancelSession():send()"
+          :disabled="!streaming&&!canSend" :title="streaming?'Cancel session':'Send (Cmd+Enter)'">
+          <span x-text="streaming?'⏹':'→'"></span>
+        </button>
+      </div>
+    </div>
+    <input type="file" x-ref="fileInput" multiple style="display:none" @change="stageFiles($event.target.files);$event.target.value=''">
+  </div>
+</div>
+
+<!-- FILE PREVIEW MODAL -->
+<div class="modal-back" x-show="previewModal" x-cloak @click.self="previewModal=null">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 x-text="previewModal?.filename||''"></h3>
+      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace" x-text="previewModal?.art?.sizePretty||''"></span>
+      <button class="icon-btn" @click="previewModal=null" style="margin-left:auto">✕</button>
+    </div>
+    <div class="modal-body">
+      <template x-if="previewModal">
+        <div>
+          <template x-if="previewModal.mimeType?.startsWith('image/')">
+            <img class="preview-img" :src="previewModal.url" :alt="previewModal.filename">
+          </template>
+          <template x-if="previewModal.mimeType==='application/pdf'">
+            <iframe class="preview-frame" :src="previewModal.url"></iframe>
+          </template>
+          <template x-if="!previewModal.mimeType?.startsWith('image/')&&previewModal.mimeType!=='application/pdf'">
+            <pre style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:var(--text-primary);background:rgba(0,0,0,.3);border-radius:8px;padding:14px;max-height:440px;overflow-y:auto" x-text="previewContent||'Loading…'"></pre>
+          </template>
+        </div>
+      </template>
+    </div>
+    <div class="modal-footer">
+      <a class="btn btn-primary btn-sm" :href="previewModal?fileUrl(previewModal.art):'#'" download>⬇ Download</a>
+      <button class="btn btn-secondary btn-sm" @click="previewModal&&copyLink(previewModal.art)">🔗 Copy link</button>
+      <button class="btn btn-secondary btn-sm" @click="previewModal=null">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-wrap">
+  <template x-if="toast">
+    <div class="toast" :class="'toast-'+toast.type">
+      <span x-text="toast.type==='success'?'✓':toast.type==='error'?'✗':'ℹ'"></span>
+      <span x-text="toast.msg"></span>
+    </div>
+  </template>
+</div>
+
 <script>
-const $ = (id) => document.getElementById(id);
-const messagesEl = $("messages");
-const threadsEl = $("threads");
-const inputEl = $("input");
-const sendBtn = $("send-btn");
-const attachBtn = $("attach-btn");
-const fileInput = $("file-input");
-const attachList = $("attach-list");
-const composer = $("composer");
-const newChatBtn = $("newchat");
+if(typeof marked!=='undefined') marked.setOptions({breaks:true,gfm:true});
 
-let pendingFiles = [];
-let currentThread = null;
-let streaming = false;
-let currentStatusEl = null;
-let currentAssistantEl = null;
+function synapse(){return{
+  theme:localStorage.getItem('synapse_theme')||'cyan',
+  agentName:'Cortex Agent',
+  userId:'',
+  allowedMime:['text/','application/pdf','application/json','image/'],
+  maxFileMb:50,
+  sidebarCollapsed:false,
+  railHidden:false,
+  workspacePath:localStorage.getItem('cortex_workspace')||'',
+  workspaceExpanded:false,
+  navTab:'chat',
+  railPanel:'dag',
+  pageDropActive:false,
+  composerDrag:false,
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-function renderAttachments(files, sessionId) {
-  if (!files || files.length === 0) return "";
-  return `<div class="attachments">` + files.map((f) => {
-    const url = sessionId
-      ? `/api/history/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(f.task_name)}/${encodeURIComponent(f.filename)}`
-      : "#";
-    return `<a class="chip" href="${url}" download>📄 ${escapeHtml(f.filename)}</a>`;
-  }).join("") + `</div>`;
-}
-function appendMessage(role, text, files, sessionId) {
-  const empty = messagesEl.querySelector(".empty");
-  if (empty) empty.remove();
-  const el = document.createElement("div");
-  el.className = `msg ${role}`;
-  el.innerHTML = `<div class="role">${role === "user" ? "You" : "Assistant"}</div>
-    <div class="body">${escapeHtml(text || "")}</div>
-    ${renderAttachments(files, sessionId)}`;
-  messagesEl.appendChild(el);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return el;
-}
-function appendStatus(message) {
-  if (!currentStatusEl) {
-    currentStatusEl = document.createElement("div");
-    currentStatusEl.className = "status-pill";
-    currentStatusEl.innerHTML = `<div class="inner"><span class="dot"></span><span class="txt"></span></div>`;
-    messagesEl.appendChild(currentStatusEl);
-  }
-  currentStatusEl.querySelector(".txt").textContent = message;
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-function clearStatus() {
-  if (currentStatusEl) { currentStatusEl.remove(); currentStatusEl = null; }
-}
+navTabs:[
+    {id:'chat',    icon:'💬',label:'Chat'},
+    {id:'deltas',  icon:'📦',label:'Deltas'},
+    {id:'mcp',     icon:'🔌',label:'MCP'},
+    {id:'ants',    icon:'🐜',label:'Ants'},
+    {id:'history', icon:'📜',label:'History'},
+    {id:'config',  icon:'⚙️',label:'Config'},
+    {id:'help',    icon:'❓',label:'Help'},
+  ],
+  railTabs:[
+    {id:'dag',      label:'Task Graph'},
+    {id:'artifacts',label:'Artifacts'},
+    {id:'debug',    label:'Debug'},
+  ],
+  presets:[
+    {icon:'🤖',label:'Dev Agent',     desc:'Code generation and workspace editing',     prompt:'Help me write code for '},
+    {icon:'🔬',label:'Research',      desc:'Web research and competitive intelligence',  prompt:'Research and summarize '},
+    {icon:'🎧',label:'Support',       desc:'Ticket triage and reply drafting',           prompt:'Triage this support issue: '},
+    {icon:'📊',label:'Data Pipeline', desc:'Data extraction, enrichment and analysis',   prompt:'Analyze this data: '},
+  ],
 
-// ── Threads ───────────────────────────────────────────────────────────────
-async function loadThreads() {
-  try {
-    const r = await fetch("/api/history");
-    if (!r.ok) return;
-    const data = await r.json();
-    threadsEl.innerHTML = "";
-    for (const s of data.sessions) {
-      const el = document.createElement("div");
-      el.className = "thread" + (s.session_id === currentThread ? " active" : "");
-      el.innerHTML = `<span>${escapeHtml(s.title)}</span><button class="del" title="Delete">×</button>`;
-      el.querySelector("span").onclick = () => openThread(s.session_id);
-      el.querySelector(".del").onclick = async (e) => {
-        e.stopPropagation();
-        if (!confirm("Delete this chat?")) return;
-        await fetch(`/api/history/${encodeURIComponent(s.session_id)}`, { method: "DELETE" });
-        if (currentThread === s.session_id) resetView();
-        loadThreads();
-      };
-      threadsEl.appendChild(el);
+  threads:[],
+  threadSearch:'',
+  activeSessionId:null,
+
+  messages:[],
+  streaming:false,
+  currentUiId:null,
+  evtSource:null,
+  statusText:'',
+  forcedMode:null,
+
+  waves:[],
+  taskMap:{},
+  waveCount:0,
+
+  validationScore:null,
+  intentBadge:null,
+  synthesisTier:null,
+
+  hitlCards:[],
+  learningToast:null,
+  mcpAuthCard:null,
+
+  artifacts:[],
+  ants:[],
+  pendingDeltas:[],
+
+  pendingFiles:[],
+  rejectedFiles:[],
+  inputText:'',
+  voiceActive:false,
+  voiceRec:null,
+
+  showPalette:false,
+  paletteFilter:'',
+  paletteIndex:0,
+
+  debugEvents:[],
+  dbgIdx:0,
+
+  previewModal:null,
+  previewContent:'',
+
+  historySearch:'',
+  historyResults:[],
+  helpSearch:'',
+  tokenUsage:null,
+  toast:null,
+  toastTimer:null,
+  launchingService:null,
+
+  get filteredThreads(){const q=this.threadSearch.toLowerCase();return q?this.threads.filter(t=>t.title.toLowerCase().includes(q)):this.threads;},
+  get canSend(){return(this.inputText.trim()||this.pendingFiles.length>0)&&!this.streaming;},
+  get activeTaskCount(){return Object.values(this.taskMap).filter(t=>t.status==='running').length;},
+  get lastAssistantId(){const a=this.messages.filter(m=>m.role==='assistant');return a.length?a[a.length-1].id:null;},
+  get lastUserMsgId(){const a=this.messages.filter(m=>m.role==='user');return a.length?a[a.length-1].id:null;},
+  get paletteCmds(){
+    const f=this.paletteFilter.toLowerCase();
+    const all=[
+      {name:'/help',       desc:'Open integrated help',            action:()=>this.openPanel('help')},
+      {name:'/config',     desc:'Open config drawer',              action:()=>this.openPanel('config')},
+      {name:'/mcp',        desc:'Open MCP marketplace',            action:()=>this.openPanel('mcp')},
+      {name:'/ants',       desc:'Open ant colony dock',            action:()=>this.openPanel('ants')},
+      {name:'/deltas',     desc:'Open delta inbox',                action:()=>this.openPanel('deltas')},
+      {name:'/history',    desc:'Open history search',             action:()=>this.openPanel('history')},
+      {name:'/artifacts',  desc:'Open artifact gallery',           action:()=>{this.railPanel='artifacts';this.railHidden=false;this.showPalette=false;}},
+      {name:'/debug',      desc:'Toggle raw SSE stream',           action:()=>this.toggleDebug()},
+      {name:'/cancel',     desc:'Cancel running session',          action:()=>this.cancelSession()},
+      {name:'/retry',      desc:'Re-send last message',            action:()=>this.retry()},
+      {name:'/clear',      desc:'Clear current view',              action:()=>this.resetView()},
+      {name:'/export',     desc:'Export session as markdown',      action:()=>this.exportSession()},
+      {name:'/blueprints', desc:'Browse blueprints',               action:()=>this.showToast('Blueprint editor — coming soon','info')},
+      {name:'/wizard',     desc:'Launch setup wizard',             action:()=>{this.showPalette=false;this.launchService('wizard');}},
+      {name:'/mode chat',  desc:'Force intent: chat',              action:()=>{this.forcedMode='chat';this.showToast('Forced: chat','info');this.showPalette=false;}},
+      {name:'/mode task',  desc:'Force intent: task',              action:()=>{this.forcedMode='task';this.showToast('Forced: task','info');this.showPalette=false;}},
+      {name:'/mode auto',  desc:'Auto intent detection',           action:()=>{this.forcedMode=null;this.showToast('Intent: auto','info');this.showPalette=false;}},
+      {name:'/explain',    desc:'Ask agent to explain last reply', action:()=>this.appendExplain()},
+    ];
+    return f?all.filter(c=>c.name.includes(f)||c.desc.toLowerCase().includes(f)):all;
+  },
+  get filteredHelp(){const q=this.helpSearch.toLowerCase();return q?this.helpTopics.filter(t=>t.title.toLowerCase().includes(q)||t.html.toLowerCase().includes(q)):this.helpTopics;},
+
+  helpTopics:[
+    {title:'What is Cortex Synapse?',html:'<p>Cortex Synapse is the one-stop conversational UI for all agentic work. Send tasks, watch the task graph execute in real time, approve file writes, manage MCP servers, and review learned patterns — all in one window.</p>'},
+    {title:'Sending tasks vs. chat',html:'<p>Type a request and press <code>Cmd+Enter</code>. The Intent Gate classifies it as <code>task</code>, <code>chat</code>, or <code>hybrid</code> — the badge appears in the top bar. Use <code>/mode task</code> or <code>/mode chat</code> to override.</p>'},
+    {title:'Reading the task graph',html:'<p>The Task Graph panel shows parallel execution waves. ⟳ running · ✓ done · ✗ failed · ⏸ paused waiting for input. Tasks in the same wave run in parallel.</p>'},
+    {title:'Approving HITL actions',html:'<p>When an agent wants to run a command or write a file, a HITL card appears in chat. Review and click <strong>Approve</strong> or <strong>Deny</strong>. Other tasks continue while you review.</p>'},
+    {title:'Uploading files',html:'<p>Three ways: click <strong>📎</strong>, drag onto the composer, or drag anywhere on the chat area. Files are validated for type and size before sending.</p>'},
+    {title:'Downloading artifacts',html:'<p>Output files appear as chips at the bottom of the assistant reply. Click <strong>⬇</strong> to download. Use the <strong>Artifacts</strong> panel for Download All ZIP, previews, and share links.</p>'},
+    {title:'Learning deltas',html:'<p>After a complex session, Cortex may stage a new task pattern. A learning card appears — click <strong>Promote</strong> to add it to <code>cortex.yaml</code>. All deltas live in the <strong>Deltas</strong> tab.</p>'},
+    {title:'Slash commands',html:`
+      <div class="cmd-ref"><span class="cmd-ref-name">/help</span><span class="cmd-ref-desc">Open this help panel</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/config</span><span class="cmd-ref-desc">Open config drawer</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/mcp</span><span class="cmd-ref-desc">Open MCP manager</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/ants</span><span class="cmd-ref-desc">Open ant colony dock</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/deltas</span><span class="cmd-ref-desc">Open delta inbox</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/history</span><span class="cmd-ref-desc">Open history search</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/artifacts</span><span class="cmd-ref-desc">Open artifact gallery</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/debug</span><span class="cmd-ref-desc">Toggle SSE stream view</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/cancel</span><span class="cmd-ref-desc">Cancel running session</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/retry</span><span class="cmd-ref-desc">Re-send last message</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/clear</span><span class="cmd-ref-desc">Clear current view</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/export</span><span class="cmd-ref-desc">Export session as .md</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/mode chat|task|auto</span><span class="cmd-ref-desc">Force intent mode</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/explain</span><span class="cmd-ref-desc">Ask agent to explain</span></div>
+      <div class="cmd-ref"><span class="cmd-ref-name">/wizard</span><span class="cmd-ref-desc">Open setup wizard</span></div>`},
+    {title:'Keyboard shortcuts',html:`<p>
+      <span class="kbd">Cmd+Enter</span> Send &nbsp;
+      <span class="kbd">/</span> Commands &nbsp;
+      <span class="kbd">Esc</span> Close palette &nbsp;
+      <span class="kbd">↑↓</span> Navigate palette &nbsp;
+      <span class="kbd">Tab</span> Select command
+    </p>`},
+  ],
+
+  async init(){
+    document.documentElement.dataset.theme=this.theme;
+    try{
+      const cfg=await fetch('/api/config').then(r=>r.json());
+      this.agentName=cfg.title||'Cortex Agent';
+      this.userId=cfg.user_id||'';
+      if(cfg.file_input){
+        this.maxFileMb=cfg.file_input.max_size_mb||50;
+        if(cfg.file_input.allowed_mime_types?.length) this.allowedMime=cfg.file_input.allowed_mime_types;
+      }
+    }catch(e){}
+    await this.loadThreads();
+    document.addEventListener('dragover',e=>e.preventDefault());
+    document.addEventListener('drop',e=>{e.preventDefault();this.pageDropActive=false;});
+  },
+
+  openPanel(p){
+    this.railPanel=p;this.railHidden=false;this.showPalette=false;
+    const m={dag:'chat',deltas:'deltas',mcp:'mcp',ants:'ants',history:'history',config:'config',help:'help',artifacts:'chat',debug:'chat'};
+    this.navTab=m[p]||'chat';
+  },
+  setNavTab(tab){
+    this.navTab=tab;
+    const m={chat:'dag',deltas:'deltas',mcp:'mcp',ants:'ants',history:'history',config:'config',help:'help'};
+    this.railPanel=m[tab]||'dag';this.railHidden=false;
+  },
+
+  async loadThreads(){
+    try{const d=await fetch('/api/history').then(r=>r.json());this.threads=d.sessions||[];}catch(e){}
+  },
+  async openThread(sid){
+    this.activeSessionId=sid;this.resetMessages();
+    try{
+      const d=await fetch(`/api/history/${encodeURIComponent(sid)}`).then(r=>r.json());
+      this.messages.push({id:'u'+sid,role:'user',content:d.request||'',files:[],sessionId:sid});
+      const chips=(d.files||[]).map(f=>({...f,sessionId:sid}));
+      this.messages.push({id:'a'+sid,role:'assistant',content:d.response||'',files:chips,sessionId:sid,streaming:false});
+      this.artifacts=(d.files||[]).map(f=>({...f,sessionId:sid,sizePretty:''}));
+      if(d.validation_score!=null)this.validationScore=d.validation_score;
+    }catch(e){}
+    await this.loadThreads();
+    this.$nextTick(()=>{this.scrollToBottom();this.renderAllMarkdown();});
+  },
+  async deleteThread(sid,e){
+    e.stopPropagation();
+    if(!confirm('Delete this session?'))return;
+    await fetch(`/api/history/${encodeURIComponent(sid)}`,{method:'DELETE'});
+    if(this.activeSessionId===sid)this.resetView();
+    await this.loadThreads();
+  },
+  resetView(){this.activeSessionId=null;this.resetMessages();this.pendingFiles=[];this.inputText='';this.rejectedFiles=[];},
+  resetMessages(){
+    this.messages=[];this.waves=[];this.taskMap={};this.waveCount=0;
+    this.validationScore=null;this.intentBadge=null;this.synthesisTier=null;
+    this.artifacts=[];this.hitlCards=[];this.learningToast=null;this.mcpAuthCard=null;
+    this.statusText='';this.tokenUsage=null;this.debugEvents=[];
+  },
+
+  validateFile(f){
+    const max=this.maxFileMb*1024*1024;
+    if(f.size>max)return`exceeds ${this.maxFileMb}MB limit`;
+    if(!this.allowedMime.some(m=>f.type.startsWith(m)||f.type===m))return'unsupported file type';
+    return null;
+  },
+  stageFiles(list){
+    this.rejectedFiles=[];
+    Array.from(list).forEach(f=>{
+      const err=this.validateFile(f);
+      if(err){this.rejectedFiles.push({name:f.name,reason:err});return;}
+      if(this.pendingFiles.length>=10){this.rejectedFiles.push({name:f.name,reason:'max 10 files'});return;}
+      this.pendingFiles.push(f);
+    });
+    if(this.rejectedFiles.length)setTimeout(()=>{this.rejectedFiles=[];},6000);
+  },
+
+  async send(){
+    if(!this.canSend)return;
+    const text=this.inputText.trim();
+    const files=[...this.pendingFiles];
+    this.inputText='';this.pendingFiles=[];this.rejectedFiles=[];this.showPalette=false;
+    const ta=document.getElementById('composer-input');if(ta)ta.style.height='auto';
+
+    const uid='u'+Date.now();
+    const userMsg={id:uid,role:'user',content:text,files:files.map(f=>({filename:f.name,mimeType:f.type,size:f.size})),sessionId:null};
+    this.messages.push(userMsg);
+    this.streaming=true;this.statusText='Connecting…';
+    this.waves=[];this.taskMap={};this.validationScore=null;this.intentBadge=null;
+    this.artifacts=[];this.hitlCards=[];this.learningToast=null;this.mcpAuthCard=null;
+    this.$nextTick(()=>this.scrollToBottom());
+
+    const fd=new FormData();
+    const wsText=this.workspacePath?'WORKSPACE: '+this.workspacePath+'\n\n'+text:text;
+    if(wsText)fd.append('text',wsText);
+    files.forEach(f=>fd.append('files',f,f.name));
+
+    let uiId;
+    try{
+      const r=await fetch('/api/session',{method:'POST',body:fd});
+      if(!r.ok)throw new Error(await r.text());
+      uiId=(await r.json()).ui_session_id;
+    }catch(e){
+      this.messages.push({id:'e'+Date.now(),role:'assistant',content:`⚠ Error starting session: ${e.message}`,files:[],sessionId:null,streaming:false});
+      this.streaming=false;return;
     }
-  } catch (e) { console.error(e); }
-}
-async function openThread(sid) {
-  currentThread = sid;
-  try {
-    const r = await fetch(`/api/history/${encodeURIComponent(sid)}`);
-    if (!r.ok) return;
-    const d = await r.json();
-    messagesEl.innerHTML = "";
-    appendMessage("user", d.request, null, null);
-    appendMessage("assistant", d.response, d.files, d.session_id);
-  } catch (e) { console.error(e); }
-  loadThreads();
-}
-function resetView() {
-  currentThread = null;
-  messagesEl.innerHTML = `<div class="empty"><h2>How can I help?</h2><div>Attach files or type a message below.</div></div>`;
-  pendingFiles = [];
-  renderAttachPills();
-  inputEl.value = "";
-  updateSendBtn();
-}
-newChatBtn.onclick = () => { resetView(); loadThreads(); };
 
-// ── Composer ──────────────────────────────────────────────────────────────
-function renderAttachPills() {
-  attachList.innerHTML = "";
-  pendingFiles.forEach((f, i) => {
-    const el = document.createElement("div");
-    el.className = "attach-item";
-    el.innerHTML = `📄 ${escapeHtml(f.name)} <button data-i="${i}">×</button>`;
-    el.querySelector("button").onclick = () => {
-      pendingFiles.splice(i, 1);
-      renderAttachPills();
-      updateSendBtn();
+    this.currentUiId=uiId;
+    const aid='a'+Date.now();
+    const aMsg={id:aid,role:'assistant',content:'',files:[],sessionId:null,streaming:true};
+    this.messages.push(aMsg);
+    this.$nextTick(()=>this.scrollToBottom());
+
+    const es=new EventSource(`/api/session/${uiId}/events`);
+    this.evtSource=es;
+
+    const onEv=(type,data)=>{
+      this.debugEvents.unshift({time:new Date().toLocaleTimeString(),type,data:JSON.stringify(data).slice(0,180),idx:this.dbgIdx++});
+      if(this.debugEvents.length>300)this.debugEvents.pop();
+
+      if(type==='status'){this.statusText=data.message||'';}
+      else if(type==='task_start'){
+        const task={name:data.task_name,status:'running',toolCalls:0,elapsed:0,blueprint:null,server:null,startTs:Date.now()};
+        this.taskMap[data.task_name]=task;
+        const wNum=data.wave??this.waves.length+1;
+        let wave=this.waves.find(w=>w.num===wNum);
+        if(!wave){wave={num:wNum,tasks:[]};this.waves.push(wave);}
+        wave.tasks.push(task);
+        if(data.wave_count)this.waveCount=data.wave_count;
+        const iv=setInterval(()=>{if(task.status!=='running'){clearInterval(iv);return;}task.elapsed=((Date.now()-task.startTs)/1000).toFixed(1);},500);
+      }
+      else if(type==='task_complete'){const t=this.taskMap[data.task_name];if(t){t.status='done';if(data.duration!=null)t.elapsed=data.duration.toFixed(1);}}
+      else if(type==='task_tool_call'){const t=this.taskMap[data.task_name];if(t){t.toolCalls=(t.toolCalls||0)+1;if(data.server_url)t.server=data.server_url;}}
+      else if(type==='task_blueprint'){const t=this.taskMap[data.task_name];if(t)t.blueprint=data.blueprint_loaded?(data.lesson_count||0):null;}
+      else if(type==='intent_classified'){this.intentBadge={mode:data.intent_mode,confidence:data.confidence??1};}
+      else if(type==='synthesis_tier'){this.synthesisTier=data.tier;}
+      else if(type==='result'){
+        const msg=this.messages.find(m=>m.streaming);
+        if(msg){
+          if(data.partial)msg.content+=(data.content||'');
+          else if(data.content)msg.content=data.content;
+          if(data.validation_score!=null)this.validationScore=data.validation_score;
+          if(data.session_id){msg.sessionId=data.session_id;userMsg.sessionId=data.session_id;}
+        }
+        this.$nextTick(()=>{this.scrollToBottom();this.renderAllMarkdown();});
+      }
+      else if(type==='file_output'){
+        const sid=data.session_id||aMsg.sessionId;
+        const art={taskName:data.task_name||'output',filename:data.filename,mimeType:data.mime_type||'',sessionId:sid,sizePretty:data.size_bytes?this.fmtBytes(data.size_bytes):''};
+        this.artifacts.push(art);
+        const msg=this.messages.find(m=>m.streaming);
+        if(msg&&!msg.files.find(f=>f.filename===art.filename))msg.files.push(art);
+      }
+      else if(type==='clarification_request'){this.hitlCards.push({...data,dismissed:false,hitlAnswer:''});}
+      else if(type==='learning'){
+        this.learningToast=data;
+        (data.staged_tasks||[]).forEach(t=>{if(!this.pendingDeltas.find(d=>d.task_name===t))this.pendingDeltas.push({task_name:t,session_id:data.session_id,confidence:data.complexity_score,validation_score:data.validation_score});});
+      }
+      else if(type==='external_mcp_auth_required'){this.mcpAuthCard=data;}
+      else if(type==='ant_hatched'){this.ants.push({ant_id:data.ant_id||'ant',port:data.port||'?',capabilities:data.capabilities||[],parent_task:data.parent_task,status:'running'});}
+      else if(type==='ant_stopped'){const a=this.ants.find(x=>x.ant_id===data.ant_id);if(a)a.status='stopped';}
+      else if(type==='session_token_usage'){this.tokenUsage={input:data.input_tokens||0,output:data.output_tokens||0};}
+      else if(type==='error'){
+        const msg=this.messages.find(m=>m.streaming);
+        if(msg){msg.content=`⚠ Error: ${data.message||'Unknown error'}`;msg.streaming=false;}
+        this.streaming=false;es.close();this.evtSource=null;
+        this.$nextTick(()=>this.renderAllMarkdown());
+      }
+      else if(type==='done'){
+        const sid=data.session_id;
+        const msg=this.messages.find(m=>m.streaming);
+        if(msg){msg.streaming=false;if(sid)msg.sessionId=sid;}
+        if(sid)userMsg.sessionId=sid;
+        this.activeSessionId=sid;
+        this.streaming=false;this.statusText='';
+        es.close();this.evtSource=null;
+        this.loadThreads();
+        this.$nextTick(()=>this.renderAllMarkdown());
+      }
     };
-    attachList.appendChild(el);
-  });
-}
-function updateSendBtn() {
-  sendBtn.disabled = streaming || (!inputEl.value.trim() && pendingFiles.length === 0);
-}
-inputEl.addEventListener("input", () => {
-  inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
-  updateSendBtn();
-});
-inputEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-});
-attachBtn.onclick = () => fileInput.click();
-fileInput.onchange = () => {
-  for (const f of fileInput.files) pendingFiles.push(f);
-  fileInput.value = "";
-  renderAttachPills();
-  updateSendBtn();
-};
-// Drag and drop
-composer.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drag"); });
-composer.addEventListener("dragleave", () => composer.classList.remove("drag"));
-composer.addEventListener("drop", (e) => {
-  e.preventDefault();
-  composer.classList.remove("drag");
-  for (const f of e.dataTransfer.files) pendingFiles.push(f);
-  renderAttachPills();
-  updateSendBtn();
-});
 
-// ── Send & stream ─────────────────────────────────────────────────────────
-async function send() {
-  if (streaming) return;
-  const text = inputEl.value.trim();
-  if (!text && pendingFiles.length === 0) return;
+    ['status','task_start','task_complete','task_tool_call','task_blueprint',
+     'intent_classified','synthesis_tier','result','file_output',
+     'clarification','clarification_request','learning','external_mcp_auth_required',
+     'ant_hatched','ant_stopped','session_token_usage','error','done'
+    ].forEach(t=>es.addEventListener(t,e=>{try{onEv(t,JSON.parse(e.data));}catch(err){console.error('SSE parse error',err);}}));
 
-  const fileNames = pendingFiles.map((f) => ({ task_name: "_user_upload", filename: f.name }));
-  appendMessage("user", text, fileNames, null);
+    es.onerror=()=>{
+      if(this.streaming){
+        const msg=this.messages.find(m=>m.streaming);
+        if(msg)msg.streaming=false;
+        this.streaming=false;this.statusText='';
+        es.close();this.evtSource=null;this.loadThreads();
+      }
+    };
+  },
 
-  const fd = new FormData();
-  fd.append("text", text);
-  for (const f of pendingFiles) fd.append("files", f, f.name);
+  cancelSession(){
+    if(this.evtSource){this.evtSource.close();this.evtSource=null;}
+    const msg=this.messages.find(m=>m.streaming);
+    if(msg)msg.streaming=false;
+    this.streaming=false;this.statusText='';
+    this.showToast('Session cancelled','info');
+  },
+  answerHitl(card,answer){
+    card.dismissed=true;
+    fetch(`/api/session/${this.currentUiId}/clarify`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clarification_id:card.clarification_id,answer})}).catch(()=>{});
+    this.showToast('Answer sent: '+answer,'info');
+  },
+  retry(){const last=[...this.messages].reverse().find(m=>m.role==='user');if(last)this.inputText=last.content;},
+  appendExplain(){this.inputText='Please explain your last response in more detail.';this.showPalette=false;this.$nextTick(()=>document.getElementById('composer-input')?.focus());},
+  exportSession(){
+    if(!this.messages.length){this.showToast('No session to export','info');return;}
+    let md=`# Cortex Synapse Export\n\n`;
+    this.messages.forEach(m=>{md+=`## ${m.role==='user'?'User':'Assistant'}\n\n${m.content}\n\n`;});
+    if(this.validationScore!=null)md+=`---\n\nValidation Score: ${(this.validationScore*100).toFixed(0)}%\n`;
+    const blob=new Blob([md],{type:'text/markdown'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`cortex-${Date.now()}.md`;a.click();
+  },
+  toggleDebug(){this.showPalette=false;this.railPanel=this.railPanel==='debug'?'dag':'debug';this.railHidden=false;},
+  copyDebug(){navigator.clipboard.writeText(this.debugEvents.map(e=>`${e.time} ${e.type} ${e.data}`).join('\n')).then(()=>this.showToast('Copied','success'));},
 
-  inputEl.value = "";
-  inputEl.style.height = "auto";
-  pendingFiles = [];
-  renderAttachPills();
-  streaming = true;
-  updateSendBtn();
-  appendStatus("Starting…");
+  usePreset(p){this.inputText=p.prompt;this.$nextTick(()=>document.getElementById('composer-input')?.focus());},
 
-  let uiId = null;
-  try {
-    const r = await fetch("/api/session", { method: "POST", body: fd });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      clearStatus();
-      appendMessage("assistant", "Error: " + (err.error || r.statusText), null, null);
-      streaming = false;
-      updateSendBtn();
-      return;
+  promoteDeltas(){if(!this.pendingDeltas.length){this.showToast('No deltas to promote','info');return;}[...this.pendingDeltas].forEach(d=>this.promoteDelta(d));},
+  promoteDelta(d){
+    fetch('/api/runtime/delta/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'promote',task_name:d.task_name})})
+      .then(()=>this.showToast(`Promoted: ${d.task_name}`,'success')).catch(()=>this.showToast('Promote failed — is Config Studio running?','error'));
+    this.pendingDeltas=this.pendingDeltas.filter(x=>x.task_name!==d.task_name);
+    this.learningToast=null;
+  },
+  discardDelta(d){
+    fetch('/api/runtime/delta/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'discard',task_name:d.task_name})}).catch(()=>{});
+    this.pendingDeltas=this.pendingDeltas.filter(x=>x.task_name!==d.task_name);
+    this.showToast(`Discarded: ${d.task_name}`,'info');
+  },
+  killAnt(ant){
+    if(!confirm(`Kill ${ant.ant_id}?`))return;
+    fetch(`/api/ants/${ant.ant_id}`,{method:'DELETE'}).catch(()=>{});
+    this.ants=this.ants.filter(a=>a.ant_id!==ant.ant_id);
+    this.showToast(`Killed ${ant.ant_id}`,'info');
+  },
+
+  fileUrl(art){
+    if(!art)return'#';
+    const sid=art.sessionId||this.activeSessionId;
+    if(!sid)return'#';
+    return`/api/history/${encodeURIComponent(sid)}/files/${encodeURIComponent(art.taskName||'ui_uploads')}/${encodeURIComponent(art.filename)}`;
+  },
+  async openPreview(art){
+    const url=this.fileUrl(art);
+    this.previewModal={url:url+'?inline=1',filename:art.filename,mimeType:art.mimeType||'',art};
+    this.previewContent='';
+    const mt=art.mimeType||'';
+    if(!mt.startsWith('image/')&&mt!=='application/pdf'){
+      try{this.previewContent=await fetch(url).then(r=>r.text());}catch(e){this.previewContent='Could not load preview.';}
     }
-    uiId = (await r.json()).ui_session_id;
-  } catch (e) {
-    clearStatus();
-    appendMessage("assistant", "Error: " + e.message, null, null);
-    streaming = false;
-    updateSendBtn();
-    return;
-  }
+  },
+  copyLink(art){if(!art)return;navigator.clipboard.writeText(location.origin+this.fileUrl(art)).then(()=>this.showToast('Link copied!','success')).catch(()=>this.showToast('Copy failed','error'));},
+  downloadAllZip(){
+    const sid=this.activeSessionId;
+    if(!sid){this.showToast('No active session','info');return;}
+    const a=document.createElement('a');a.href=`/api/session/${encodeURIComponent(sid)}/artifacts/zip`;a.download='';a.click();
+  },
 
-  const es = new EventSource(`/api/session/${encodeURIComponent(uiId)}/events`);
-  es.addEventListener("status", (e) => {
-    const d = JSON.parse(e.data);
-    appendStatus(d.message || "Working…");
-  });
-  es.addEventListener("task_start", (e) => {
-    const d = JSON.parse(e.data);
-    appendStatus(d.message || "Running task…");
-  });
-  es.addEventListener("task_complete", (e) => {
-    const d = JSON.parse(e.data);
-    appendStatus(d.message || "Task complete");
-  });
-  es.addEventListener("session_start", (e) => {
-    const d = JSON.parse(e.data);
-    appendStatus(d.message || "Session started");
-  });
-  es.addEventListener("session_end", () => {
-    appendStatus("Finalising…");
-  });
-  es.addEventListener("result", (e) => {
-    const d = JSON.parse(e.data);
-    clearStatus();
-    if (!currentAssistantEl) {
-      currentAssistantEl = appendMessage("assistant", d.content || "", null, null);
-    } else {
-      currentAssistantEl.querySelector(".body").textContent = d.content || "";
-    }
-  });
-  es.addEventListener("error", (e) => {
-    try {
-      const d = JSON.parse(e.data || "{}");
-      clearStatus();
-      appendMessage("assistant", "Error: " + (d.message || "unknown"), null, null);
-    } catch (_) {}
-  });
-  es.addEventListener("done", (e) => {
-    const d = JSON.parse(e.data);
-    if (d.session_id) currentThread = d.session_id;
-    clearStatus();
-    currentAssistantEl = null;
-    streaming = false;
-    updateSendBtn();
-    es.close();
-    loadThreads();
-  });
-  es.onerror = () => {
-    if (streaming) {
-      clearStatus();
-      streaming = false;
-      updateSendBtn();
-      es.close();
-    }
-  };
-}
-sendBtn.onclick = send;
+  async loadHistorySearch(){
+    try{
+      const q=this.historySearch?`?q=${encodeURIComponent(this.historySearch)}`:'';
+      const d=await fetch(`/api/history${q}`).then(r=>r.json());
+      this.historyResults=d.sessions||[];
+    }catch(e){}
+  },
 
-// ── Init ──────────────────────────────────────────────────────────────────
-(async () => {
-  try {
-    const r = await fetch("/api/config");
-    if (r.ok) {
-      const d = await r.json();
-      if (d.title) { document.title = d.title; $("title").textContent = d.title; }
+  toggleVoice(){
+    if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){this.showToast('Speech recognition not supported','error');return;}
+    if(this.voiceActive){this.voiceRec?.stop();this.voiceActive=false;return;}
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    const r=new SR();r.continuous=true;r.interimResults=true;
+    r.onresult=e=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++)t+=e.results[i][0].transcript;this.inputText+=t;};
+    r.onerror=()=>{this.voiceActive=false;};r.onend=()=>{this.voiceActive=false;};
+    r.start();this.voiceRec=r;this.voiceActive=true;
+  },
+
+  handleInput(e){
+    this.inputText=e.target.value;
+    this.autoResize(e.target);
+    if(e.target.value.startsWith('/')){this.showPalette=true;this.paletteFilter=e.target.value;this.paletteIndex=0;}
+    else{this.showPalette=false;}
+  },
+  handleKeydown(e){
+    if(this.showPalette){
+      if(e.key==='ArrowDown'){e.preventDefault();this.paletteIndex=Math.min(this.paletteIndex+1,this.paletteCmds.length-1);return;}
+      if(e.key==='ArrowUp'){e.preventDefault();this.paletteIndex=Math.max(this.paletteIndex-1,0);return;}
+      if(e.key==='Tab'||e.key==='Enter'){e.preventDefault();const cmd=this.paletteCmds[this.paletteIndex];if(cmd)this.runCmd(cmd);return;}
+      if(e.key==='Escape'){this.showPalette=false;return;}
     }
-  } catch (e) {}
-  loadThreads();
-})();
+    if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();this.streaming?this.cancelSession():this.send();return;}
+    if(e.key==='Escape')this.showPalette=false;
+  },
+  runCmd(cmd){if(!cmd)return;this.inputText='';this.showPalette=false;cmd.action();},
+  autoResize(el){if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px';},
+
+  scrollToBottom(){const el=document.getElementById('messages');if(!el)return;const near=el.scrollHeight-el.scrollTop-el.clientHeight<240;if(near||this.streaming)el.scrollTop=el.scrollHeight;},
+  renderAllMarkdown(){
+    this.messages.forEach(msg=>{
+      if(msg.role!=='assistant')return;
+      const el=document.getElementById('msg-'+msg.id);
+      if(!el)return;
+      const raw=msg.content||'';
+      if(el.dataset.rendered===raw)return;
+      try{
+        el.innerHTML=typeof marked!=='undefined'?marked.parse(raw,{breaks:true,gfm:true}):raw.replace(/\n/g,'<br>');
+        el.dataset.rendered=raw;
+        if(typeof hljs!=='undefined')el.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+      }catch(e){el.textContent=raw;}
+    });
+  },
+
+  fmtBytes(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';},
+  fmtTs(ts){if(!ts)return'';const d=typeof ts==='number'?new Date(ts*1000):new Date(ts),n=new Date();if(isNaN(d))return'';return d.toDateString()===n.toDateString()?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'});},
+  scoreColor(s){if(s==null)return'var(--text-muted)';if(s>=0.8)return'var(--success)';if(s>=0.5)return'var(--warning)';return'var(--danger)';},
+  mimeIcon(m){if(!m)return'📄';if(m.startsWith('image/'))return'🖼';if(m==='application/pdf')return'📕';if(m.includes('csv'))return'📊';if(m==='application/json')return'🗂';if(m.startsWith('text/'))return'📝';return'📄';},
+  taskStatusIcon(s){if(s==='running')return'<span style="display:inline-block;animation:spin 1s linear infinite;color:var(--accent);font-size:15px;line-height:1">⟳</span>';if(s==='done')return'<span style="color:var(--success)">✓</span>';if(s==='failed')return'<span style="color:var(--danger)">✗</span>';if(s==='paused')return'<span style="color:var(--warning)">⏸</span>';return'<span style="color:var(--text-muted)">○</span>';},
+
+  showToast(msg,type='info'){
+    this.toast={msg,type};
+    if(this.toastTimer)clearTimeout(this.toastTimer);
+    this.toastTimer=setTimeout(()=>{this.toast=null;},3500);
+  },
+
+  async launchService(service){
+    this.launchingService=service;
+    try{
+      const r=await fetch(`/api/services/${service}/launch`,{method:'POST'});
+      const d=await r.json();
+      if(d.url) window.open(d.url,'_blank');
+      else this.showToast(d.error||'Could not start service','error');
+    }catch(e){this.showToast('Failed to start service','error');}
+    finally{this.launchingService=null;}
+  },
+};}
 </script>
 </body>
 </html>

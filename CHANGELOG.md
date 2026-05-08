@@ -5,6 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-05-07
+
+### Added
+
+#### Built-in Web Search
+
+- **`DuckDuckGoSearch`** (`cortex/modules/builtin_search.py`) — zero-config web search via DuckDuckGo Lite. No API key required. Scrapes `lite.duckduckgo.com` and the instant-answer API; returns formatted markdown results (up to 8 results by default). Includes a fallback chain: configured tool server → built-in DuckDuckGo.
+- **`agent.builtin_web_search_enabled`** config key (default `true`) — controls whether the built-in search is activated. When enabled, `web_search` is always registered as an available capability.
+- `GenericMCPAgent` routes `web_search` capability hits through the fallback chain automatically.
+
+#### Adaptive Model Routing (AMR)
+
+- **`AdaptiveModelRoutingConfig`** — new `adaptive_model_routing` config block: `enabled` (default `false`), `tiers` (`ComplexityTierMap` mapping `low`/`medium`/`high` to provider keys), and `validation_provider` (auto-selects if empty).
+- **`ComplexityTierMap`** — Pydantic model mapping the three complexity tiers to named LLM provider keys defined in `llm_access`.
+- Decomposer LLM now emits a `<model_tier>` tag (`low`|`medium`|`high`) per task when AMR is enabled. `PrimaryAgent._amr_resolve_provider()` maps the tier to a provider key; `_amr_validation_provider()` selects the validation provider (explicit or auto-pick first non-default).
+- `DecomposedTask` carries two new optional fields: `complexity_tier` and `llm_provider`. `TaskGraphCompiler` applies the AMR-resolved provider at `RuntimeTask` instantiation via `model_copy(update={...})`.
+- Ant Colony subprocesses inherit `amr_config` and the parent's provider pool so sub-task routing mirrors the orchestrator's tier policy.
+- System prompt includes detailed complexity-tier assessment guidelines when AMR is active.
+
+#### ToolForge — Runtime MCP Server Code Generation
+
+- **`ToolForgeConfig`** — new `tool_forge` config block: `enabled` (default `false`), `persist_by_default` (default `false`), `spawn_timeout_seconds` (default `30`), `codegen_llm_provider` (default `"default"`).
+- New capability hint `forge_mcp` registered when `tool_forge.enabled`, `code_sandbox.enabled`, and `ant_colony.enabled` are all `true`.
+- **`GenericMCPAgent._call_forge_mcp()`** — generates an MCP server Python script via the code sandbox, writes it to `{storage_base}/ants/{task_name}/server.py`, and returns the script path in the result envelope (`forged_server_path`).
+- **`AntColony.hatch_from_script()`** — spawns a pre-written MCP server, performs a `/health` check, and optionally persists it to `ants.yaml` with `source='forged'` and `auto_restart` metadata.
+- Wave-boundary hook in `framework.py`: after each wave, envelopes with a `forged_server_path` trigger `hatch_from_script()` so dependent tasks in the next wave see the new capability. Failures are non-fatal — the session continues.
+
+#### Expanded Streaming Event Suite
+
+Seven new typed event classes in `cortex/streaming/status_events.py`:
+
+| Event class | `EventType` value | Purpose |
+|---|---|---|
+| `TaskToolCallEvent` | `TASK_TOOL_CALL` | Emitted before every tool server invocation |
+| `TaskBlueprintEvent` | `TASK_BLUEPRINT` | Full DAG (tasks, dependencies, wave assignments) after decomposition |
+| `IntentClassifiedEvent` | `INTENT_CLASSIFIED` | Intent Gate decision with confidence and reasoning |
+| `SynthesisTierEvent` | `SYNTHESIS_TIER` | Excerpt tier selected during synthesis context assembly |
+| `WorkspaceEvent` | `WORKSPACE_EVENT` | File I/O operation (created/modified/deleted/listed) performed by WorkspaceBash |
+| `FileOutputEvent` | `FILE_OUTPUT` | File written as a task output (name, MIME type, size) |
+| `SessionTokenUsageEvent` | `SESSION_TOKEN_USAGE` | Cumulative input/output/cache token counts at session end |
+
+#### Stdio MCP Transport
+
+- **`_StdioMCPSession`** (`cortex/modules/tool_server_registry.py`) — full MCP-over-stdio session: spawns the server process, performs the `initialize` / `notifications/initialized` handshake, exposes `list_tools()` and `call_tool()`, and tears down cleanly on exit.
+- `ToolServerConnection` gains a `stdio_session` field for the active stdio session object.
+- `GenericMCPAgent._call_stdio_tool_server()` — routes tasks to stdio MCP servers.
+- `GenericMCPAgent._map_instruction_to_args()` — maps natural-language task instructions to MCP tool argument schemas (search → `query`, URL tools → extracted URL, fallback → first required property).
+
+#### Cortex Synapse Chat UI — Complete Redesign
+
+- `cortex/ui/static/index.html` fully rewritten. Stack: Tailwind CSS (CDN), Alpine.js, marked.js, highlight.js.
+- Features: live SSE streaming with markdown rendering, intent classification badge, task blueprint DAG before execution, per-task progress chips, tool-call indicators, send-time and mid-session file uploads, output file download + session artifact ZIP, workspace event feed, inline HITL clarification prompts, token usage footer, session history sidebar with full-text search, service launcher (Config Studio, Setup Wizard).
+
+Five new server endpoints in `cortex/ui/server.py`:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /session/{id}/clarify` | HITL answer ingestion |
+| `POST /session/{id}/upload` | Mid-session file upload (multipart) |
+| `GET /session/{id}/artifacts.zip` | ZIP download of all output files |
+| `GET /history/search` | Full-text search across sessions |
+| `POST /session/{id}/ant-stop` | Request ant task cancellation |
+
+- `GET /history/{session_id}/file/{filename}` updated with `?inline=1` query parameter for in-browser preview.
+
+#### Learning Engine — Manual Delta Control
+
+- **`LearningEngine.promote_delta(task_name)`** — force-applies a staged delta by name, bypassing the confidence gate.
+- **`LearningEngine.discard_delta(task_name)`** — removes a staged delta from `pending.yaml`.
+- **`LearningEngine.set_cortex_yaml_path(path)`** — stores the config path used by `promote_delta`'s `apply_delta()` call.
+- `CortexFramework` calls `set_cortex_yaml_path` during `initialize()` so the path is always wired up.
+
+#### Setup Wizard — AMR & ToolForge Configuration
+
+- New wizard toggles: `builtin_web_search_enabled`, `tool_forge_enabled` (gated on ant_colony + code_sandbox), `amr_enabled`, per-tier provider mappings (low/medium/high), and `validation_provider`.
+- `_load_existing_config` parses and surfaces all new options from an existing `cortex.yaml`.
+- Docker publish in the wizard now accepts a `--with-ui` flag.
+- MCP and UI server publish flows start as non-blocking background `Popen` with correct endpoint hints.
+- Logo updated to `cortex-logo-new-v1.svg`.
+
+#### Documentation
+
+- **`docs/CORTEX_SYNAPSE.md`** — new comprehensive guide to the Cortex Synapse chat UI: features overview, full REST API reference (sessions, history, runtime management, configuration), authentication modes (none/token/basic), headless curl examples, and technology stack notes.
+
+### Changed
+
+- **Primary Agent system prompt** now includes a human-readable capability descriptions table so the decomposer understands the purpose of each available capability. Includes explicit guidance: use `web_search` for live data, `workspace_bash` for file I/O, `llm_synthesis` for pure reasoning; never refuse by saying it cannot create files.
+- **`CortexFramework.run_session()`** emits `IntentClassifiedEvent` (after Intent Gate), `TaskBlueprintEvent` (after decomposition), and `SessionTokenUsageEvent` (at session end).
+- **`AntColony._build_ant_yaml()`** replaces the old hardcoded template with a builder function that injects AMR config and provider pool into each generated `cortex.yaml`.
+- **`cortex publish mcp`** (`cortex/cli/publish.py`) now runs a real aiohttp server at `POST /mcp` (alias `POST /run`) that calls `run_session()` and returns the response. Previously logged a placeholder. Sets `CORTEX_INTERACTION_MODE=rpc`.
+- **`cortex publish package`** uses `sys.executable` instead of a hardcoded `"python"` binary.
+- **`cortex publish ui`** shows the `localhost` URL to the user even when the server binds to `0.0.0.0`.
+
+### Internal
+
+- `available_capabilities` derived from tool registry + `llm_synthesis` + `workspace_bash` flags and passed to `GenericMCPAgent` for inclusion in the LLM context.
+- `ResultEnvelope` carries two new optional fields: `task_name` (string, not just ID) and `forged_server_path` (path to a ToolForge-generated script).
+
+---
+
 ## [1.3.1] - 2026-05-01
 
 ### Added
@@ -184,6 +284,7 @@ Initial public release of the Cortex Agent Framework.
 - PyPI metadata, classifiers, and project URLs.
 - GitHub Actions CI running pytest on Python 3.11 and 3.12 plus a ruff lint job.
 
+[1.4.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.4.0
 [1.3.1]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.3.1
 [1.3.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.3.0
 [1.2.0]: https://github.com/kritird/Cortex-Agent-Framework/releases/tag/v1.2.0

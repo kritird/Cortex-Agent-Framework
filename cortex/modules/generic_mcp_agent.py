@@ -114,6 +114,7 @@ class GenericMCPAgent:
                                  # mid-run when no tool server is found for a capability.
         workspace_bash=None,     # cortex.modules.workspace_bash.WorkspaceBash instance
         hitl_relay_url: Optional[str] = None,  # URL of per-session HITL relay (for ant calls)
+        builtin_web_search_enabled: bool = True,
     ):
         self._session_storage_path = session_storage_path
         self._scrubber = scrubber or CredentialScrubber()
@@ -123,6 +124,7 @@ class GenericMCPAgent:
         self._discovery_callback = discovery_callback
         self._workspace_bash = workspace_bash
         self._hitl_relay_url = hitl_relay_url
+        self._builtin_web_search_enabled = builtin_web_search_enabled
 
     async def execute_task(
         self,
@@ -326,21 +328,31 @@ class GenericMCPAgent:
         verb = (action or "").strip().lower()
         try:
             if verb in ("read", "read_file"):
-                return await self._workspace_bash.read_file(workspace, rel_path or ".")
+                result = await self._workspace_bash.read_file(workspace, rel_path or ".")
+                await self._workspace_bash._emit_workspace_event(session_id, task, "read", rel_path or ".")
+                return result
             elif verb in ("list", "list_dir", "ls"):
-                return await self._workspace_bash.list_dir(workspace, rel_path or ".")
+                result = await self._workspace_bash.list_dir(workspace, rel_path or ".")
+                await self._workspace_bash._emit_workspace_event(session_id, task, "listed", rel_path or ".", is_dir=True)
+                return result
             elif verb in ("write", "write_file"):
                 if not content:
                     return "[workspace_bash write: no CONTENT provided]"
-                return await self._workspace_bash.write_file(
+                result = await self._workspace_bash.write_file(
                     workspace, rel_path or "output.txt", content, task, session_id
                 )
+                await self._workspace_bash._emit_workspace_event(session_id, task, "modified", rel_path or "output.txt")
+                return result
             elif verb in ("execute", "exec", "run", "bash"):
                 cmd = command or instruction
-                return await self._workspace_bash.execute(workspace, cmd, task, session_id)
+                result = await self._workspace_bash.execute(workspace, cmd, task, session_id)
+                await self._workspace_bash._emit_workspace_event(session_id, task, "executed", workspace)
+                return result
             else:
                 # Unknown verb — treat entire instruction as a command
-                return await self._workspace_bash.execute(workspace, instruction, task, session_id)
+                result = await self._workspace_bash.execute(workspace, instruction, task, session_id)
+                await self._workspace_bash._emit_workspace_event(session_id, task, "executed", workspace)
+                return result
         except Exception as exc:
             from cortex.exceptions import CortexHITLDeniedError
             if isinstance(exc, CortexHITLDeniedError):
@@ -363,6 +375,8 @@ class GenericMCPAgent:
         session_id = task.task_id.split("/")[0]
         tool_trace = []
         kwargs["event_queue"] = event_queue
+        # Derive available capabilities from the registry for LLM context
+        available_capabilities = list(tool_registry._capability_map.keys()) + ["llm_synthesis", "workspace_bash"]
 
         # Log principal identity for audit trail
         if task.principal:
@@ -406,6 +420,7 @@ class GenericMCPAgent:
         output_content = ""
         output_type = config.output_format
         generated_script: Optional[str] = None   # populated for code_exec tasks
+        forged_server_path: Optional[str] = None  # populated for forge_mcp tasks
         token_usage = TokenUsage()
 
         # Scripted handler
@@ -419,6 +434,17 @@ class GenericMCPAgent:
         # Code execution sandbox
         elif config.capability_hint == "code_exec":
             output_content, generated_script = await self._call_code_exec(
+                task=task,
+                instruction=full_instruction,
+                config=config,
+                llm_client=llm_client,
+                tool_trace=tool_trace,
+                event_queue=kwargs.get("event_queue"),
+            )
+
+        # ToolForge — generate a new MCP server script and stage it for wave-boundary registration
+        elif config.capability_hint == "forge_mcp":
+            output_content, forged_server_path = await self._call_forge_mcp(
                 task=task,
                 instruction=full_instruction,
                 config=config,
@@ -453,9 +479,34 @@ class GenericMCPAgent:
                 tool_trace=tool_trace,
                 task=task,
                 event_queue=event_queue,
+                available_capabilities=available_capabilities,
             )
 
-        # Tool server call (web_search, document_generation, image_generation, auto)
+        # Web search — try configured tool server first, fall back to built-in DuckDuckGo
+        elif config.capability_hint == "web_search":
+            conn = await _select_tool_for_task("web_search", config.tool_servers, tool_registry)
+            if conn:
+                try:
+                    output_content = await self.call_tool_server(
+                        server_name=conn.server_name,
+                        tool_name=config.capability_hint,
+                        params={"instruction": full_instruction, "task_id": task.task_id},
+                        tool_registry=tool_registry,
+                    )
+                    tool_trace.append(f"tool:{conn.server_name}")
+                except Exception as e:
+                    logger.warning("Configured web_search server failed (%s) — using built-in DDG", e)
+                    conn = None
+            if not conn:
+                if not self._builtin_web_search_enabled:
+                    output_content = "Web search is disabled. Configure a web_search tool server or enable builtin_web_search_enabled in the agent config."
+                    tool_trace.append("builtin:duckduckgo:disabled")
+                else:
+                    from cortex.modules.builtin_search import DuckDuckGoSearch
+                    output_content = await DuckDuckGoSearch().search(full_instruction)
+                    tool_trace.append("builtin:duckduckgo")
+
+        # Tool server call (document_generation, image_generation, auto, etc.)
         else:
             conn = await _select_tool_for_task(
                 config.capability_hint,
@@ -487,6 +538,15 @@ class GenericMCPAgent:
                     )
 
             if conn:
+                if event_queue:
+                    from cortex.streaming.status_events import TaskToolCallEvent
+                    await event_queue.put(TaskToolCallEvent(
+                        session_id=session_id,
+                        task_id=task.task_id,
+                        task_name=task.task_name,
+                        tool_name=config.capability_hint,
+                        tool_input={"server": conn.server_name},
+                    ))
                 tool_result = await self.call_tool_server(
                     server_name=conn.server_name,
                     tool_name=config.capability_hint,
@@ -504,6 +564,7 @@ class GenericMCPAgent:
                         tool_trace=tool_trace,
                         task=task,
                         event_queue=event_queue,
+                        available_capabilities=available_capabilities,
                     )
                 else:
                     output_content = tool_result
@@ -521,6 +582,7 @@ class GenericMCPAgent:
                     tool_trace=tool_trace,
                     task=task,
                     event_queue=event_queue,
+                    available_capabilities=available_capabilities,
                 )
 
         # Scrub credentials from output
@@ -534,6 +596,7 @@ class GenericMCPAgent:
 
         return ResultEnvelope(
             task_id=task.task_id,
+            task_name=task.task_name,
             session_id=session_id,
             status="complete",
             mandatory=task.mandatory,
@@ -545,6 +608,7 @@ class GenericMCPAgent:
             context_hints=task.context_hints,
             token_usage=token_usage,
             generated_script=generated_script,
+            forged_server_path=forged_server_path,
             is_adhoc=task.is_adhoc,
         )
 
@@ -557,6 +621,7 @@ class GenericMCPAgent:
         tool_trace: List[str],
         task: Optional[RuntimeTask] = None,
         event_queue=None,
+        available_capabilities: Optional[List[str]] = None,
     ) -> tuple[str, TokenUsage]:
         """Make a streaming LLM call for this task. Returns (content, token_usage).
 
@@ -570,10 +635,20 @@ class GenericMCPAgent:
         import re as _re
 
         provider_name = config.llm_provider or "default"
+        caps_note = ""
+        if available_capabilities:
+            caps_note = (
+                f" Agent capabilities available: {', '.join(sorted(available_capabilities))}."
+            )
         system = (
-            f"You are executing a '{config.name}' task. "
+            f"You are executing a '{config.name}' task as part of an AI agent.{caps_note} "
             f"Output format: {config.output_format}. "
-            f"{config.description}"
+            f"{config.description} "
+            f"Generate the requested content directly and completely. "
+            f"If the task involves creating a document, PDF, report, or any file, "
+            f"produce the full content as your output — the framework handles saving it to disk. "
+            f"Never refuse by saying you cannot create files or access the internet; "
+            f"just produce the best output you can for this task."
         )
 
         hitl_enabled = (
@@ -722,9 +797,9 @@ class GenericMCPAgent:
         params: Dict,
         tool_registry: ToolServerRegistry,
     ) -> str:
-        """Call an MCP tool server endpoint."""
+        """Call an MCP tool server endpoint (HTTP or stdio)."""
         conn = tool_registry._connections.get(server_name)
-        if not conn or not conn.session:
+        if not conn:
             raise CortexToolUnavailableError(
                 f"Tool server '{server_name}' has no active connection",
                 server_name=server_name,
@@ -733,6 +808,17 @@ class GenericMCPAgent:
         if not info or not info.status.startswith("READY"):
             raise CortexToolUnavailableError(
                 f"Tool server '{server_name}' is not ready (status: {info.status if info else 'unknown'})",
+                server_name=server_name,
+            )
+
+        # ── stdio transport ────────────────────────────────────────────────────
+        if conn.stdio_session is not None:
+            return await self._call_stdio_tool_server(conn, info, tool_name, params, tool_registry)
+
+        # ── HTTP transport ─────────────────────────────────────────────────────
+        if not conn.session:
+            raise CortexToolUnavailableError(
+                f"Tool server '{server_name}' has no HTTP session",
                 server_name=server_name,
             )
         base_url = info.url
@@ -783,10 +869,176 @@ class GenericMCPAgent:
                 server_name=server_name,
             )
 
+    async def _call_stdio_tool_server(
+        self,
+        conn,
+        info,
+        capability_hint: str,
+        params: Dict,
+        tool_registry,
+    ) -> str:
+        """Call a stdio MCP tool server, mapping capability_hint → actual tool name + args."""
+        instruction = params.get("instruction", "")
+
+        # Find the actual tool name that matches this capability
+        actual_tool = capability_hint
+        if info.tools:
+            for t in info.tools:
+                if capability_hint.lower() in t.name.lower() or t.name.lower() in capability_hint.lower():
+                    actual_tool = t.name
+                    break
+            else:
+                # Default: first tool on the server
+                actual_tool = info.tools[0].name
+
+        # Map Cortex instruction → MCP tool arguments based on tool schema
+        arguments = self._map_instruction_to_args(actual_tool, instruction, info.tools)
+
+        try:
+            result = await conn.stdio_session.call_tool(actual_tool, arguments)
+            return tool_registry.apply_output_guard(conn.server_name, result)
+        except Exception as e:
+            from cortex.exceptions import CortexToolUnavailableError
+            raise CortexToolUnavailableError(
+                f"stdio tool '{actual_tool}' on '{conn.server_name}' failed: {e}",
+                server_name=conn.server_name,
+            )
+
+    @staticmethod
+    def _map_instruction_to_args(tool_name: str, instruction: str, tools) -> Dict:
+        """Map a natural-language instruction to the MCP tool's argument schema."""
+        # Find the schema for this tool
+        schema: Dict = {}
+        for t in (tools or []):
+            if t.name == tool_name:
+                schema = t.input_schema or {}
+                break
+
+        props = schema.get("properties", {})
+
+        # Common search tools: map first string property to the instruction
+        search_props = [p for p in props if p in ("query", "q", "search", "text", "input")]
+        if search_props:
+            return {search_props[0]: instruction[:500]}
+
+        # Fetch/URL tools
+        url_props = [p for p in props if p in ("url", "uri", "href", "link")]
+        if url_props:
+            import re as _re
+            url_match = _re.search(r'https?://\S+', instruction)
+            return {url_props[0]: url_match.group(0) if url_match else instruction}
+
+        # Fallback: use first required property or first property
+        required = schema.get("required", [])
+        first_prop = (required or list(props.keys()) or ["query"])[0]
+        return {first_prop: instruction[:500]}
+
     async def execute_bash(self, command: str, session_storage_path: str) -> str:
         """Execute bash command within security sandbox."""
         sandbox = BashSandbox(session_storage_path)
         return await sandbox.execute(command)
+
+    async def _call_forge_mcp(
+        self,
+        task: RuntimeTask,
+        instruction: str,
+        config: TaskTypeConfig,
+        llm_client: LLMClient,
+        tool_trace: List[str],
+        event_queue=None,
+    ) -> tuple[str, Optional[str]]:
+        """Generate and write a FastMCP-compatible MCP server script (ToolForge path).
+
+        Reuses the code sandbox for LLM code generation. Unlike ``_call_code_exec``,
+        the script is written to a **stable named path** under
+        ``{storage_base}/ants/{task_name}/server.py`` rather than the session-ephemeral
+        ``code_output/`` directory, so ``AntColony.hatch_from_script()`` can find and
+        spawn it at the wave boundary after this task completes.
+
+        The generated script must:
+        - Use FastMCP and bind to ``CORTEX_ANT_PORT`` env var
+        - Expose a ``/health`` endpoint returning HTTP 200
+        - Define at least one ``@mcp.tool()`` decorated function
+
+        Returns ``(status_message, script_path)`` on success or raises
+        ``CortexTaskError`` on codegen/sandbox failure.
+        ``script_path`` is ``None`` only if an unexpected error prevented the write.
+        """
+        from cortex.streaming.status_events import StatusEvent, EventType
+
+        session_id = task.task_id.split("/")[0]
+        task_name = task.task_name
+
+        if not self._code_sandbox:
+            raise CortexTaskError(
+                "forge_mcp capability requires code_sandbox to be enabled in cortex.yaml "
+                "(set code_sandbox.enabled: true)",
+                task_id=task.task_id,
+                task_name=task_name,
+            )
+
+        if event_queue:
+            await event_queue.put(StatusEvent(
+                message=f"Generating MCP server code for '{task_name}'...",
+                session_id=session_id,
+                event_type=EventType.STATUS,
+            ))
+
+        # Stable output path — lives under ants/<task_name>/ so AntColony.hatch_from_script()
+        # can find it without the caller needing to pass a path explicitly.
+        storage_base = Path(self._session_storage_path).parent.parent
+        server_dir = storage_base / "ants" / task_name
+        server_dir.mkdir(parents=True, exist_ok=True)
+        script_path = server_dir / "server.py"
+
+        # Augment the developer/LLM instruction with the structural requirements
+        # the framework needs to spawn and health-check the generated server.
+        forge_instruction = (
+            f"{instruction}\n\n"
+            "--- ToolForge structural requirements (mandatory) ---\n"
+            "Generate a complete, runnable Python MCP server using FastMCP.\n"
+            "Requirements:\n"
+            "  1. `from mcp.server.fastmcp import FastMCP` and `mcp = FastMCP('<name>')`\n"
+            f"     Use name: {task_name}\n"
+            "  2. Read the port from env: `int(os.environ.get('CORTEX_ANT_PORT', 8080))`\n"
+            "  3. Expose a /health route returning HTTP 200 (use a background thread or\n"
+            "     aiohttp alongside FastMCP if needed).\n"
+            "  4. Define all tool functions with the `@mcp.tool()` decorator.\n"
+            "  5. End with:\n"
+            "     `if __name__ == '__main__':\n"
+            "         import os\n"
+            f"        mcp.run(transport='sse', port=int(os.environ.get('CORTEX_ANT_PORT', 8080)))`\n"
+            "  6. No placeholders — the file must run as-is with `python server.py`.\n"
+        )
+
+        source_code, result = await self._code_sandbox.generate_and_execute(
+            task_name=task_name,
+            description=config.description,
+            instruction=forge_instruction,
+            output_format="text",
+            task_input={"instruction": forge_instruction, "output_dir": str(server_dir)},
+            session_id=session_id,
+            output_dir=str(server_dir),
+            llm_client=llm_client,
+        )
+        tool_trace.append("sandbox:forge_codegen")
+
+        if result.exit_code != 0:
+            raise CortexTaskError(
+                f"Forge codegen/validation failed: {result.error or result.stderr}",
+                task_id=task.task_id,
+                task_name=task_name,
+            )
+
+        script_path.write_text(source_code, encoding="utf-8")
+        tool_trace.append(f"forge:wrote:{script_path}")
+        logger.info("ToolForge: server script written to %s for task '%s'", script_path, task_name)
+
+        return (
+            f"MCP server script generated at {script_path}. "
+            "Will be spawned and registered at wave boundary.",
+            str(script_path),
+        )
 
     async def _call_code_exec(
         self,

@@ -33,7 +33,7 @@ class WizardServer:
         async def handle_logo(request):
             # Serve the repo-level cortex-logo.svg so the wizard always renders
             # the canonical brand asset, regardless of where cortex is installed.
-            repo_logo = Path(__file__).resolve().parents[2] / "logo" / "cortex-logo.svg"
+            repo_logo = Path(__file__).resolve().parents[2] / "logo" / "cortex-logo-new-v1.svg"
             if repo_logo.exists():
                 return web.FileResponse(repo_logo)
             return web.Response(status=404, text="logo not found")
@@ -310,6 +310,7 @@ def _generate_config(data: dict) -> str:
     }
     _only_if(agent_block, "synthesis_guidance", data.get("agent_synthesis_guidance"), "")
     _only_if(agent_block, "interaction_mode", data.get("interaction_mode"), "interactive")
+    _only_if(agent_block, "builtin_web_search_enabled", data.get("builtin_web_search_enabled"), True)
 
     time_cfg = {}
     _only_if(time_cfg, "default_max_wait_seconds", data.get("max_wait_seconds"), 1000)
@@ -687,6 +688,28 @@ def _generate_config(data: dict) -> str:
             _only_if(ant_cfg, "api_key_env_var", data.get("api_key_env_var"), "ANTHROPIC_API_KEY")
         config["ant_colony"] = ant_cfg
 
+    # ToolForge — only active when ant_colony AND code_sandbox are both enabled
+    if data.get("tool_forge_enabled") and data.get("ant_colony_enabled") and data.get("code_sandbox_enabled"):
+        forge_cfg: dict = {"enabled": True}
+        _only_if(forge_cfg, "persist_by_default", data.get("tool_forge_persist_by_default"), False)
+        _only_if(forge_cfg, "spawn_timeout_seconds", data.get("tool_forge_spawn_timeout_seconds"), 30)
+        forge_provider = data.get("tool_forge_codegen_llm_provider") or "default"
+        _only_if(forge_cfg, "codegen_llm_provider", forge_provider, "default")
+        config["tool_forge"] = forge_cfg
+
+    # Adaptive Model Routing
+    if data.get("amr_enabled"):
+        amr_cfg: dict = {"enabled": True}
+        amr_cfg["tiers"] = {
+            "low": data.get("amr_tier_low") or "default",
+            "medium": data.get("amr_tier_medium") or "default",
+            "high": data.get("amr_tier_high") or "default",
+        }
+        vp = (data.get("amr_validation_provider") or "").strip()
+        if vp:
+            amr_cfg["validation_provider"] = vp
+        config["adaptive_model_routing"] = amr_cfg
+
     return yaml.dump(config, default_flow_style=False, sort_keys=False)
 
 
@@ -729,6 +752,8 @@ def _load_existing_config(config_path: str) -> dict:
     ui_raw = raw.get("ui", {}) or {}
     ui_auth_raw = ui_raw.get("auth", {}) or {}
     ant_colony_raw = raw.get("ant_colony", {}) or {}
+    amr_raw = raw.get("adaptive_model_routing", {}) or {}
+    amr_tiers_raw = amr_raw.get("tiers", {}) or {}
 
     def _kv_to_text(d):
         if not isinstance(d, dict):
@@ -774,6 +799,7 @@ def _load_existing_config(config_path: str) -> dict:
         "scout_ext_max_new_per_session": scout_ext.get("max_new_per_session", 5),
         "scout_ext_max_stale_days": scout_ext.get("max_stale_days", 30),
         "scout_ext_search_timeout_s": scout_ext.get("search_timeout_s", 100.0),
+        "builtin_web_search_enabled": agent.get("builtin_web_search_enabled", True),
         # ── LLM ──
         "provider": llm.get("provider", "anthropic"),
         "model": llm.get("model", ""),
@@ -856,6 +882,17 @@ def _load_existing_config(config_path: str) -> dict:
         "ant_colony_auto_restart": ant_colony_raw.get("auto_restart", True),
         "ant_colony_auto_hatch_on_gap": ant_colony_raw.get("auto_hatch_on_gap", False),
         "ant_colony_llm_provider": ant_colony_raw.get("llm_provider", "default"),
+        # ── ToolForge ──
+        "tool_forge_enabled": (raw.get("tool_forge", {}) or {}).get("enabled", False),
+        "tool_forge_persist_by_default": (raw.get("tool_forge", {}) or {}).get("persist_by_default", False),
+        "tool_forge_spawn_timeout_seconds": (raw.get("tool_forge", {}) or {}).get("spawn_timeout_seconds", 30),
+        "tool_forge_codegen_llm_provider": (raw.get("tool_forge", {}) or {}).get("codegen_llm_provider", "default"),
+        # ── Adaptive Model Routing ──
+        "amr_enabled": amr_raw.get("enabled", False),
+        "amr_tier_low": amr_tiers_raw.get("low", "default"),
+        "amr_tier_medium": amr_tiers_raw.get("medium", "default"),
+        "amr_tier_high": amr_tiers_raw.get("high", "default"),
+        "amr_validation_provider": amr_raw.get("validation_provider", ""),
         # ── Chat UI ──
         "ui_enabled": ui_raw.get("enabled", False),
         "ui_host": ui_raw.get("host", "0.0.0.0"),
@@ -1100,23 +1137,30 @@ def _run_publish(mode: str, config_path: str, data: dict) -> dict:
     try:
         if mode == "docker":
             tag = data.get("docker_tag", "cortex-agent:latest")
+            ui_port = data.get("ui_port", 8090)
+            with_ui = data.get("ui_enabled", False)
             result = subprocess.run(
-                [python, "-m", "cortex.cli.main", "publish", "docker", "--tag", tag, "--config", config_path],
+                [python, "-m", "cortex.cli.main", "publish", "docker",
+                 "--tag", tag, "--config", config_path]
+                + (["--with-ui"] if with_ui else []),
                 capture_output=True, text=True, timeout=60,
             )
+            exposed_port = ui_port if with_ui else 8090
             return {
                 "success": result.returncode == 0,
                 "output": result.stdout + result.stderr,
                 "mode": "docker",
+                "ui_port": exposed_port,
                 "next_steps": [
                     f"docker build -f Dockerfile.cortex -t {tag} .",
-                    f"docker run -p 8080:8080 --env-file .env {tag}",
+                    f"docker run --rm -p {exposed_port}:{exposed_port} -e YOUR_API_KEY=... {tag}",
                 ],
             }
         elif mode == "package":
             output_dir = data.get("output_dir", "dist")
             result = subprocess.run(
-                [python, "-m", "cortex.cli.main", "publish", "package", "--output-dir", output_dir],
+                [python, "-m", "cortex.cli.main", "publish", "package",
+                 "--output-dir", output_dir],
                 capture_output=True, text=True, timeout=120,
             )
             return {
@@ -1125,41 +1169,71 @@ def _run_publish(mode: str, config_path: str, data: dict) -> dict:
                 "mode": "package",
                 "next_steps": [
                     f"pip install {output_dir}/*.whl",
-                    "cortex dev --config cortex.yaml",
+                    f"cortex publish ui --config {config_path}",
                 ],
             }
         elif mode == "mcp":
             port = data.get("mcp_port", 8080)
-            result = subprocess.run(
-                [python, "-m", "cortex.cli.main", "publish", "mcp", "--config", config_path, "--port", str(port)],
-                capture_output=True, text=True, timeout=60,
-            )
+            # Start the MCP server as a background process (non-blocking).
+            try:
+                subprocess.Popen(
+                    [python, "-m", "cortex.cli.main", "publish", "mcp",
+                     "--config", config_path, "--port", str(port)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                server_launched = True
+            except Exception:
+                server_launched = False
             return {
-                "success": result.returncode == 0,
-                "output": result.stdout + result.stderr,
+                "success": True,
+                "output": (
+                    f"MCP server starting on port {port}.\n"
+                    f"Endpoint: http://localhost:{port}/mcp"
+                    if server_launched else
+                    f"Run manually: cortex publish mcp --config {config_path} --port {port}"
+                ),
                 "mode": "mcp",
+                "mcp_port": port,
                 "next_steps": [
-                    f"cortex publish mcp --port {port}",
-                    f"Add to another agent's cortex.yaml:\n  tool_servers:\n    my_agent:\n      url: http://localhost:{port}/sse\n      transport: sse",
+                    f"cortex publish mcp --config {config_path} --port {port}",
+                    f"Add to another agent's cortex.yaml:\n  tool_servers:\n    my_agent:\n      url: http://localhost:{port}/mcp\n      transport: sse",
                 ],
             }
         elif mode == "ui":
             host = data.get("ui_host", "0.0.0.0")
             port = data.get("ui_port", 8090)
-            # We don't start the server from the wizard (it would block the
-            # wizard process). Just surface the command the user should run.
+            # Browser-accessible URL: 0.0.0.0 means "all interfaces" for the
+            # server bind, but browsers cannot connect to that address — always
+            # show localhost as the clickable URL.
+            browser_url = f"http://localhost:{port}"
+            try:
+                import subprocess as _sp
+                _sp.Popen(
+                    [sys.executable, "-m", "cortex.cli.main", "publish", "ui",
+                     "--config", config_path, "--port", str(port), "--host", host],
+                    stdout=_sp.DEVNULL,
+                    stderr=_sp.DEVNULL,
+                    start_new_session=True,
+                )
+                server_launched = True
+            except Exception:
+                server_launched = False
             return {
                 "success": True,
                 "output": (
-                    "Chat UI is configured. Start it with:\n"
+                    f"Chat UI server started.\nOpen {browser_url} in your browser."
+                    if server_launched else
+                    f"Chat UI configured. Start it with:\n"
                     f"  cortex publish ui --config {config_path}\n"
-                    f"Then open http://{host}:{port} in your browser."
+                    f"Then open {browser_url} in your browser."
                 ),
                 "mode": "ui",
+                "browser_url": browser_url,
                 "next_steps": [
+                    f"Open {browser_url}",
                     f"cortex publish ui --config {config_path}",
-                    f"Open http://{host}:{port}",
-                    "For Docker: cortex publish docker --with-ui",
                 ],
             }
         else:

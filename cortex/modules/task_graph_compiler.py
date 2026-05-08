@@ -22,6 +22,14 @@ class DecomposedTask:
     # Set by the decomposition LLM via <capability> tag; used to build ad-hoc
     # TaskTypeConfig when the task name is not defined in cortex.yaml.
     capability_hint: Optional[str] = None
+    # Set by the decomposition LLM via <model_tier> when AMR is enabled.
+    # Values: "low" | "medium" | "high". None when AMR is disabled or the task
+    # has an explicit llm_provider override in cortex.yaml.
+    complexity_tier: Optional[str] = None
+    # AMR-resolved provider key. Populated by PrimaryAgent.decompose() after
+    # parsing. Overrides the static TaskTypeConfig.llm_provider at instantiation
+    # time ONLY when that config field still holds the default value "default".
+    llm_provider: Optional[str] = None
 
 
 @dataclass
@@ -196,6 +204,7 @@ class TaskGraphCompiler:
                     mandatory=False,
                     complexity="adaptive",
                     capability_hint=capability,
+                    llm_provider=dt.llm_provider or "default",
                 )
                 effective_types[dt.task_name] = adhoc_config
                 adhoc_task_names.add(dt.task_name)
@@ -222,6 +231,10 @@ class TaskGraphCompiler:
         for i, dt in enumerate(valid_tasks):
             task_id = f"{session_id}/{i:03d}_{dt.task_name}"
             config = effective_types[dt.task_name]
+            # AMR override: when the static config uses "default" and the
+            # decomposer resolved a specific provider, apply it now.
+            if dt.llm_provider and config.llm_provider == "default":
+                config = config.model_copy(update={"llm_provider": dt.llm_provider})
             name_to_id[dt.task_name] = task_id
             tasks[task_id] = RuntimeTask(
                 task_id=task_id,

@@ -34,7 +34,7 @@ cortex setup            # visual wizard at localhost:7799
 cortex publish ui       # chat UI at localhost:8090
 ```
 
-Three commands. You have a working agent with a professional web interface, file upload support, streaming responses, and persistent chat history. No frontend to build, no backend to wire, no infrastructure to set up.
+Three commands. You have a working agent with **Cortex Synapse** — a professional web frontend with task blueprint display, intent classification indicators, live workspace events, token usage tracking, full-text history search, and artifact downloads. No frontend to build, no backend to wire, no infrastructure to set up.
 
 ### You change behavior without changing code
 
@@ -74,7 +74,7 @@ The **autonomic Learning Engine** observes task patterns across sessions and fir
 | **Task orchestration** | LLM-generated DAG with parallel fan-out/fan-in | Sequential chain or hand-coded state machine |
 | **Tool protocol** | Native MCP (SSE, stdio, streamable-HTTP) | Custom tool wrappers per integration |
 | **Multi-agent** | Any agent becomes an MCP tool in one command | Bespoke inter-agent protocols |
-| **Self-expanding mesh** | Ant Colony — orchestrator hatches specialist agents at runtime to fill capability gaps | Static tool lists, no self-expansion |
+| **Self-expanding mesh** | Ant Colony hatches specialist agents at runtime; ToolForge generates brand-new MCP servers from LLM-written code at wave boundaries | Static tool lists, no self-expansion |
 | **Chat vs. task routing** | Intent Gate classifies each turn (heuristic → LLM cascade); small talk skips the full task pipeline | Same path for every turn, or hand-coded intent routing |
 | **Deployment contract** | `interaction_mode` distinguishes chat (clarifications allowed) from RPC (never blocks) — one code path, two contracts | Separate codebases for chat vs. MCP |
 | **Quality gates** | Built-in validation agent with scoring + remediation | Manual testing or nothing |
@@ -85,7 +85,7 @@ The **autonomic Learning Engine** observes task patterns across sessions and fir
 | **Session management** | Persistence, resume, per-user concurrency, WAL crash recovery | In-memory or DIY |
 | **Deployment** | `publish docker`, `publish package`, `publish mcp`, `publish ui` | Write your own Dockerfile |
 | **Setup** | Visual wizard (`cortex setup`) + CLI | Read docs, write boilerplate |
-| **Chat UI** | Built-in web frontend with file upload + history | Build your own or use a third-party tool |
+| **Chat UI** | Cortex Synapse — built-in frontend with task blueprint view, workspace events, history search, artifact ZIP, inline HITL | Build your own or use a third-party tool |
 | **Observability** | OpenTelemetry, audit log, anomaly detection, token accounting | Add your own logging |
 | **Security** | Input sanitiser, credential scrubber, code sandbox, MCP output guard | Hope for the best |
 
@@ -121,9 +121,12 @@ You write a YAML file describing your agent. Cortex reads it and gives you:
 - **Identity & delegation** — first-class `Principal` model with full delegation chains for agent-to-agent composition
 - **Built-in chat UI** — professional web frontend with file uploads and conversation history
 - **Ant Colony** — orchestrator self-spawns specialist agents at runtime; fills capability gaps automatically
+- **ToolForge** — decomposer generates new FastMCP server scripts from code, spawns them at wave boundaries, makes them available to dependent tasks in the same session
+- **Built-in web search** — `web_search` capability works out-of-the-box via DuckDuckGo fallback; no API key required unless you want Brave Search or another provider
 - **`interaction_mode`** — one agent, two contracts: `interactive` for chat / CLI, `rpc` for MCP / automated callers (never blocks on clarifications)
 - **Smart synthesis** — file-output tasks get grep-based excerpts and optional LLM per-file summaries before the final synthesis pass; large results are written to disk and streamed as a file `ResultEvent`
-- **4 deployment targets** — Docker, Python package, MCP server, chat UI
+- **Rich streaming events** — 18 typed event types including blueprint display, intent classification, tool calls, workspace events, token usage, and file output notifications
+- **4 deployment targets** — Docker, Python package, MCP server, Cortex Synapse chat UI
 - **Visual setup wizard** — configure everything from a browser, no docs required
 - **Security built-in** — input sanitisation, credential scrubbing, sandboxed code execution
 - **Observability** — OpenTelemetry, audit logs, anomaly detection, token budgets

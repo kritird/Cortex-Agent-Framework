@@ -138,19 +138,32 @@ Yes. `CORTEX_INTERACTION_MODE=interactive|rpc` beats the value in `cortex.yaml`.
 
 ---
 
-## Chat UI
+## Chat UI (Cortex Synapse)
 
 ### How do I get the built-in chat UI?
 
 ```bash
 cortex publish ui --port 8090
+# Cortex chat UI: http://localhost:8090
 ```
 
-It serves a single-page web frontend with text + file uploads, SSE streaming, and persistent per-user history. Configure title, host, port, and auth (`none` / `token` / `basic`) under the `ui:` block in `cortex.yaml` or via the wizard.
+It serves **Cortex Synapse** — a single-page web frontend with text + file uploads, live task blueprint display, intent classification badges, workspace event streaming, token usage, full-text history search, and artifact ZIP download. Configure title, host, port, and auth (`none` / `token` / `basic`) under the `ui:` block in `cortex.yaml` or via the wizard. See [CORTEX_SYNAPSE.md](CORTEX_SYNAPSE.md) for the full feature list and REST API.
+
+### The printed URL shows `0.0.0.0` — is that right?
+
+No — the server binds `0.0.0.0` so it accepts connections on all interfaces, but browsers cannot connect to that address. Cortex Synapse now always prints `localhost` as the clickable URL, which is the correct browser address.
 
 ### Will chat history survive a restart?
 
 Only if `history.enabled: true` and your storage is SQLite or Redis. The Memory backend loses everything on restart.
+
+### How does mid-session file upload work?
+
+Use `POST /api/session/{ui_id}/upload` with a multipart form — Cortex Synapse's UI shows a drag-and-drop area in the composer. Uploaded files are queued into the running session and passed to the next request.
+
+### Can I download all outputs from a session?
+
+Yes — `GET /api/history/{sid}/artifacts/zip` streams a ZIP archive of all task output files. In Cortex Synapse, there's a download-all button on each session in the history panel.
 
 ---
 
@@ -162,7 +175,7 @@ An independent Cortex agent — with its own `cortex.yaml` — that the orchestr
 
 ### When do ants get hatched?
 
-When `ant_colony.enabled: true` **and** (a) `auto_hatch_on_gap: true` and the scout finds an unfillable gap, or (b) you explicitly call `cortex ants hatch <name> --capability <cap>` / `framework.hatch_ant(...)`.
+When `ant_colony.enabled: true` **and** (a) `auto_hatch_on_gap: true` and the scout finds an unfillable gap, or (b) you explicitly call `cortex ants hatch <name> --capability <cap>` / `framework.hatch_ant(...)`, or (c) ToolForge generates and registers a new MCP server at a wave boundary.
 
 ### Are ants trusted?
 
@@ -170,11 +183,44 @@ They're registered with `trust_tier: ant` — treated like internal servers (wri
 
 ---
 
+## ToolForge
+
+### What is ToolForge?
+
+ToolForge lets the decomposer assign `forge_mcp` tasks that generate a FastMCP server script from LLM-produced code, write it to disk, and spawn it with Ant Colony at the next wave boundary. Dependent tasks in the same session can use the new server immediately.
+
+Enable it in `cortex.yaml`:
+
+```yaml
+ant_colony:
+  enabled: true
+code_sandbox:
+  enabled: true
+tool_forge:
+  enabled: true
+```
+
+All three must be `true` for `forge_mcp` to appear in the decomposition prompt.
+
+### Are forged servers persisted across restarts?
+
+By default no (`persist_by_default: false`). The server entry is written to `ants.yaml` with `auto_restart: false` — it won't be re-hatched on the next framework startup. Set `persist_by_default: true` to change this. You can also change an individual server's `auto_restart` in `ants.yaml` by hand.
+
+### How do I debug a forge failure?
+
+- Check `cortex_storage/ants/<task_name>/server.py` — the generated script is always written there, even if the server failed to start.
+- Look at the framework log: `ToolForge: failed to hatch forge ant '<name>': ...`
+- Increase `spawn_timeout_seconds` if the server is starting but not passing `/health` fast enough.
+
+---
+
+---
+
 ## Streaming & UI integration
 
 ### How do I stream to a web UI?
 
-Pass an `asyncio.Queue()` to `run_session()`. The queue receives `StatusEvent`, `ResultEvent`, and `ClarificationEvent` objects as work progresses. Wire them into FastAPI SSE or your websocket layer — see the full example in [GETTING_STARTED.md § Usage 1](GETTING_STARTED.md#usage-1-conversational-chat-ui).
+Pass an `asyncio.Queue()` to `run_session()`. The queue receives typed event objects as work progresses. Key events: `StatusEvent`, `ResultEvent`, `ClarificationEvent`, `IntentClassifiedEvent`, `TaskBlueprintEvent`, `TaskToolCallEvent`, `WorkspaceEvent`, `FileOutputEvent`, `SessionTokenUsageEvent`. Wire them into FastAPI SSE or your websocket layer — see the full example in [GETTING_STARTED.md § Usage 1](GETTING_STARTED.md#usage-1-conversational-chat-ui).
 
 ### How do clarifications work?
 

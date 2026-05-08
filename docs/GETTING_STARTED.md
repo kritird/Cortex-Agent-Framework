@@ -81,6 +81,8 @@ cortex dev
 
 No MCP servers, no Docker, no extra setup — this is the smallest config that runs. Add `tool_servers` and more `task_types` once this works.
 
+> **Tip:** `web_search` is a built-in capability — it works out of the box via DuckDuckGo with no API key. Add a `web_search` task type and Cortex will search the web for live information automatically. You can upgrade to Brave Search or any MCP web-search server later by adding a `tool_servers` entry with the same capability.
+
 ### 3. Run the Setup Wizard
 
 ```bash
@@ -331,12 +333,18 @@ async def resumable(user_id: str):
 | Event | What the UI does |
 |---|---|
 | `session_start` | Show "thinking..." indicator |
+| `intent_classified` | Show chat vs task routing decision |
+| `task_blueprint` | Render the full DAG (waves, dependencies) before execution |
 | `task_start` | Show progress ("Searching web...", "Analysing data...") |
+| `task_tool_call` | Show which MCP or built-in tool is being invoked |
 | `task_complete` | Update progress bar |
+| `workspace_event` | Show file read/write/execution in workspace |
 | `status` | Display status messages |
 | `clarification` | Render a follow-up question with options |
 | `result` (partial) | Stream text into the chat bubble |
 | `result` (final) | Display complete response |
+| `file_output` | Show download link for agent-produced file |
+| `session_token_usage` | Display cumulative token counters |
 | `error` | Show error state |
 | `session_end` | Re-enable input |
 
@@ -364,20 +372,25 @@ agent:
 llm_access:
   default:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6
     api_key_env_var: ANTHROPIC_API_KEY
     max_tokens: 4096
 
-tool_servers:
-  brave_search:
-    transport: sse
-    url: http://localhost:8051/sse
+# Optional: add a tool server for richer web search.
+# Without this, Cortex falls back to built-in DuckDuckGo automatically.
+# tool_servers:
+#   brave_search:
+#     transport: stdio
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-brave-search"]
+#     env:
+#       BRAVE_API_KEY: ${BRAVE_API_KEY}
 
 task_types:
   - name: web_research
     description: Search the web for current information
     output_format: md
-    capability_hint: web_search
+    capability_hint: web_search   # uses built-in DuckDuckGo if no tool server configured
 
 storage:
   base_path: ./research_storage
@@ -387,6 +400,7 @@ storage:
 
 ```bash
 cortex publish mcp --port 8081
+# MCP server running at http://localhost:8081/mcp
 ```
 
 **Step 3** — Connect it from a parent agent's config. You need **both** a `tool_servers` entry (so the parent can reach the child) **and** a `task_types` entry that references it (so the decomposer knows it exists):
@@ -400,18 +414,18 @@ agent:
 llm_access:
   default:
     provider: anthropic
-    model: claude-sonnet-4-5
+    model: claude-sonnet-4-6
     api_key_env_var: ANTHROPIC_API_KEY
 
 tool_servers:
   research:
-    url: http://localhost:8081/sse
+    url: http://localhost:8081/mcp   # MCP endpoint — not /sse
     transport: sse
   code_review:
-    url: http://localhost:8082/sse
+    url: http://localhost:8082/mcp
     transport: sse
   writing:
-    url: http://localhost:8083/sse
+    url: http://localhost:8083/mcp
     transport: sse
 
 task_types:

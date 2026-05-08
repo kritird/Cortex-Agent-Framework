@@ -47,9 +47,10 @@ CMD ["python", "-m", "cortex.cli.main", "dev", "--config", "{config_path}"]
 def publish_package(output_dir: str):
     """Build a distributable Python package."""
     import subprocess
+    import sys
     click.echo("Building Python package...")
     try:
-        subprocess.run(["python", "-m", "build", "-o", output_dir], check=True)
+        subprocess.run([sys.executable, "-m", "build", "-o", output_dir], check=True)
         click.echo(f"✓ Package built in {output_dir}/")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         click.echo(f"✗ Build failed: {e}", err=True)
@@ -57,23 +58,75 @@ def publish_package(output_dir: str):
 
 @publish_group.command("mcp")
 @click.option("--config", default="cortex.yaml")
-@click.option("--port", default=8080)
+@click.option("--port", default=8080, type=int)
 def publish_mcp(config: str, port: int):
     """Export this agent as an MCP server.
 
-    Automatically forces ``agent.interaction_mode=rpc`` via the
-    ``CORTEX_INTERACTION_MODE`` environment variable so the agent treats
-    every request as a task and never emits interactive clarifications.
-    An MCP client cannot answer interactive prompts, so running in the
-    default ``interactive`` mode would hang on chat-shaped payloads.
+    Serves the agent as an MCP-over-SSE endpoint at /mcp so other Cortex
+    agents (or any MCP client) can call its capabilities as tools.
+
+    Automatically forces ``agent.interaction_mode=rpc`` so the agent never
+    emits interactive clarifications — MCP clients cannot answer them.
     """
+    import asyncio
     import os
     os.environ["CORTEX_INTERACTION_MODE"] = "rpc"
-    click.echo(f"Generating MCP server wrapper (port {port})...")
-    click.echo("  interaction_mode forced to 'rpc' (via CORTEX_INTERACTION_MODE)")
-    click.echo("  This agent can be accessed by other Cortex instances as a tool server.")
-    click.echo(f"  Run: cortex publish mcp --port {port}")
-    click.echo(f"  Configure in other cortex.yaml as tool_server with url: http://host:{port}")
+
+    async def _serve():
+        from cortex.framework import CortexFramework
+        from aiohttp import web
+
+        framework = CortexFramework(config)
+        await framework.initialize()
+
+        async def handle_mcp(request: web.Request) -> web.Response:
+            """Minimal MCP-over-HTTP handler: accepts {input} and returns {output}."""
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid json"}, status=400)
+
+            user_input = body.get("input") or body.get("request") or ""
+            if not user_input:
+                return web.json_response({"error": "missing 'input' field"}, status=400)
+
+            import asyncio as _asyncio
+            queue: _asyncio.Queue = _asyncio.Queue()
+            result_text = ""
+            try:
+                session_result = await framework.run_session(
+                    user_id="mcp_caller",
+                    request=user_input,
+                    event_queue=queue,
+                )
+                result_text = session_result.response or ""
+            except Exception as exc:
+                return web.json_response({"error": str(exc)}, status=500)
+
+            return web.json_response({"output": result_text})
+
+        app = web.Application()
+        app.router.add_post("/mcp", handle_mcp)
+        app.router.add_post("/run", handle_mcp)  # convenience alias
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        click.echo(f"MCP server running at http://localhost:{port}/mcp")
+        click.echo("  interaction_mode: rpc")
+        click.echo("  Ctrl-C to stop.")
+        try:
+            await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
+            await runner.cleanup()
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        click.echo("\nStopped.")
 
 
 @publish_group.command("ui")
@@ -99,7 +152,8 @@ def publish_ui(config: str, host, port):
             ui_cfg.host = host
         if port is not None:
             ui_cfg.port = port
-        click.echo(f"Cortex chat UI: http://{ui_cfg.host}:{ui_cfg.port}")
+        browser_host = "localhost" if ui_cfg.host in ("0.0.0.0", "") else ui_cfg.host
+        click.echo(f"Cortex chat UI: http://{browser_host}:{ui_cfg.port}")
         click.echo(f"  auth mode: {ui_cfg.auth.mode}")
         click.echo("  Ctrl-C to stop.")
         await run_ui_server(framework)

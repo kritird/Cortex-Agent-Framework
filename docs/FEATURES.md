@@ -14,7 +14,7 @@ A complete feature matrix of everything Cortex ships with.
 | **Cycle detection** | Task graph compiler rejects cyclic graphs before execution starts |
 | **Topological execution** | Tasks run as soon as their dependencies complete — no fixed pipeline stages |
 | **Capability-aware decomposition** | Decomposer sees currently-available MCP tools and plans around them |
-| **Intent Gate** | Pre-scout classifier (heuristic → LLM cascade) routes chat-shaped turns directly to a streaming reply; only task-shaped turns run the full decompose pipeline |
+| **Intent Gate** | Pre-scout classifier (heuristic → LLM cascade) routes chat-shaped turns directly to a streaming reply; only task-shaped turns run the full decompose pipeline. Emits `IntentClassifiedEvent` before decomposition. |
 | **`interaction_mode`** | `interactive` (chat/CLI/dev) or `rpc` (MCP/automation) — `rpc` forces every turn to the task path and suppresses interactive clarifications |
 | **Replan with scratchpad** | Mid-session re-entry into the Primary Agent grows the DAG; a session-scoped reasoning trace (confirmed facts, open questions, strategy) is carried forward across replans and into synthesis |
 | **Clean-wave replan skip** | Replanning is skipped when every task in a wave passed first attempt with no validator feedback — avoids unnecessary LLM calls |
@@ -40,30 +40,33 @@ A complete feature matrix of everything Cortex ships with.
 | Local runtime | `local` | `LOCAL_LLM_API_KEY` (optional) | Ollama / LM Studio / vLLM; defaults `base_url` to `http://localhost:11434/v1`. Gemma 4 quickstart in the wizard |
 | Custom | `custom` | — | Provide a Python dotted path |
 
-**Per-task model routing**: override the default model for specific task types — e.g. run decomposition on a cheap fast model and synthesis on the flagship.
+**Per-task model routing**: override the default model for specific task types via `task_types[n].llm_provider`, or enable **Adaptive Model Routing (AMR)** to let the decomposer select the LLM automatically based on task complexity.
+
+**Adaptive Model Routing (AMR)**: when `adaptive_model_routing.enabled: true`, the decomposition LLM grades each task as `low`, `medium`, or `high` complexity. AMR maps those tiers to named providers in `llm_access.providers`. Assessment is objective — the grading criteria are purely task-structural; no provider preference is baked in. Explicit `llm_provider` on a task type always overrides AMR. Ant sub-tasks inherit the parent's AMR config. The validation provider auto-selects the first non-default named provider when left blank.
 
 ## Model Context Protocol (MCP)
 
 | Feature | Description |
 |---|---|
 | **SSE transport** | Connect to remote MCP servers over Server-Sent Events |
-| **stdio transport** | Spawn MCP servers as subprocesses with stdin/stdout pipes |
+| **stdio transport** | Spawn MCP servers as subprocesses; full JSON-RPC tool discovery (`tools/list`) and invocation (`tools/call`) at runtime |
 | **streamable-HTTP transport** | Full MCP 1.x streamable HTTP support |
-| **Capability discovery** | Dynamic tool discovery at session start |
+| **Capability discovery** | Dynamic tool discovery at session start; stdio servers auto-map instruction → MCP argument schema |
 | **Header injection** | Per-server HTTP headers (auth tokens, API keys) |
 | **Lifecycle management** | Auto-start, auto-restart, graceful shutdown of tool servers |
-| **Publish as MCP server** | Export your Cortex agent *as* an MCP server for other agents to call |
+| **Publish as MCP server** | Export your Cortex agent *as* a live MCP server (`/mcp` endpoint + `/run` REST alias) for other agents to call |
 
 ## Multi-agent composition
 
 | Feature | Description |
 |---|---|
-| **Agent-as-MCP-tool** | Any Cortex agent can be published as an MCP server |
+| **Agent-as-MCP-tool** | Any Cortex agent can be published as a live MCP/HTTP server |
 | **Orchestrator pattern** | Parent agents list sub-agents in `tool_servers` and decompose across them |
 | **Independent lifecycles** | Each agent has its own config, storage, concurrency, LLM routing |
 | **Port conventions** | Standard port allocation (wizard `7799+N`, MCP `8080+N`) for multi-agent hosts |
 | **No custom protocol** | Uses MCP end-to-end — no bespoke inter-agent RPC |
 | **Ant Colony** | Orchestrator self-spawns specialist Cortex agents as MCP servers at runtime; supervised, health-checked, auto-restarted |
+| **ToolForge** | Decomposer assigns `forge_mcp` tasks that generate FastMCP server code, write it to disk, and register it with Ant Colony at wave boundaries — dependent tasks in the same session see the new capability immediately |
 
 ## Streaming
 
@@ -72,8 +75,16 @@ A complete feature matrix of everything Cortex ships with.
 | `StatusEvent` | `message`, `session_id`, `event_type`, `metadata` | Progress updates for the UI |
 | `ResultEvent` | `content`, `partial`, `validation_score`, `metadata` | Final or streaming response content — `metadata.output_type="file"` when synthesis is written to disk |
 | `ClarificationEvent` | `question`, `options`, `clarification_id` | Agent is asking a follow-up question |
+| `IntentClassifiedEvent` | `intent_mode`, `confidence`, `reasoning` | Intent Gate result (chat / task / hybrid) emitted before decomposition |
+| `TaskBlueprintEvent` | `tasks`, `waves` | Full DAG emitted after decomposition — UI can render the plan before execution starts |
+| `TaskToolCallEvent` | `task_id`, `task_name`, `tool_name`, `tool_input` | Emitted when a sub-agent invokes an MCP or built-in tool |
+| `WorkspaceEvent` | `action`, `path`, `is_dir` | File-system change in workspace (read / modified / executed / listed) |
+| `FileOutputEvent` | `filename`, `mime_type`, `size_bytes` | Agent produced a downloadable output file |
+| `SessionTokenUsageEvent` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | Cumulative token counters emitted at session end |
+| `SynthesisTierEvent` | `tier`, `reason` | Which excerpt tier (short / medium / full / structured) was selected for synthesis |
+| `LearningEvent` | `action`, `complexity_score`, `validation_score` | Gate decision and staged/applied task lists |
 
-Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`, `ANT_HATCHED`, `ANT_STOPPED`.
+Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`, `ANT_HATCHED`, `ANT_STOPPED`, `LEARNING`, `INTENT_CLASSIFIED`, `TASK_BLUEPRINT`, `TASK_TOOL_CALL`, `WORKSPACE_EVENT`, `FILE_OUTPUT`, `SESSION_TOKEN_USAGE`, `SYNTHESIS_TIER`.
 
 Wires into FastAPI SSE, WebSockets, or any async consumer pattern.
 
@@ -139,11 +150,14 @@ All three implement the same interface — swap via `storage` config, no code ch
 
 | Tool | What it does |
 |---|---|
-| **Setup wizard** | Browser-based `cortex.yaml` generator at `localhost:7799` — multi-step flow for identity, LLM, storage, adaptive behaviour, runtime, and chat-UI config |
+| **Setup wizard** | Browser-based `cortex.yaml` generator at `localhost:7799` — multi-step flow including ToolForge, LLM, storage, and publish mode |
 | **Config Studio** | `cortex config-ui` launches a browser UI at `localhost:7801` to inspect and edit `cortex.yaml`, blueprints, staged deltas, and session metadata |
+| **Service launcher** | From inside Cortex Synapse, open Config Studio or Setup Wizard with one click — the UI server launches them as background processes and waits for the port to open |
 | **Dry-run validation** | `cortex dry-run` validates config and compiles task graph without LLM calls |
 | **Hot-reload dev mode** | `cortex dev --watch` applies config changes live |
 | **Session replay** | `cortex replay` shows request, response, task outcomes, validation report |
+| **History search** | `GET /api/history/search?q=...` full-text search over session titles and responses |
+| **Artifact ZIP** | `GET /api/history/{sid}/artifacts/zip` downloads all output files for a session |
 | **Config migration** | `cortex migrate` checks `cortex.yaml` against the target schema version |
 | **Capability manifest** | `cortex spec` emits a JSON/YAML description of the agent's capabilities |
 | **Ant Colony CLI** | `cortex ants list / hatch / stop / stop-all / status` — inspect and manage the self-spawning specialist mesh |
@@ -160,14 +174,26 @@ All three implement the same interface — swap via `storage` config, no code ch
 | **Origin-keyed storage** | `storage_key` always resolves to the originating user, so history / blueprints / learning stay attributed to the human across agent hops |
 | **Audit provenance** | Operational stream and audit log record `principal_type` and full chain on every event |
 
+## Built-in web search
+
+When no `web_search` tool server is configured (or one fails), Cortex falls back to a built-in DuckDuckGo search client — no API key required.
+
+| Behaviour | Detail |
+|---|---|
+| **Configured server first** | If a tool server has `web_search` capability, it is tried first |
+| **Automatic fallback** | On failure or absence, the built-in DuckDuckGo client runs instead |
+| **No config needed** | The `web_search` capability is always available as a built-in — just add task types that use it |
+
+---
+
 ## Deployment targets
 
 | Target | Command | Use for |
 |---|---|---|
-| **Docker image** | `cortex publish docker` | Containerised service deployment (`--with-ui` to bundle the chat UI) |
+| **Docker image** | `cortex publish docker` | Containerised service deployment (`--with-ui` to bundle Cortex Synapse UI) |
 | **Python wheel** | `cortex publish package` | Library distribution via pip/internal PyPI |
-| **MCP server** | `cortex publish mcp` | Expose agent as a tool for other agents — auto-sets `CORTEX_INTERACTION_MODE=rpc` |
-| **Chat UI** | `cortex publish ui` | Built-in web frontend: file uploads, SSE streaming, per-user history |
+| **MCP server** | `cortex publish mcp` | Live aiohttp server at `/mcp`; auto-sets `CORTEX_INTERACTION_MODE=rpc` |
+| **Chat UI** | `cortex publish ui` | Cortex Synapse web frontend: file uploads, SSE streaming, history search, artifact ZIP download |
 
 ## Observability
 

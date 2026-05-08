@@ -27,12 +27,6 @@
   --warning:        #f59e0b;
   --danger:         #ef4444;
 }
-[data-theme="cyan"]   { --accent:#06b6d4; --accent-focus:rgba(6,182,212,0.55);   --accent-dim:rgba(6,182,212,0.12);   --accent-glow:rgba(6,182,212,0.18); }
-[data-theme="violet"] { --accent:#a855f7; --accent-focus:rgba(168,85,247,0.55);  --accent-dim:rgba(168,85,247,0.12);  --accent-glow:rgba(168,85,247,0.18); }
-[data-theme="emerald"]{ --accent:#10b981; --accent-focus:rgba(16,185,129,0.55);  --accent-dim:rgba(16,185,129,0.12);  --accent-glow:rgba(16,185,129,0.18); }
-[data-theme="rose"]   { --accent:#f43f5e; --accent-focus:rgba(244,63,94,0.55);   --accent-dim:rgba(244,63,94,0.12);   --accent-glow:rgba(244,63,94,0.18); }
-[data-theme="amber"]  { --accent:#f59e0b; --accent-focus:rgba(245,158,11,0.55);  --accent-dim:rgba(245,158,11,0.12);  --accent-glow:rgba(245,158,11,0.18); }
-[data-theme="indigo"] { --accent:#6366f1; --accent-focus:rgba(99,102,241,0.55);  --accent-dim:rgba(99,102,241,0.12);  --accent-glow:rgba(99,102,241,0.18); }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: var(--bg-base); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.5; }
@@ -255,7 +249,7 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
 [x-cloak] { display: none !important; }
 </style>
 </head>
-<body x-data="wizard()" x-init="init()" :data-theme="activeTheme" x-cloak>
+<body x-data="wizard()" x-init="init()" data-theme="cyan" x-cloak>
 
 <header class="topbar">
   <div class="logo">
@@ -268,12 +262,6 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
     <span x-text="'draft saved · ' + lastDraftSaved"></span>
   </span>
   <div style="flex:1"></div>
-  <div style="display:flex;align-items:center;gap:5px;padding:0 8px">
-    <template x-for="t in themes" :key="t.id">
-      <button :title="t.label" @click="setTheme(t.id)"
-        :style="`width:14px;height:14px;border-radius:50%;background:${t.color};border:2px solid ${activeTheme===t.id ? '#fff' : 'transparent'};cursor:pointer;`"></button>
-    </template>
-  </div>
   <button class="btn btn-secondary btn-sm" @click="clearDraft()" x-show="lastDraftSaved" title="Discard the auto-saved draft">↺ Reset</button>
 </header>
 
@@ -625,6 +613,57 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
             <button class="btn btn-secondary btn-sm" @click="addLlmProvider()">+ Add provider</button>
           </div>
         </details>
+
+        <div class="field-group glass">
+          <div class="group-title">Adaptive Model Routing (AMR)</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable AMR</label>
+              <div class="hint">Decomposer assesses each task's complexity (low / medium / high) and routes it to the matching provider. Explicit <code>llm_provider</code> on a task type always wins.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" x-model="form.amr_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+          </div>
+          <template x-if="form.amr_enabled">
+            <div>
+              <div class="hint" style="margin:8px 0 4px">Map each complexity tier to a provider. The decomposer grades tasks objectively — no provider bias in the assessment.</div>
+              <div class="row">
+                <div class="field">
+                  <label>Low tier</label>
+                  <div class="hint">Simple retrieval, formatting, short text.</div>
+                  <select class="form-select" x-model="form.amr_tier_low">
+                    <option value="default">default</option>
+                    <template x-for="p in form.llm_providers" :key="p.id"><option :value="p.name" x-text="p.name"></option></template>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Medium tier</label>
+                  <div class="hint">Multi-step reasoning, moderate code, single-doc analysis.</div>
+                  <select class="form-select" x-model="form.amr_tier_medium">
+                    <option value="default">default</option>
+                    <template x-for="p in form.llm_providers" :key="p.id"><option :value="p.name" x-text="p.name"></option></template>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>High tier</label>
+                  <div class="hint">Complex architecture, multi-file codegen, deep synthesis.</div>
+                  <select class="form-select" x-model="form.amr_tier_high">
+                    <option value="default">default</option>
+                    <template x-for="p in form.llm_providers" :key="p.id"><option :value="p.name" x-text="p.name"></option></template>
+                  </select>
+                </div>
+              </div>
+              <div class="field" style="margin-top:8px">
+                <label>Validation provider</label>
+                <div class="hint">Provider for wave-level task validation. Leave blank to auto-select the first non-default provider.</div>
+                <select class="form-select" x-model="form.amr_validation_provider">
+                  <option value="">auto (first non-default)</option>
+                  <option value="default">default</option>
+                  <template x-for="p in form.llm_providers" :key="p.id"><option :value="p.name" x-text="p.name"></option></template>
+                </select>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- ═══ STEP 3: Tool Servers (MCP) ═══ -->
@@ -1029,6 +1068,14 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
         </div>
 
         <div class="field-group glass">
+          <div class="group-title">Web search</div>
+          <div class="toggle-row">
+            <div><label>Built-in web search (DuckDuckGo)</label><div class="hint">Fall back to built-in DuckDuckGo search when no external web_search tool server is configured or reachable. Disable to block all automatic web searches.</div></div>
+            <label class="toggle"><input type="checkbox" x-model="form.builtin_web_search_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+          </div>
+        </div>
+
+        <div class="field-group glass">
           <div class="group-title">Capability scout</div>
           <div class="toggle-row">
             <div><label>Enable scout</label><div class="hint">Pre-probe MCP servers to map capabilities; steers decomposition.</div></div>
@@ -1222,6 +1269,45 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
                 </select>
                 <div class="hint">Model and API key are inherited from the selected provider (configured in Step 2).</div>
               </div>
+
+              <!-- ToolForge: only shown when code sandbox is also enabled -->
+              <template x-if="form.code_sandbox_enabled">
+                <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:14px;">
+                  <div class="toggle-row">
+                    <div>
+                      <label>Enable ToolForge</label>
+                      <div class="hint">Let the agent generate and register new MCP servers from code during a session. Requires both ant colony and code sandbox.</div>
+                    </div>
+                    <label class="toggle"><input type="checkbox" x-model="form.tool_forge_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                  </div>
+                  <template x-if="form.tool_forge_enabled">
+                    <div>
+                      <div class="toggle-row" style="margin-top:10px">
+                        <div>
+                          <label>Persist forged servers by default</label>
+                          <div class="hint">When on, generated servers survive framework restart (auto_restart in ants.yaml).</div>
+                        </div>
+                        <label class="toggle"><input type="checkbox" x-model="form.tool_forge_persist_by_default"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                      </div>
+                      <div class="row" style="margin-top:10px">
+                        <div class="field">
+                          <label>Spawn timeout (s)</label>
+                          <div class="hint">Seconds to wait for the generated server to pass health-check.</div>
+                          <input type="number" class="form-input" x-model.number="form.tool_forge_spawn_timeout_seconds">
+                        </div>
+                        <div class="field">
+                          <label>Codegen LLM provider</label>
+                          <div class="hint">Provider used to generate MCP server code. May warrant a stronger model.</div>
+                          <select class="form-select" x-model="form.tool_forge_codegen_llm_provider">
+                            <option value="default">default</option>
+                            <template x-for="p in form.llm_providers" :key="p.id"><option :value="p.name" x-text="p.name"></option></template>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
             </div>
           </template>
         </div>
@@ -1503,14 +1589,14 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
                 <pre class="code-block" style="margin-top:6px" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex dev --config ${form.save_path || 'cortex.yaml'}`"></pre>
               </li>
               <li><strong style="color:var(--text-primary)">Open the Chat UI in your browser</strong>:
-                <pre class="code-block" style="margin-top:6px" x-text="`http://${form.ui_host || '127.0.0.1'}:${form.ui_port || 8080}/`"></pre>
+                <pre class="code-block" style="margin-top:6px" x-text="`http://${(form.ui_host === '0.0.0.0' || !form.ui_host) ? 'localhost' : form.ui_host}:${form.ui_port || 8090}/`"></pre>
               </li>
               <li x-show="form.ui_auth_mode && form.ui_auth_mode !== 'none'">
                 <strong style="color:var(--text-primary)">Authentication</strong> — mode is set to <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px" x-text="form.ui_auth_mode"></code>.
                 <span x-show="form.ui_auth_mode==='token'"> The token you configured is passed via <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">Authorization: Bearer &lt;token&gt;</code> in API calls or <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">?token=&lt;token&gt;</code> in the browser.</span>
               </li>
               <li><strong style="color:var(--text-primary)">Sending messages via REST</strong> (headless):
-                <pre class="code-block" style="margin-top:6px" x-text="`curl -X POST http://${form.ui_host || '127.0.0.1'}:${form.ui_port || 8080}/run \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"input\": \"Hello, agent!\"}'`"></pre>
+                <pre class="code-block" style="margin-top:6px" x-text="`curl -X POST http://${(form.ui_host === '0.0.0.0' || !form.ui_host) ? 'localhost' : form.ui_host}:${form.ui_port || 8090}/run \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"input\": \"Hello, agent!\"}'`"></pre>
               </li>
               <li><strong style="color:var(--text-primary)">Expose to your team</strong> — to allow inbound connections change the host to <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">0.0.0.0</code> in Step 7 (Runtime) and put it behind an HTTPS proxy (nginx, Caddy, Cloudflare Tunnel).</li>
               <li><strong style="color:var(--text-primary)">Keep the server running</strong> — use <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">screen</code>, <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">tmux</code>, or deploy via Docker (switch to Docker mode) for production.</li>
@@ -1603,11 +1689,11 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
             <div class="section-head" style="margin-top:0">1 · Build the Docker image</div>
             <pre class="code-block" x-text="`docker build -f Dockerfile.cortex -t ${form.docker_tag || 'cortex-agent:latest'} .`"></pre>
             <div class="section-head">2 · Run the container</div>
-            <pre class="code-block" x-text="`docker run --rm -p 8000:8000 \\\n  -e ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here \\\n  ${form.docker_tag || 'cortex-agent:latest'}`"></pre>
+            <pre class="code-block" x-text="`docker run --rm -p ${form.ui_port || 8090}:${form.ui_port || 8090} \\\n  -e ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here \\\n  ${form.docker_tag || 'cortex-agent:latest'}`"></pre>
             <div class="section-head">3 · Access the agent</div>
             <ul style="padding-left:16px;color:var(--text-secondary);font-size:13px;line-height:1.8">
-              <li>REST: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">POST http://localhost:8000/run</code> — body: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">{"input": "..."}</code></li>
-              <li x-show="form.ui_enabled">Chat UI: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">http://localhost:8000/ui</code></li>
+              <li x-show="form.ui_enabled">Chat UI: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px" x-text="`http://localhost:${form.ui_port || 8090}/`"></code></li>
+              <li x-show="!form.ui_enabled">MCP / REST: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px" x-text="`POST http://localhost:${form.mcp_port || 8080}/run`"></code></li>
             </ul>
           </div>
 
@@ -1615,28 +1701,30 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
           <div x-show="form.publish_mode==='package'">
             <div class="section-head" style="margin-top:0">1 · Install the wheel</div>
             <pre class="code-block" x-text="`pip install ${form.package_output_dir || 'dist'}/*.whl`"></pre>
-            <div class="section-head">2 · Set API key &amp; run</div>
-            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex dev --config ${form.save_path || 'cortex.yaml'}`"></pre>
-            <div class="section-head">3 · Access</div>
-            <p style="color:var(--text-secondary);font-size:13px">REST endpoint: <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">POST http://localhost:8000/run</code></p>
+            <div class="section-head">2 · Set your API key</div>
+            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here`"></pre>
+            <div class="section-head">3 · Start the agent</div>
+            <pre class="code-block" x-text="`cortex publish ui --config ${form.save_path || 'cortex.yaml'}`"></pre>
+            <div class="section-head">4 · Open in your browser</div>
+            <pre class="code-block" x-text="`http://localhost:${form.ui_port || 8090}/`"></pre>
           </div>
 
           <!-- MCP -->
           <div x-show="form.publish_mode==='mcp'">
-            <div class="section-head" style="margin-top:0">1 · Start the server</div>
-            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex dev --config ${form.save_path || 'cortex.yaml'}`"></pre>
+            <div class="section-head" style="margin-top:0">1 · Start the MCP server</div>
+            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex publish mcp --config ${form.save_path || 'cortex.yaml'} --port ${form.mcp_port || 8080}`"></pre>
             <div class="section-head">2 · MCP endpoint</div>
-            <pre class="code-block" x-text="`http://localhost:${form.mcp_port || 8001}/mcp`"></pre>
+            <pre class="code-block" x-text="`http://localhost:${form.mcp_port || 8080}/mcp`"></pre>
             <div class="section-head">3 · Add to another agent's cortex.yaml</div>
-            <pre class="code-block" x-text="`tool_servers:\n  ${form.agent_name?.toLowerCase().replace(/[^a-z0-9_]/g,'_') || 'my_mcp_agent'}:\n    transport: sse\n    url: http://localhost:${form.mcp_port || 8001}/mcp`"></pre>
+            <pre class="code-block" x-text="`tool_servers:\n  ${form.agent_name?.toLowerCase().replace(/[^a-z0-9_]/g,'_') || 'my_mcp_agent'}:\n    transport: sse\n    url: http://localhost:${form.mcp_port || 8080}/mcp`"></pre>
           </div>
 
           <!-- Chat UI -->
           <div x-show="form.publish_mode==='ui'">
-            <div class="section-head" style="margin-top:0">1 · Start the server</div>
-            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex dev --config ${form.save_path || 'cortex.yaml'}`"></pre>
+            <div class="section-head" style="margin-top:0">1 · Set your API key &amp; start</div>
+            <pre class="code-block" x-text="`export ${form.api_key_env_var || 'ANTHROPIC_API_KEY'}=your_key_here\ncortex publish ui --config ${form.save_path || 'cortex.yaml'}`"></pre>
             <div class="section-head">2 · Open in your browser</div>
-            <pre class="code-block" x-text="`http://${form.ui_host || '127.0.0.1'}:${form.ui_port || 8080}/`"></pre>
+            <pre class="code-block" x-text="`http://${(form.ui_host === '0.0.0.0' || !form.ui_host) ? 'localhost' : form.ui_host}:${form.ui_port || 8090}/`"></pre>
             <div class="section-head" x-show="form.ui_auth_mode && form.ui_auth_mode !== 'none'">3 · Auth</div>
             <p x-show="form.ui_auth_mode==='token'" style="color:var(--text-secondary);font-size:13px">Append <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">?token=&lt;your_token&gt;</code> to the URL, or set <code style="font-family:'JetBrains Mono',monospace;font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">Authorization: Bearer &lt;token&gt;</code> in REST calls.</p>
           </div>
@@ -1930,6 +2018,7 @@ const PRESETS = [
       storage_backend: 'redis',
       redis_host: '127.0.0.1', redis_port: 6379,
       ant_colony_enabled: true, ant_colony_max_ants: 10, ant_colony_auto_hatch_on_gap: true, ant_colony_auto_restart: true,
+      tool_forge_enabled: true, tool_forge_persist_by_default: false, tool_forge_spawn_timeout_seconds: 30, tool_forge_codegen_llm_provider: 'default',
       validation_enabled: true, validation_threshold: 0.80,
       history_enabled: true, history_retention_days: 90, history_max_sessions_in_context: 3,
       blueprint_enabled: true,
@@ -1987,6 +2076,7 @@ function defaultForm() {
     scout_enabled: true, scout_max_capabilities: 30, scout_timeout_seconds: 100,
     scout_ext_enabled: true, scout_ext_auto_discovery_file: 'cortex_auto_mcps.yaml',
     scout_ext_registry_sources: '', scout_ext_max_new_per_session: 5, scout_ext_max_stale_days: 30, scout_ext_search_timeout_s: 100.0,
+    builtin_web_search_enabled: true,
     validation_enabled: false, wave_gate_llm_provider: 'default',
     validation_threshold: 0.75, validation_critical_threshold: 0.40, validation_timeout_seconds: 150,
     validation_weights_intent_match: 0.50, validation_weights_completeness: 0.30, validation_weights_coherence: 0.20,
@@ -2011,6 +2101,9 @@ function defaultForm() {
     ant_colony_enabled: false, ant_colony_base_port: 8100, ant_colony_max_ants: 20,
     ant_colony_auto_restart: true, ant_colony_auto_hatch_on_gap: false,
     ant_colony_llm_provider: 'default',
+    tool_forge_enabled: false, tool_forge_persist_by_default: false,
+    tool_forge_spawn_timeout_seconds: 30, tool_forge_codegen_llm_provider: 'default',
+    amr_enabled: false, amr_tier_low: 'default', amr_tier_medium: 'default', amr_tier_high: 'default', amr_validation_provider: '',
     ui_enabled: false, ui_host: '0.0.0.0', ui_port: 8090, ui_title: 'Cortex Agent',
     ui_auth_mode: 'none', ui_auth_token: '', ui_auth_username: '', ui_auth_password: '',
     max_wait_seconds: 1000, default_task_timeout: 400,
@@ -2071,16 +2164,6 @@ function parseKV(text) {
 
 function wizard() {
   return {
-    activeTheme: localStorage.getItem('cortex.studio.theme') || 'cyan',
-    themes: [
-      { id:'cyan', label:'Cyan', color:'#06b6d4' },
-      { id:'violet', label:'Violet', color:'#a855f7' },
-      { id:'emerald', label:'Emerald', color:'#10b981' },
-      { id:'rose', label:'Rose', color:'#f43f5e' },
-      { id:'amber', label:'Amber', color:'#f59e0b' },
-      { id:'indigo', label:'Indigo', color:'#6366f1' },
-    ],
-
     currentStep: 0,
     visitedSteps: [0],
     sidebarCollapsed: false,
@@ -2188,7 +2271,6 @@ function wizard() {
     },
 
     async init() {
-      this.$watch('activeTheme', v => localStorage.setItem('cortex.studio.theme', v));
       try {
         const res = await fetch('/api/providers');
         const data = await res.json();
@@ -2232,8 +2314,6 @@ function wizard() {
       clearTimeout(this._yamlRefreshTimer);
       this._yamlRefreshTimer = setTimeout(() => this.generateConfigSilent(), 600);
     },
-
-    setTheme(t) { this.activeTheme = t; },
 
     navigate(step) {
       if (step === this.currentStep) return;
@@ -2701,6 +2781,7 @@ function wizard() {
         scout_ext_max_new_per_session: f.scout_ext_max_new_per_session,
         scout_ext_max_stale_days: f.scout_ext_max_stale_days,
         scout_ext_search_timeout_s: f.scout_ext_search_timeout_s,
+        builtin_web_search_enabled: f.builtin_web_search_enabled,
         validation_enabled: f.validation_enabled,
         wave_gate_llm_provider: f.wave_gate_llm_provider || 'default',
         validation_threshold: f.validation_threshold,
@@ -2754,6 +2835,15 @@ function wizard() {
         ant_colony_auto_restart: f.ant_colony_auto_restart,
         ant_colony_auto_hatch_on_gap: f.ant_colony_auto_hatch_on_gap,
         ant_colony_llm_provider: f.ant_colony_llm_provider || 'default',
+        tool_forge_enabled: f.tool_forge_enabled,
+        tool_forge_persist_by_default: f.tool_forge_persist_by_default,
+        tool_forge_spawn_timeout_seconds: f.tool_forge_spawn_timeout_seconds || 30,
+        tool_forge_codegen_llm_provider: f.tool_forge_codegen_llm_provider || 'default',
+        amr_enabled: f.amr_enabled,
+        amr_tier_low: f.amr_tier_low || 'default',
+        amr_tier_medium: f.amr_tier_medium || 'default',
+        amr_tier_high: f.amr_tier_high || 'default',
+        amr_validation_provider: f.amr_validation_provider || '',
       };
 
       if (f.base_url) data.base_url = f.base_url;

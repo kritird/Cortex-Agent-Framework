@@ -1,44 +1,118 @@
 agent:
-  name: MyTestAgent
-  description: An intelligent AI agent
-  # "interactive" — chat UI, CLI, dev mode. Chat-shaped turns get a direct
-  # conversational reply; task-shaped turns run the full decompose path.
-  # "rpc" — agent-as-callable (e.g. published MCP server). Every turn is
-  # treated as a task and no interactive clarifications are emitted.
-  # The `CORTEX_INTERACTION_MODE` env var overrides this field at runtime
-  # (cortex publish mcp sets it to "rpc" automatically).
-  interaction_mode: interactive
+  name: ResearchAgent
+  description: A research assistant that finds, reads, and synthesizes information
+    from across the web with proper citations.
+  synthesis_guidance: Always cite sources with [number] markers and a sources section
+    at the end. Prefer authoritative primary sources. Compare multiple perspectives
+    where they differ.
   time:
-    default_max_wait_seconds: 1000
-    default_task_timeout_seconds: 900
-  concurrency:
-    max_concurrent_sessions: 5
-  intent_gate:
-    enabled: true
-    # Heuristic confidence at/above which Stage 2 LLM classifier is skipped.
-    heuristic_confidence_threshold: 0.7
-    # LLM provider for Stage 2. "default" reuses the main provider.
-    llm_provider: default
-    timeout_seconds: 50.0
+    default_task_timeout_seconds: 300
+  builtin_web_search_enabled: true   # zero-config DuckDuckGo fallback; set false to require a configured tool server
+  capability_scout:
+    timeout_seconds: 10
+    external_discovery:
+      search_timeout_s: 10
 llm_access:
   default:
     provider: local
-    model: gemma4
+    model: gemma4:e4b
     api_key_env_var: ''
     max_tokens: 4096
     base_url: http://localhost:11434/v1
     temperature: 1
+  # providers:
+  #   fast:
+  #     provider: anthropic
+  #     model: claude-haiku-4-5-20251001
+  #     api_key_env_var: ANTHROPIC_API_KEY
+  #   powerful:
+  #     provider: anthropic
+  #     model: claude-opus-4-7
+  #     api_key_env_var: ANTHROPIC_API_KEY
+
+# Adaptive Model Routing (AMR) — per-task LLM selection driven by the decomposer.
+# Set enabled: true and map each complexity tier to a provider key defined above.
+# adaptive_model_routing:
+#   enabled: true
+#   tiers:
+#     low: fast        # simple retrieval, formatting, short text
+#     medium: default  # multi-step reasoning, moderate code
+#     high: powerful   # complex architecture, deep synthesis, long codegen
+#   validation_provider: ""  # "" = auto-select first non-default provider
 storage:
   base_path: ./cortex_storage
 ui:
   enabled: true
+  title: Research Agent
+task_types:
+- name: web_search
+  description: Search the web for information on a topic and return relevant results.
+  output_format: text
+  capability_hint: web_search
+  timeout_seconds: 60
+- name: read_page
+  description: Fetch and extract clean readable text from a URL.
+  output_format: text
+  capability_hint: web_search
+  timeout_seconds: 30
+- name: synthesize
+  description: Synthesize findings from multiple sources into a structured report
+    with numbered citations.
+  output_format: markdown
+  capability_hint: llm_synthesis
+  timeout_seconds: 120
 blueprint:
   enabled: true
+tool_servers:
+  brave_search:
+    transport: stdio
+    command: npx
+    args:
+    - -y
+    - '@modelcontextprotocol/server-brave-search'
+    description: Privacy-focused web search via the Brave Search API.
+    startup_timeout_seconds: 100
+    connection:
+      timeout_seconds: 100
+      read_timeout_seconds: 600
+    env:
+      BRAVE_API_KEY: ''
+  fetch:
+    transport: stdio
+    command: uvx
+    args:
+    - mcp-server-fetch
+    description: Fetch web pages and extract clean content for AI consumption.
+    startup_timeout_seconds: 100
+    connection:
+      timeout_seconds: 100
+      read_timeout_seconds: 600
+validation:
+  threshold: 0.75
+  timeout_seconds: 15
 history:
   enabled: true
   retention_days: 90
-ant_colony:
+learning:
   enabled: true
+  auto_apply_delta: true
+startup:
+  discovery_timeout_seconds: 15
+code_sandbox:
+  enabled: true
+  timeout_seconds: 60
+  allow_network: true
+  auto_add_to_yaml: true
 workspace_bash:
   enabled: true
   hitl_enabled: true
+ant_colony:
+  enabled: true
+  llm_model: gemma4:e4b
+# ToolForge — LLM-generated MCP servers spawned at wave boundaries.
+# Requires ant_colony.enabled and code_sandbox.enabled (both true above).
+# tool_forge:
+#   enabled: true
+#   persist_by_default: false      # true = forged servers survive restart (auto_restart in ants.yaml)
+#   spawn_timeout_seconds: 30      # health-check timeout after spawning the generated script
+#   codegen_llm_provider: default  # provider key used for MCP server code generation

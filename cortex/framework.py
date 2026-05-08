@@ -31,7 +31,8 @@ from cortex.security.scrubber import CredentialScrubber
 from cortex.storage.memory_backend import MemoryBackend
 from cortex.streaming.sse import SSEBuffer, SSEGenerator
 from cortex.streaming.status_events import (
-    ClarificationEvent, EventType, LearningEvent, StatusEvent,
+    ClarificationEvent, EventType, IntentClassifiedEvent, LearningEvent,
+    SessionTokenUsageEvent, StatusEvent, TaskBlueprintEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,7 @@ class CortexFramework:
         self._code_store = None
         self._external_mcp_registry = None
         self._ant_colony = None
+        self._tool_forge_config = None
         self._intent_gate = None  # cortex.modules.intent_gate.IntentGate
         self._workspace_bash = None  # cortex.modules.workspace_bash.WorkspaceBash
 
@@ -323,6 +325,7 @@ class CortexFramework:
             blueprint_store=self._blueprint_store,
         )
         self._learning_engine.set_reload_callback(self.hot_reload)
+        self._learning_engine.set_cortex_yaml_path(self._config_path)
 
         # Task complexity scorer — stateless; shared across sessions.
         self._complexity_scorer = TaskComplexityScorer()
@@ -374,11 +377,19 @@ class CortexFramework:
             {"name": "bash",           "description": "Bash commands in Cortex session directory"},
             {"name": "code_exec",      "description": "Generate and execute Python in isolated sandbox"},
             {"name": "workspace_bash", "description": "Read, write, and execute code in user workspace directory"},
+            {"name": "web_search",     "description": "Search the internet for live/current information (built-in DuckDuckGo, no API key needed)"},
         ])
 
         # Ant Colony — self-spawning specialist agent subsystem
         if cfg.ant_colony.enabled:
             from cortex.ants.ant_colony import AntColony
+            amr = cfg.adaptive_model_routing
+            ant_amr = amr.model_dump() if amr.enabled else None
+            ant_providers = (
+                {k: v.model_dump(exclude_none=True) for k, v in cfg.llm_access.providers.items()}
+                if amr.enabled and cfg.llm_access.providers
+                else None
+            )
             self._ant_colony = AntColony(
                 base_path=cfg.storage.base_path,
                 base_port=cfg.ant_colony.base_port,
@@ -387,6 +398,8 @@ class CortexFramework:
                 llm_provider=cfg.ant_colony.llm_provider,
                 llm_model=cfg.ant_colony.llm_model,
                 api_key_env_var=cfg.ant_colony.api_key_env_var,
+                amr_config=ant_amr,
+                extra_providers=ant_providers,
             )
             self._ant_colony.set_register_callback(self._on_ant_registered)
             self._ant_colony.set_deregister_callback(self._on_ant_deregistered)
@@ -398,6 +411,27 @@ class CortexFramework:
                 cfg.ant_colony.max_ants,
                 cfg.ant_colony.auto_restart,
                 len(self._ant_colony.list_ants()),
+            )
+
+        # ToolForge — register forge_mcp as a builtin capability when all three
+        # required subsystems are active. The LLM decomposer will see it in the
+        # ## Available Capabilities section and can assign it to tasks that need
+        # a new MCP server built on-the-fly.
+        self._tool_forge_config = cfg.tool_forge
+        if cfg.tool_forge.enabled and cfg.code_sandbox.enabled and cfg.ant_colony.enabled:
+            self._tool_registry.register_builtin_capabilities([{
+                "name": "forge_mcp",
+                "description": (
+                    "Build and register a new MCP server from generated code. "
+                    "Use when a required capability has no existing tool server. "
+                    "Dependent tasks in later waves will have access to the new server."
+                ),
+            }])
+            logger.info("ToolForge enabled — forge_mcp capability registered")
+        elif cfg.tool_forge.enabled:
+            logger.warning(
+                "ToolForge is enabled but inactive: requires both code_sandbox.enabled "
+                "and ant_colony.enabled to be true"
             )
 
         self._initialized = True
@@ -550,6 +584,7 @@ class CortexFramework:
                 discovery_callback=_mid_run_discovery,
                 workspace_bash=self._workspace_bash,
                 hitl_relay_url=_hitl_relay_url,
+                builtin_web_search_enabled=self._config.agent.builtin_web_search_enabled,
             )
 
             # Load history context
@@ -640,6 +675,12 @@ class CortexFramework:
                 session_id, intent_decision.mode,
                 intent_decision.source, intent_decision.rationale[:120],
             )
+            await event_queue.put(IntentClassifiedEvent(
+                session_id=session_id,
+                intent_mode=intent_decision.mode,
+                confidence=0.95 if intent_decision.source == "heuristic" else 0.75,
+                reasoning=intent_decision.rationale,
+            ))
 
             stale_task_names: set = set()
             scout_result = None
@@ -745,6 +786,27 @@ class CortexFramework:
                     stale_task_names=stale_task_names,
                 ):
                     decomposed_tasks.append(task)
+                if decomposed_tasks:
+                    _wave_map: Dict[str, int] = {}
+                    for _t in decomposed_tasks:
+                        _deps = getattr(_t, "depends_on", []) or []
+                        _wave = max((_wave_map.get(d, 0) for d in _deps), default=0) + 1
+                        _wave_map[getattr(_t, "task_name", "")] = _wave
+                    _blueprint_tasks = [
+                        {
+                            "id": getattr(t, "task_id", ""),
+                            "name": getattr(t, "task_name", ""),
+                            "description": getattr(t, "instruction", "")[:120],
+                            "depends_on": getattr(t, "depends_on", []) or [],
+                            "wave": _wave_map.get(getattr(t, "task_name", ""), 1),
+                        }
+                        for t in decomposed_tasks
+                    ]
+                    await event_queue.put(TaskBlueprintEvent(
+                        session_id=session_id,
+                        tasks=_blueprint_tasks,
+                        waves=max(_wave_map.values(), default=1),
+                    ))
 
             if intent_is_chat:
                 # Chat turn — direct conversational reply, no tasks.
@@ -941,6 +1003,43 @@ class CortexFramework:
                             )
                         except Exception as e:
                             logger.debug("Replan hook raised (non-fatal): %s", e)
+
+                    # ToolForge wave boundary: spawn and register any MCP servers
+                    # generated in this wave before the next wave's tasks are dispatched.
+                    # Failures are swallowed so a forge error never blocks the session.
+                    if (
+                        self._ant_colony is not None
+                        and self._tool_forge_config is not None
+                        and self._tool_forge_config.enabled
+                    ):
+                        for _env in wave_results:
+                            if isinstance(_env, Exception):
+                                continue
+                            if not getattr(_env, "forged_server_path", None):
+                                continue
+                            _forge_name = (
+                                getattr(_env, "task_name", None)
+                                or (_env.task_id.split("/", 1)[-1] if "/" in _env.task_id else _env.task_id)
+                            )
+                            try:
+                                await self._ant_colony.hatch_from_script(
+                                    name=_forge_name,
+                                    script_path=_env.forged_server_path,
+                                    capability=_forge_name,
+                                    persist=self._tool_forge_config.persist_by_default,
+                                    spawn_timeout=float(
+                                        self._tool_forge_config.spawn_timeout_seconds
+                                    ),
+                                )
+                                logger.info(
+                                    "ToolForge: registered '%s' from %s",
+                                    _forge_name, _env.forged_server_path,
+                                )
+                            except Exception as _forge_err:
+                                logger.warning(
+                                    "ToolForge: failed to hatch forge ant '%s': %s — continuing",
+                                    _forge_name, _forge_err,
+                                )
 
                     # Check time remaining
                     remaining = deadline - time.monotonic()
@@ -1281,6 +1380,22 @@ class CortexFramework:
                 ))
                 self._external_mcp_registry.clear_auth_pending()
 
+        # Emit cumulative token usage for the session
+        _tu = token_usage
+        if _tu:
+            _inp = sum(getattr(_tu, f, 0) or 0 for f in ("input", "input_tokens"))
+            _out = sum(getattr(_tu, f, 0) or 0 for f in ("output", "output_tokens"))
+            _cr = getattr(_tu, "cache_read_tokens", 0) or 0
+            _cw = getattr(_tu, "cache_write_tokens", 0) or 0
+            if _inp or _out:
+                await event_queue.put(SessionTokenUsageEvent(
+                    session_id=session_id,
+                    input_tokens=_inp,
+                    output_tokens=_out,
+                    cache_read_tokens=_cr,
+                    cache_write_tokens=_cw,
+                ))
+
         # Emit session end
         self._observability.emit_session_end(session_id, history_record)
         await event_queue.put(StatusEvent(
@@ -1363,6 +1478,7 @@ class CortexFramework:
                 code_sandbox=self._code_sandbox,
                 code_store=self._code_store,
                 sandbox_config=self._config.code_sandbox,
+                builtin_web_search_enabled=self._config.agent.builtin_web_search_enabled,
             )
 
             # Restore the runtime graph (completed tasks keep status, pending reset to pending)

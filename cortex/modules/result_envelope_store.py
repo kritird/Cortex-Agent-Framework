@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class ResultEnvelope:
     schema_version: str = "1.0"
     task_id: str = ""
+    task_name: str = ""         # logical task name (no sequence prefix), used by wave hooks
     session_id: str = ""
     status: str = "pending"   # pending | running | complete | failed | timeout
     mandatory: bool = True
@@ -29,6 +30,7 @@ class ResultEnvelope:
     context_hints: Dict[str, str] = field(default_factory=dict)
     token_usage: TokenUsage = field(default_factory=TokenUsage)
     generated_script: Optional[str] = None   # LLM-generated source code if task ran via code_exec
+    forged_server_path: Optional[str] = None  # absolute path to generated MCP server script (forge_mcp tasks only)
     is_adhoc: bool = False                    # True if task was not in cortex.yaml at runtime
 
     def to_dict(self) -> dict:

@@ -1,6 +1,17 @@
+<p align="center">
+  <a href="https://kritird.github.io/Cortex-Agent-Framework/">
+    <img src="https://img.shields.io/badge/🌐_Full_docs_%26_landing_page-06b6d4?style=for-the-badge&labelColor=07070f" alt="Full docs & landing page" />
+  </a>
+</p>
+
+> **📖 Looking for the full docs, feature showcase, and use cases?**
+> Visit the **[Cortex landing page →](https://kritird.github.io/Cortex-Agent-Framework/)**
+
+---
+
 <table>
   <tr>
-    <td width="150"><img src="logo/cortex-logo.svg" alt="Cortex Agent Framework" width="130" /></td>
+    <td width="150"><img src="logo/cortex-logo-new-v1.svg" alt="Cortex Agent Framework" width="130" /></td>
     <td>
       <h1>Cortex Agent Framework</h1>
       <strong>One YAML file. One method call. A production AI agent.</strong><br/>

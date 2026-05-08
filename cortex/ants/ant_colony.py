@@ -46,26 +46,51 @@ class AntInfo:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
-_ANT_YAML_TEMPLATE = """\
-agent:
-  name: {agent_name}
-  description: {description}
+def _build_ant_yaml(
+    agent_name: str,
+    description: str,
+    llm_provider: str,
+    llm_model: str,
+    api_key_env_var: str,
+    task_name: str,
+    capability: str,
+    storage_path: str,
+    extra_providers: Optional[dict] = None,
+    amr_config: Optional[dict] = None,
+) -> str:
+    """Build the cortex.yaml content for a spawned ant agent.
 
-llm_access:
-  default:
-    provider: {llm_provider}
-    model: {llm_model}
-    api_key_env_var: {api_key_env_var}
-
-task_types:
-  - name: {task_name}
-    description: {description}
-    capability_hint: {capability}
-    output_format: text
-
-storage:
-  base_path: {storage_path}
-"""
+    When the parent has Adaptive Model Routing enabled, extra_providers and
+    amr_config are injected so ant sub-tasks are also adaptively routed.
+    The ant's own primary-agent decomposition still uses the default provider.
+    """
+    doc: dict = {
+        "agent": {
+            "name": agent_name,
+            "description": description,
+        },
+        "llm_access": {
+            "default": {
+                "provider": llm_provider,
+                "model": llm_model,
+                "api_key_env_var": api_key_env_var,
+            },
+        },
+        "task_types": [{
+            "name": task_name,
+            "description": description,
+            "capability_hint": capability,
+            "output_format": "text",
+        }],
+        "storage": {
+            "base_path": storage_path,
+        },
+    }
+    if extra_providers:
+        doc["llm_access"]["providers"] = extra_providers
+    if amr_config and amr_config.get("enabled"):
+        doc["adaptive_model_routing"] = amr_config
+    return yaml.dump(doc, default_flow_style=False, allow_unicode=True)
 
 
 class AntColony:
@@ -92,6 +117,8 @@ class AntColony:
         llm_provider: str = "default",
         llm_model: str = "claude-haiku-4-5-20251001",
         api_key_env_var: str = "ANTHROPIC_API_KEY",
+        amr_config: Optional[dict] = None,
+        extra_providers: Optional[dict] = None,
     ):
         self._base_path = Path(base_path) / "ants"
         self._ants_yaml = Path(base_path) / "ants.yaml"
@@ -101,6 +128,10 @@ class AntColony:
         self._llm_provider = llm_provider
         self._llm_model = llm_model
         self._api_key_env_var = api_key_env_var
+        # AMR: propagated to ant sub-tasks; the ant primary agent itself
+        # always decomposes using llm_provider (default).
+        self._amr_config = amr_config
+        self._extra_providers = extra_providers
 
         self._ants: Dict[str, AntInfo] = {}
         self._procs: Dict[str, asyncio.subprocess.Process] = {}
@@ -183,6 +214,128 @@ class AntColony:
 
         logger.info("AntColony: hatched ant '%s' on port %d (pid=%d)", name, port, pid)
         return info
+
+    async def hatch_from_script(
+        self,
+        name: str,
+        script_path: str,
+        capability: str,
+        persist: bool = False,
+        spawn_timeout: float = 30.0,
+    ) -> AntInfo:
+        """Spawn a pre-written MCP server script as an ant (ToolForge path).
+
+        Skips port allocation via LLM template generation — the script already
+        exists at ``script_path`` and must bind to the port passed via the
+        ``CORTEX_ANT_PORT`` environment variable.
+
+        The resulting ``AntInfo`` is written to ``ants.yaml`` with
+        ``source='forged'``. When ``persist=True`` the colony will re-hatch it
+        on the next framework startup (same as ``auto_restart`` for regular
+        ants); when ``persist=False`` the entry survives in ants.yaml for
+        inspection but is not auto-restarted.
+
+        Parameters
+        ----------
+        name:
+            Unique ant name — typically the forge task's ``task_name``.
+        script_path:
+            Absolute path to the generated MCP server Python script.
+        capability:
+            Capability string used for registry routing (e.g. ``pdf_extraction``).
+        persist:
+            Whether to re-hatch this ant on next framework startup.
+        spawn_timeout:
+            Seconds to wait for the server to pass health-check.
+
+        Raises
+        ------
+        RuntimeError:
+            If the colony is at capacity or the server fails health-check.
+        """
+        if name in self._ants and self._ants[name].status == "running":
+            logger.info("AntColony: forge ant '%s' already running", name)
+            return self._ants[name]
+
+        running_count = len([a for a in self._ants.values() if a.status == "running"])
+        if running_count >= self._max_ants:
+            raise RuntimeError(
+                f"AntColony: max_ants ({self._max_ants}) reached, cannot hatch forge ant '{name}'"
+            )
+
+        port = await self._allocate_port()
+        url = f"http://127.0.0.1:{port}"
+
+        env = {
+            **os.environ,
+            "CORTEX_ANT_PORT": str(port),
+            "CORTEX_ANT_NAME": name,
+        }
+
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, script_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        ready = await self._wait_for_ready(proc, port, timeout=spawn_timeout)
+        if not ready:
+            proc.kill()
+            stderr = b""
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
+            raise RuntimeError(
+                f"AntColony: forge ant '{name}' failed health-check within {spawn_timeout}s. "
+                f"stderr: {stderr.decode(errors='replace')[:500]}"
+            )
+
+        info = AntInfo(
+            name=name,
+            capability=capability,
+            description=f"Forged MCP server for {capability}",
+            port=port,
+            pid=proc.pid,
+            url=url,
+            status="running",
+            cortex_yaml_path=str(Path(script_path).parent / "cortex.yaml"),
+        )
+        self._ants[name] = info
+        self._procs[name] = proc
+
+        # Persist to ants.yaml; embed source/persist flags via raw YAML data so
+        # resume_colony() can honour the auto_restart intent without schema changes.
+        self._save_with_extras(name, source="forged", auto_restart=persist)
+
+        if self._register_callback:
+            await self._register_callback(name, url)
+
+        if persist and self._supervisor_task is None:
+            self._supervisor_task = asyncio.create_task(self._supervise())
+
+        logger.info(
+            "AntColony: forge ant '%s' hatched from %s on port %d (persist=%s)",
+            name, script_path, port, persist,
+        )
+        return info
+
+    def _save_with_extras(self, name: str, source: str, auto_restart: bool) -> None:
+        """Persist ants.yaml with extra metadata for a specific ant entry.
+
+        Called only by ``hatch_from_script`` to annotate forged ants with
+        ``source`` and ``auto_restart`` without changing the AntInfo dataclass.
+        """
+        data: dict = {}
+        for ant_name, ant_info in self._ants.items():
+            entry = ant_info.to_dict()
+            if ant_name == name:
+                entry["source"] = source
+                entry["auto_restart"] = auto_restart
+            data[ant_name] = entry
+        with open(self._ants_yaml, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     async def stop(self, name: str) -> None:
         """Stop a running ant by name."""
@@ -326,7 +479,7 @@ class AntColony:
             except Exception as exc:
                 logger.debug("AntColony: LLM description refinement failed: %s", exc)
 
-        content = _ANT_YAML_TEMPLATE.format(
+        content = _build_ant_yaml(
             agent_name=name.replace("_", " ").title(),
             description=task_description,
             llm_provider=self._llm_provider,
@@ -335,6 +488,8 @@ class AntColony:
             task_name=name,
             capability=capability,
             storage_path=storage_path,
+            extra_providers=self._extra_providers,
+            amr_config=self._amr_config,
         )
         with open(yaml_path, "w") as f:
             f.write(content)

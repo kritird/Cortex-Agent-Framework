@@ -2,11 +2,12 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -72,11 +73,104 @@ class ToolServerInfo:
     trust_tier: str = "internal"
 
 
+class _StdioMCPSession:
+    """Handles a single stdio MCP server call: spawn → init → call → terminate."""
+
+    def __init__(self, command: str, args: List[str], env: Dict[str, str]) -> None:
+        self._command = command
+        self._args = args
+        # Merge: system env first, then config non-empty overrides
+        self._proc_env: Dict[str, str] = dict(os.environ)
+        for k, v in env.items():
+            if v:
+                self._proc_env[k] = v
+
+    async def list_tools(self, timeout: float = 20.0) -> List[Dict[str, Any]]:
+        """Spawn server, call tools/list, return list of tool dicts."""
+        proc = await self._spawn()
+        try:
+            return await asyncio.wait_for(self._do_list(proc), timeout=timeout)
+        except Exception as e:
+            logger.debug("stdio tools/list failed: %s", e)
+            return []
+        finally:
+            await self._terminate(proc)
+
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], timeout: float = 60.0) -> str:
+        """Spawn server, call tool, return text result."""
+        proc = await self._spawn()
+        try:
+            return await asyncio.wait_for(self._do_call(proc, tool_name, arguments), timeout=timeout)
+        finally:
+            await self._terminate(proc)
+
+    async def _spawn(self) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            self._command, *self._args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=self._proc_env,
+        )
+
+    async def _handshake(self, proc: asyncio.subprocess.Process) -> None:
+        await self._send(proc, {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "cortex", "version": "1.0"},
+            },
+        })
+        await self._recv(proc)  # consume initialize response
+        await self._send(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    async def _do_list(self, proc: asyncio.subprocess.Process) -> List[Dict[str, Any]]:
+        await self._handshake(proc)
+        await self._send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        resp = await self._recv(proc)
+        return resp.get("result", {}).get("tools", [])
+
+    async def _do_call(self, proc: asyncio.subprocess.Process, tool_name: str, arguments: Dict[str, Any]) -> str:
+        await self._handshake(proc)
+        await self._send(proc, {
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        })
+        resp = await self._recv(proc)
+        if "error" in resp:
+            raise RuntimeError(f"MCP tool error: {resp['error']}")
+        content = resp.get("result", {}).get("content", [])
+        if isinstance(content, list):
+            return "\n".join(c.get("text", "") for c in content if c.get("type") == "text")
+        return str(content)
+
+    @staticmethod
+    async def _send(proc: asyncio.subprocess.Process, obj: Dict) -> None:
+        line = json.dumps(obj) + "\n"
+        proc.stdin.write(line.encode())
+        await proc.stdin.drain()
+
+    @staticmethod
+    async def _recv(proc: asyncio.subprocess.Process) -> Dict:
+        line = await proc.stdout.readline()
+        return json.loads(line)
+
+    @staticmethod
+    async def _terminate(proc: asyncio.subprocess.Process) -> None:
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except Exception:
+            proc.kill()
+
+
 @dataclass
 class ToolServerConnection:
     server_name: str
     server_info: ToolServerInfo
     session: Optional[aiohttp.ClientSession] = None
+    stdio_session: Optional[_StdioMCPSession] = None
 
 
 @dataclass
@@ -273,22 +367,48 @@ class ToolServerRegistry:
         )
 
         if srv_config.transport == "stdio":
-            info.status = "READY"
             info.auth_status = "n/a"
             info.tls_status = "n/a"
-            # Discover tools via stdio if command specified
-            if srv_config.command:
-                try:
-                    tools = await asyncio.wait_for(
-                        self._discover_stdio_tools(srv_config),
-                        timeout=discovery_timeout,
+            if not srv_config.command:
+                info.classification_notes.append("stdio server has no command configured")
+                return info
+
+            stdio = _StdioMCPSession(
+                command=srv_config.command,
+                args=srv_config.args,
+                env=srv_config.env,
+            )
+            # Discover tools (best-effort; fallback to capability_hints if it fails)
+            try:
+                raw_tools = await asyncio.wait_for(
+                    stdio.list_tools(timeout=discovery_timeout),
+                    timeout=discovery_timeout + 2,
+                )
+                info.tools = [
+                    ToolInfo(
+                        name=t.get("name", ""),
+                        description=t.get("description", ""),
+                        input_schema=t.get("inputSchema", {}),
                     )
-                    info.tools = tools
-                    info.capabilities = self._classify_tools(tools, srv_config, info)
-                except asyncio.TimeoutError:
-                    info.classification_notes.append("Tool discovery timed out")
-                except Exception as e:
-                    info.classification_notes.append(f"Tool discovery failed: {e}")
+                    for t in raw_tools
+                ]
+                info.capabilities = self._classify_tools(info.tools, srv_config, info)
+                info.status = "READY"
+            except Exception as e:
+                info.classification_notes.append(f"Tool discovery failed: {e}")
+                # Still mark READY if capability_hints were provided manually
+                if srv_config.discovery.capability_hints:
+                    info.capabilities = list(srv_config.discovery.capability_hints)
+                    info.status = "READY"
+                else:
+                    info.status = "UNAVAILABLE"
+                    return info
+
+            self._connections[name] = ToolServerConnection(
+                server_name=name,
+                server_info=info,
+                stdio_session=stdio,
+            )
             return info
 
         if not srv_config.url:
@@ -445,8 +565,15 @@ class ToolServerRegistry:
         return []
 
     async def _discover_stdio_tools(self, config: ToolServerConfig) -> List[ToolInfo]:
-        """Discover tools from a stdio MCP server (simplified)."""
-        return []
+        """Discover tools from a stdio MCP server via MCP tools/list."""
+        if not config.command:
+            return []
+        stdio = _StdioMCPSession(command=config.command, args=config.args, env=config.env)
+        raw = await stdio.list_tools()
+        return [
+            ToolInfo(name=t.get("name", ""), description=t.get("description", ""), input_schema=t.get("inputSchema", {}))
+            for t in raw
+        ]
 
     def _classify_tools(
         self,

@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List
 
 import yaml
 from aiohttp import web
@@ -66,6 +66,10 @@ def _extract_section(raw: dict, section_id: str) -> dict:
         return {"external_discovery": dict(ext)}
     elif section_id == "ant_colony":
         return {"ant_colony": dict(raw.get("ant_colony", {}))}
+    elif section_id == "tool_forge":
+        return {"tool_forge": dict(raw.get("tool_forge", {}))}
+    elif section_id == "adaptive_model_routing":
+        return {"adaptive_model_routing": dict(raw.get("adaptive_model_routing", {}))}
     elif section_id == "system":
         keys = ["learning", "validation", "history", "storage", "sqlite",
                 "redis", "security", "startup", "user_config", "ui"]
@@ -117,6 +121,10 @@ def _merge_section(raw: dict, section_id: str, data: dict) -> dict:
         raw["agent"] = agent
     elif section_id == "ant_colony":
         raw["ant_colony"] = data.get("ant_colony", {})
+    elif section_id == "tool_forge":
+        raw["tool_forge"] = data.get("tool_forge", {})
+    elif section_id == "adaptive_model_routing":
+        raw["adaptive_model_routing"] = data.get("adaptive_model_routing", {})
     elif section_id == "system":
         for k in ["learning", "validation", "history", "storage", "sqlite",
                   "redis", "security", "startup", "user_config", "ui"]:
@@ -147,7 +155,7 @@ def _read_blueprints(storage_base: Path) -> List[dict]:
                 except Exception:
                     pass
                 body = m.group(2).strip()
-            lessons = len([l for l in body.split("\n") if l.strip().startswith("- [v")])
+            lessons = len([ln for ln in body.split("\n") if ln.strip().startswith("- [v")])
             results.append({
                 "file": md_file.name,
                 "name": fm.get("name", md_file.stem),

@@ -47,6 +47,29 @@ class WorkspaceBash:
         # hitl_enabled is informational — framework init enforces it cannot be False.
         self._hitl_enabled = hitl_enabled
 
+    async def _emit_workspace_event(
+        self,
+        session_id: str,
+        task,
+        action: str,
+        path: str,
+        is_dir: bool = False,
+    ) -> None:
+        if self._event_queue is None:
+            return
+        try:
+            from cortex.streaming.status_events import WorkspaceEvent
+            await self._event_queue.put(WorkspaceEvent(
+                session_id=session_id,
+                task_id=getattr(task, "task_id", "workspace/unknown"),
+                task_name=getattr(task, "task_name", "workspace_bash"),
+                action=action,
+                path=path,
+                is_dir=is_dir,
+            ))
+        except Exception:
+            pass
+
     # ── Read-only operations (no HITL) ────────────────────────────────────────
 
     async def read_file(self, workspace_path: str, rel_path: str) -> str:
