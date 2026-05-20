@@ -27,11 +27,15 @@ Flow:
      :meth:`apply_delta` merges the task type into ``cortex.yaml`` and
      re-links the draft blueprint to its permanent location.
 
-Anti-abuse: one ``user_id`` counts as one confirmation regardless of how
-many times that user runs the same ad-hoc task.
+Confirmation counting: each distinct session_id counts as one confirmation,
+so a single user running the same ad-hoc task three times accumulates three
+confirmations and reaches the ``medium`` confidence threshold.  Distinct
+``user_id`` is tracked separately for observability but does not gate
+promotion.
 """
 import logging
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -222,7 +226,7 @@ class LearningEngine:
             description = envelope.context_hints.get("task_description", f"Ad-hoc task: {task_name}")
             output_format = envelope.output_type or "text"
 
-            # ── persist script ──────────────────────────────────────────────
+            # ── persist code_exec script ────────────────────────────────────
             script_path: Optional[str] = None
             requirements: List[str] = []
 
@@ -243,6 +247,30 @@ class LearningEngine:
                 except Exception as e:
                     logger.warning("LearningEngine: script persist failed for '%s': %s", task_name, e)
 
+            # ── build tool_servers_config for forge_mcp tasks ───────────────
+            # When the task ran as a ToolForge MCP server, record a stdio
+            # tool_servers entry so apply_delta can write it into cortex.yaml.
+            # This makes the promoted task self-contained: the next run finds
+            # the server via the static tool_servers config rather than
+            # re-forging or relying on a persisted ant.
+            tool_servers_config: Optional[dict] = None
+            if envelope.forged_server_path:
+                tool_servers_config = {
+                    task_name: {
+                        "transport": "stdio",
+                        "command": sys.executable,
+                        "args": [envelope.forged_server_path],
+                        "discovery": {
+                            "auto": True,
+                            "capability_hints": [task_name],
+                        },
+                    }
+                }
+                logger.info(
+                    "LearningEngine: built tool_servers_config for forge task '%s' → %s",
+                    task_name, envelope.forged_server_path,
+                )
+
             # ── seed draft blueprint ────────────────────────────────────────
             draft_ref: Optional[str] = None
             if self._blueprint_store:
@@ -252,7 +280,7 @@ class LearningEngine:
                         description=description,
                         envelope=envelope,
                         validation_report=validation_report,
-                        has_script=bool(script_path),
+                        has_script=bool(script_path or envelope.forged_server_path),
                     )
                     if draft_ref:
                         drafts_seeded.append(task_name)
@@ -260,8 +288,19 @@ class LearningEngine:
                     logger.warning("LearningEngine: draft blueprint seed failed for '%s': %s", task_name, e)
 
             # ── build & stage proposal ──────────────────────────────────────
-            capability = "code_exec" if envelope.generated_script else "llm_synthesis"
-            complexity = "scripted" if script_path else "adaptive"
+            # forge_mcp: task runs as an MCP server → capability = task_name
+            #            (matches the ant's registered capability key), no handler.
+            # code_exec:  task runs as a scripted handler → capability = code_exec.
+            # default:    pure LLM synthesis.
+            if envelope.forged_server_path:
+                capability = task_name
+                complexity = "adaptive"   # executed via MCP, not a direct handler
+            elif envelope.generated_script:
+                capability = "code_exec"
+                complexity = "scripted" if script_path else "adaptive"
+            else:
+                capability = "llm_synthesis"
+                complexity = "adaptive"
 
             proposal = DeltaProposal(
                 task_name=task_name,
@@ -283,6 +322,7 @@ class LearningEngine:
                 generated_script=envelope.generated_script,
                 script_path=script_path,
                 script_requirements=requirements,
+                tool_servers_config=tool_servers_config,
                 is_adhoc=True,
                 draft_blueprint=draft_ref,
                 complexity_score=complexity_score,
@@ -373,7 +413,13 @@ class LearningEngine:
     # ── staging ───────────────────────────────────────────────────────────────
 
     async def stage_delta(self, proposal: DeltaProposal, delta_path: Optional[str] = None) -> None:
-        """Merge proposal into pending.yaml with distinct user_id enforcement."""
+        """Merge proposal into pending.yaml.
+
+        Confirmation counting uses total distinct session_ids so that a single
+        user running the same ad-hoc task three times accumulates three
+        confirmations and reaches the medium-confidence threshold.  Distinct
+        user_id is stored as ``distinct_users`` for observability only.
+        """
         pending_path = Path(delta_path) / "pending.yaml" if delta_path else self._pending_path
 
         existing: dict = {}
@@ -406,24 +452,34 @@ class LearningEngine:
             prop_dict["script_requirements"] = proposal.script_requirements
         if proposal.draft_blueprint:
             prop_dict["draft_blueprint"] = proposal.draft_blueprint
+        if proposal.tool_servers_config:
+            prop_dict["tool_servers_config"] = proposal.tool_servers_config
+        # Track distinct users for observability (does not gate promotion)
+        prop_dict["distinct_users"] = len({s.user_id for s in proposal.learned_from_sessions})
 
         if proposal.task_name in task_map:
             existing_task = task_map[proposal.task_name]
-            # Merge sessions — enforce distinct user_id
+            # Merge sessions — deduplicate by session_id so each run counts once.
+            # A single user running the task N times accumulates N confirmations.
             existing_sessions = existing_task.get("learned_from_sessions", [])
-            existing_user_ids = {s["user_id"] for s in existing_sessions}
+            existing_session_ids = {s["session_id"] for s in existing_sessions}
             for new_session in proposal.learned_from_sessions:
-                if new_session.user_id not in existing_user_ids:
+                if new_session.session_id not in existing_session_ids:
                     existing_sessions.append(asdict(new_session))
-                    existing_user_ids.add(new_session.user_id)
+                    existing_session_ids.add(new_session.session_id)
             existing_task["learned_from_sessions"] = existing_sessions
-            existing_task["confirmations"] = len(existing_user_ids)
+            existing_task["confirmations"] = len(existing_sessions)
             count = existing_task["confirmations"]
             existing_task["confidence"] = "high" if count >= 5 else "medium" if count >= 3 else "low"
-            # Update handler if newly available
+            # Keep distinct_users up to date (observability only)
+            existing_task["distinct_users"] = len({s["user_id"] for s in existing_sessions})
+            # Update handler if newly available (code_exec path persisted later)
             if proposal.script_path and "handler" not in existing_task:
                 existing_task["handler"] = _script_path_to_handler(proposal.script_path)
                 existing_task["complexity"] = "scripted"
+            # Update tool_servers_config if the forge path now has one
+            if proposal.tool_servers_config and "tool_servers_config" not in existing_task:
+                existing_task["tool_servers_config"] = proposal.tool_servers_config
             # Track the peak complexity score across confirmations
             prior_score = float(existing_task.get("complexity_score", 0.0) or 0.0)
             existing_task["complexity_score"] = round(

@@ -32,6 +32,9 @@ class ResultEnvelope:
     generated_script: Optional[str] = None   # LLM-generated source code if task ran via code_exec
     forged_server_path: Optional[str] = None  # absolute path to generated MCP server script (forge_mcp tasks only)
     is_adhoc: bool = False                    # True if task was not in cortex.yaml at runtime
+    # Absolute paths to files this task produced. Surfaced into downstream tasks
+    # as UPSTREAM_FILES so app_control / code_exec can open them.
+    output_files: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)

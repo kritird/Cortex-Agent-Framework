@@ -32,6 +32,7 @@ import aiohttp
 
 from cortex.llm.client import LLMClient
 from cortex.modules.tool_server_registry import ToolServerRegistry
+from cortex.prompts import SCOUT_SYSTEM, MCP_MATCH_SYSTEM
 
 if TYPE_CHECKING:
     from cortex.modules.external_mcp_registry import ExternalMCPRegistry
@@ -39,24 +40,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCOUT_SYSTEM = (
-    "You are a capability router for an AI agent framework. "
-    "Given a user request and a list of available capability names, "
-    "identify which capabilities are needed to fulfill the request. "
-    "Respond ONLY with a valid JSON array of matching capability names, "
-    "chosen from the provided list. No explanations, no other text. "
-    "Example: [\"web_search\", \"document_generation\"]"
-)
-
-_MCP_MATCH_SYSTEM = (
-    "You are a tool-server selector for an AI agent framework. "
-    "Given a capability gap description and a list of MCP server candidates "
-    "(each with a name, description, and URL), select the single best candidate "
-    "that can fill the gap without requiring authentication. "
-    "Respond ONLY with a valid JSON object: "
-    "{\"index\": <0-based index into the candidates list>, \"reason\": \"<one sentence>\"}. "
-    "If no candidate is suitable, respond with {\"index\": -1, \"reason\": \"...\"}."
-)
 
 # Hard cap: never surface more than this many tools per capability in the prompt.
 _MAX_TOOLS_PER_CAPABILITY = 10
@@ -168,7 +151,7 @@ class CapabilityScout:
             If True and ant_colony is provided, automatically hatch ants for
             any capability gap that external discovery could not fill.
         """
-        code_utils = self._collect_code_utils(code_store)
+        code_utils = self.collect_code_utils(code_store)
 
         if not available_capabilities:
             return ScoutResult(code_utils=code_utils)
@@ -195,8 +178,14 @@ class CapabilityScout:
 
         tools = await self._collect_tools(probe_caps, registry)
 
+        # Built-in capabilities (web_search, llm_synthesis, bash, …) are served
+        # by the framework itself — no MCP server needed. They are always
+        # satisfied, so the scout must not hunt external servers or hatch ants
+        # for them, nor report them as unresolved gaps.
+        builtin_covered = set(probe_caps) & registry.get_builtin_capabilities()
+
         # Identify capabilities that internal servers couldn't cover
-        covered = {t.capability for t in tools}
+        covered = {t.capability for t in tools} | builtin_covered
         gaps = [c for c in probe_caps if c not in covered]
 
         if gaps and external_registry is not None and discovery_config is not None:
@@ -208,7 +197,7 @@ class CapabilityScout:
                 llm_client=llm_client,
             )
             tools.extend(ext_tools)
-            covered = {t.capability for t in tools}
+            covered = {t.capability for t in tools} | builtin_covered
 
         unresolved = [c for c in probe_caps if c not in covered]
 
@@ -221,7 +210,7 @@ class CapabilityScout:
                 llm_client=llm_client,
             )
             tools.extend(ant_tools)
-            covered = {t.capability for t in tools}
+            covered = {t.capability for t in tools} | builtin_covered
             unresolved = [c for c in unresolved if c not in covered]
 
         if unresolved:
@@ -317,25 +306,28 @@ class CapabilityScout:
 
     # ── Internal tools collection ──────────────────────────────────────────────
 
-    def _collect_code_utils(self, code_store) -> List[ScoutedCodeUtil]:
-        """Enumerate persisted sandbox scripts from the code store."""
+    def collect_code_utils(self, code_store) -> List[ScoutedCodeUtil]:
+        """Enumerate persisted sandbox scripts from the code store.
+
+        Public so callers can surface the agent's own prebuilt scripts to the
+        decomposer even when the full capability scout (MCP discovery) is
+        disabled — the code store is independent of MCP discovery.
+        """
         if code_store is None:
             return []
+        utils: List[ScoutedCodeUtil] = []
         try:
-            records = code_store.list_scripts()
+            for rec in code_store.list_scripts()[:_MAX_TOTAL_TOOLS]:
+                utils.append(ScoutedCodeUtil(
+                    task_name=rec.task_name,
+                    description=rec.description or "",
+                    script_path=getattr(rec, "script_path", ""),
+                    use_count=getattr(rec, "use_count", 0),
+                    added_to_yaml=getattr(rec, "added_to_yaml", False),
+                ))
         except Exception as exc:
             logger.debug("Scout: failed to enumerate code store: %s", exc)
             return []
-
-        utils: List[ScoutedCodeUtil] = []
-        for rec in records[:_MAX_TOTAL_TOOLS]:
-            utils.append(ScoutedCodeUtil(
-                task_name=rec.task_name,
-                description=rec.description or "",
-                script_path=rec.script_path,
-                use_count=getattr(rec, "use_count", 0),
-                added_to_yaml=getattr(rec, "added_to_yaml", False),
-            ))
         if utils:
             logger.info("Scout: discovered %d persisted code util(s)", len(utils))
         return utils
@@ -355,7 +347,7 @@ class CapabilityScout:
         try:
             response = await llm_client.complete(
                 messages=[{"role": "user", "content": user_msg}],
-                system=_SCOUT_SYSTEM,
+                system=SCOUT_SYSTEM,
                 max_tokens=256,
             )
             raw = response.content.strip()
@@ -649,7 +641,7 @@ class CapabilityScout:
         try:
             response = await llm_client.complete(
                 messages=[{"role": "user", "content": user_msg}],
-                system=_MCP_MATCH_SYSTEM,
+                system=MCP_MATCH_SYSTEM,
                 max_tokens=128,
             )
             raw = response.content.strip()

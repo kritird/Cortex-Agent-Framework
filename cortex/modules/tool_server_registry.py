@@ -1115,6 +1115,15 @@ class ToolServerRegistry:
         server_caps = {cap for cap, servers in self._capability_map.items() if servers}
         return sorted(server_caps | set(self._builtin_capabilities.keys()))
 
+    def get_builtin_capabilities(self) -> set:
+        """Return the set of registered built-in (non-server) capability names.
+
+        Built-ins (web_search, llm_synthesis, bash, …) are served by the
+        framework itself and need no MCP server, so callers must treat them
+        as already satisfied rather than as capability gaps to resolve.
+        """
+        return set(self._builtin_capabilities.keys())
+
     def list_servers(self) -> List[ToolServerInfo]:
         return list(self._servers.values())
 

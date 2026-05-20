@@ -10,12 +10,39 @@ A Python library (`cortex-agent-framework`) that gives you a production-grade mu
 
 ### How is this different from LangChain / LlamaIndex / CrewAI / AutoGen?
 
-- **Configuration-first.** Most frameworks require writing Python to define an agent. Cortex defines agents in YAML. You change behavior by editing config, not code.
+- **Config-first *or* code-first.** Define an agent in `cortex.yaml` *or* build it in Python with `CortexBuilder`. Either way the config replaces boilerplate, not your business logic.
 - **Fan-out / fan-in as a core primitive.** Parallel tool execution with a dependency DAG is first-class, not an advanced feature you build yourself.
 - **MCP-native.** Cortex speaks MCP end-to-end — tool servers *and* agent-to-agent composition both use MCP. There's no bespoke inter-agent protocol.
 - **Opinionated production stack.** Session management, validation scoring, delta learning, replay, hot-reload, and deployment targets all ship in the box.
 
 That said, Cortex plays well next to those tools. It doesn't compete with vector DBs or RAG libraries — it calls them via MCP.
+
+### Can I define agents in Python instead of YAML? How does this compare to LangGraph?
+
+Yes. Use `CortexBuilder` to build the whole agent in code, and the `@agent.node` decorator to wire **plain Python functions in as graph nodes** — the LangGraph-style pattern:
+
+```python
+from cortex import CortexBuilder, CortexFramework
+
+agent = CortexBuilder("MyAgent", "does things")
+agent.llm("anthropic", model="claude-sonnet-4-5", api_key_env="ANTHROPIC_API_KEY")
+
+@agent.node()
+async def fetch(ctx):
+    return await ctx.call_tool("brave", "search", query=ctx.request)
+
+@agent.node(depends_on=["fetch"])
+async def summarise(ctx):
+    return await ctx.llm(f"Summarise: {ctx.deps['fetch']}")
+
+framework = CortexFramework(config=agent.build())
+```
+
+The difference from LangGraph: by default Cortex *plans* the graph for you with an LLM (`execution_mode="planned"`). The moment you register a code node it switches to `execution_mode="static"` — your declared DAG runs verbatim, exactly like a hand-authored LangGraph. Either way you keep Cortex's wave engine, validation gate, retries, streaming events, and session persistence. See [Getting Started § Code-First Agents](GETTING_STARTED.md#code-first-agents--cortexbuilder).
+
+### When should I use `cortex.yaml` vs. `CortexBuilder`?
+
+Use **`cortex.yaml`** when the agent definition should be diffable and reviewed separately from app code, non-developers tune it, or you want the setup wizard and CLI. Use **`CortexBuilder`** when you prefer code, want the definition next to the rest of your app, or want code nodes (`.node()`) for deterministic, Python-driven graph steps. They are not mutually exclusive — `.task()` (LLM-routed) and `.node()` (Python) mix freely in one builder.
 
 ### Is Cortex production-ready?
 
@@ -110,6 +137,10 @@ The task is marked failed, the session continues, and the Primary Agent synthesi
 ### What's the max parallelism?
 
 Controlled by `agent.concurrency.max_parallel_tasks` (default 5). Dependencies always take precedence — a task waits for its `depends_on` regardless of the parallel cap.
+
+### Do I need to set `max_parallel_llm_calls`?
+
+No — it's auto-derived from your provider+model at startup (e.g. `1` for `local:*`, `8` for `anthropic:*haiku*`, `4` for `anthropic:*opus*`) and then self-tuned at runtime by `AdaptiveLLMGate` based on observed latency and errors. The field was removed from the setup wizard in v1.5.0. Set it explicitly in `cortex.yaml` only when you need a fixed ceiling — benchmarking, or a hard rate-limited API. See [CONFIGURATION.md § "LLM concurrency auto-tuning"](CONFIGURATION.md#llm-concurrency-auto-tuning).
 
 ### The LLM sometimes returns a task list with a cyclic dependency. What then?
 

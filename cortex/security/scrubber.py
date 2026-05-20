@@ -10,6 +10,7 @@ DEFAULT_SCRUB_PATTERNS = [
     r'token[_\-]?[=:]\s*\S+',
     r'secret[_\-]?[=:]\s*\S+',
     r'Authorization:\s*\S+',
+    r'sk-ant-[A-Za-z0-9\-_]{20,}',  # Anthropic keys: sk-ant-api03-... (hyphenated)
     r'sk-[A-Za-z0-9]{20,}',
     r'xoxb-[A-Za-z0-9\-]{20,}',
     r'ghp_[A-Za-z0-9]{36}',

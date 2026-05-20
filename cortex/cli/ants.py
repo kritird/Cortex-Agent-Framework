@@ -172,3 +172,57 @@ def ants_stop_all(config: str):
         click.echo(click.style(f"✓ Stopped {len(running)} ant(s).", fg="green"))
 
     asyncio.run(_run())
+
+
+@ants_group.command("forge")
+@click.argument("script_path")
+@click.option("--name", required=True, help="Unique ant name for this forged server")
+@click.option("--capability", required=True, help="Capability string (e.g. pdf_extraction)")
+@click.option("--persist", is_flag=True, default=False,
+              help="Re-hatch this ant automatically on next framework startup")
+@click.option("--timeout", default=30.0, show_default=True, help="Startup health-check timeout (s)")
+@click.option("--config", default="cortex.yaml")
+def ants_forge(script_path: str, name: str, capability: str, persist: bool, timeout: float, config: str):
+    """Spawn a pre-written MCP server script as a forged ant."""
+    import os as _os
+    async def _run():
+        from cortex.ants.ant_colony import AntColony
+        from cortex.config.loader import load_config
+        try:
+            cfg = load_config(config)
+        except Exception as e:
+            click.echo(f"Could not load config: {e}", err=True)
+            return
+
+        abs_script = _os.path.abspath(script_path)
+        if not _os.path.isfile(abs_script):
+            click.echo(click.style(f"✗ Script not found: {abs_script}", fg="red"), err=True)
+            return
+
+        colony = AntColony(
+            base_path=cfg.storage.base_path,
+            base_port=cfg.ant_colony.base_port,
+            max_ants=cfg.ant_colony.max_ants,
+            auto_restart=cfg.ant_colony.auto_restart,
+            llm_provider=cfg.ant_colony.llm_provider,
+            llm_model=cfg.ant_colony.llm_model,
+            api_key_env_var=cfg.ant_colony.api_key_env_var,
+        )
+        click.echo(f"Forging ant '{name}' from {abs_script} …")
+        try:
+            info = await colony.hatch_from_script(
+                name=name,
+                script_path=abs_script,
+                capability=capability,
+                persist=persist,
+                spawn_timeout=timeout,
+            )
+            click.echo(click.style(f"✓ Forged ant '{info.name}' is running!", fg="green"))
+            click.echo(f"  URL      : {info.url}")
+            click.echo(f"  Port     : {info.port}")
+            click.echo(f"  PID      : {info.pid}")
+            click.echo(f"  Persist  : {persist}")
+        except Exception as e:
+            click.echo(click.style(f"✗ Failed to forge ant: {e}", fg="red"), err=True)
+
+    asyncio.run(_run())

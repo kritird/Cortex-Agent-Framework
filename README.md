@@ -58,6 +58,13 @@ cortex setup            # visual wizard at localhost:7799
 cortex publish ui       # chat UI at localhost:8090
 ```
 
+Or invoke the agent directly from the terminal:
+
+```bash
+cortex run "Research the latest vector DB benchmarks"
+cortex chat                                            # interactive REPL
+```
+
 You now have a working agent with a professional web interface, file upload support, streaming responses, and persistent chat history. No frontend to build. No backend to wire. No infrastructure to manage.
 
 ---
@@ -101,6 +108,44 @@ Fan-out, tool calls, dependency resolution, synthesis, validation — all handle
 
 ---
 
+## Or define it in Python — code-first agents
+
+Prefer code to config? Build the entire agent with `CortexBuilder` and wire in
+**code nodes** — plain Python functions as graph nodes, LangGraph-style. No
+YAML file, no decomposition LLM call: the graph runs exactly as you wrote it.
+
+```python
+from cortex import CortexBuilder, CortexFramework
+
+agent = CortexBuilder("ResearchAgent", "Searches the web and writes reports")
+agent.llm("anthropic", model="claude-sonnet-4-5", api_key_env="ANTHROPIC_API_KEY")
+agent.tool_server("brave", url="http://localhost:9000/sse")
+
+@agent.node()
+async def web_research(ctx):
+    return await ctx.call_tool("brave", "search", query=ctx.request)
+
+@agent.node(depends_on=["web_research"])
+async def write_report(ctx):
+    return await ctx.llm(f"Write a report from:\n{ctx.deps['web_research']}")
+
+framework = CortexFramework(config=agent.build())
+await framework.initialize()
+
+result = await framework.run_session("user_1", "Research vector DB benchmarks")
+print(result.response)                       # synthesised answer
+print(result.node_outputs["write_report"])   # raw output of one node
+```
+
+Registering a code node flips the agent to **static execution** — the DAG you
+declared is the plan. Each node receives a `TaskContext` with `ctx.request`,
+`ctx.deps` (upstream node outputs), `ctx.llm()`, and `ctx.call_tool()`. You
+still get the wave engine, validation gate, retries, streaming, and session
+persistence — Cortex just skips the planner. Mix `.task()` (LLM-routed) and
+`.node()` (Python) freely. See **[Getting Started](docs/GETTING_STARTED.md)**.
+
+---
+
 ## Why teams choose Cortex
 
 ### Skip months of framework engineering
@@ -136,6 +181,7 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 | | |
 |---|---|
 | **8 cloud LLM providers + local** | Anthropic, OpenAI, Gemini, Grok, Mistral, DeepSeek, AWS Bedrock, Azure AI — plus local Ollama / LM Studio / vLLM with a Gemma 4 quickstart |
+| **Code-first agents** | Build the whole agent in Python with `CortexBuilder`; `@node` decorator turns plain functions into graph nodes — static DAG, no decomposition LLM call |
 | **Fan-out / fan-in** | LLM-generated DAG with parallel execution; independent tasks run simultaneously |
 | **Intent Gate** | Cheap heuristic + LLM cascade routes chat-shaped turns directly to a streaming reply; only task-shaped turns decompose |
 | **`interaction_mode`** | One agent, two contracts: `interactive` for chat / CLI, `rpc` for MCP / automation — never blocks on clarifications |
@@ -148,11 +194,16 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 | **Blueprints** | Reusable workflow knowledge loaded into context; refined automatically when a session clears the validation threshold, seeded as drafts the moment a new task pattern is staged |
 | **Streaming** | Typed event classes (`StatusEvent`, `ResultEvent`, `ClarificationEvent`) for any UI |
 | **Smart synthesis** | Keyword-grep excerpts + concurrent per-file LLM summaries; large results written to disk as a `file` ResultEvent |
+| **Native app control** | Launch and drive desktop applications via AppleScript (macOS), PowerShell + UIA (Windows), or a screenshot vision loop — every mutating action gated by HITL |
+| **Built-in browser automation** | Playwright MCP starts internally — chromium / firefox / webkit with persistent session state so logins survive runs. No tool-server wiring required |
+| **Polyglot code sandbox** | `# LANGUAGE:` header dispatches to Python, Node, TypeScript, Deno, shell, Ruby, Go, Rust, C, Java, or Kotlin — with per-ecosystem package install (`npm`, `gem`, `go get`) |
 | **Per-task LLM routing** | Route decomposition to a fast model, synthesis to flagship |
+| **Auto-tuned LLM concurrency** | `max_parallel_llm_calls` derives from your provider+model (1 for local Ollama, 8 for Haiku, 4 for Opus) and self-tunes at runtime via `AdaptiveLLMGate` — no wizard knob to guess |
 | **Session persistence** | Memory / SQLite / Redis with WAL replay and resumable sessions |
 | **Built-in chat UI** | Web frontend with file uploads, streaming, and conversation history |
 | **4 deploy targets** | `publish docker`, `publish package`, `publish mcp`, `publish ui` |
 | **Visual setup wizard** | Configure everything from a browser — `cortex setup` |
+| **Full CLI** | `cortex run`, `cortex chat`, `cortex sessions`, `cortex stats`, `cortex providers`, `cortex storage`, `cortex blueprints`, `cortex mcps` — manage every aspect of the framework without writing Python |
 | **Security** | Input sanitisation, credential scrubbing, sandboxed code execution, MCP output guard |
 | **Observability** | OpenTelemetry, audit logs, anomaly detection, token budgets |
 
@@ -162,8 +213,8 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 
 | Capability | Cortex | Typical agent frameworks |
 |---|---|---|
-| **Configuration** | Single `cortex.yaml` drives everything | Scattered code, env vars, multiple config files |
-| **Task orchestration** | LLM-generated DAG with parallel fan-out/fan-in | Sequential chain or hand-coded state machine |
+| **Configuration** | Single `cortex.yaml` *or* a Python `CortexBuilder` | Scattered code, env vars, multiple config files |
+| **Task orchestration** | LLM-generated DAG *or* a hand-authored static DAG of code nodes | Sequential chain or hand-coded state machine |
 | **Tool protocol** | Native MCP (SSE, stdio, streamable-HTTP) | Custom tool wrappers per integration |
 | **Multi-agent** | Any agent becomes an MCP tool in one command | Bespoke inter-agent protocols |
 | **Quality gates** | Built-in validation with scoring + remediation | Manual testing or nothing |
@@ -180,7 +231,8 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 | **Startup founder** shipping an AI product | A production agent runtime in an afternoon — skip 3-6 months of plumbing |
 | **Platform team** at a larger company | A governed agent runtime with audit trails, quality gates, and per-user isolation |
 | **Enterprise architect** | Multi-agent meshes with independent scaling and compliance-friendly history encryption |
-| **Solo developer** | Prototype to production with one YAML file |
+| **Solo developer** | Prototype to production with one YAML file — or skip YAML entirely and build the agent in Python |
+| **LangGraph / framework refugee** | Code-first agents with `@node` functions and a static DAG — keep Cortex's wave engine, validation, and streaming |
 | **Researcher** | Swap providers, models, and tools from config — run experiments without touching code |
 | **MLOps engineer** | Validation scores, session replay, token accounting, and OpenTelemetry out of the box |
 
@@ -188,7 +240,7 @@ The **Learning Engine** observes task patterns across sessions. When patterns re
 
 ## What Cortex is *not*
 
-- **Not a low-code builder.** It's a Python library. The config replaces boilerplate, not code.
+- **Not a low-code builder.** It's a Python library — drive it with `cortex.yaml` *or* the `CortexBuilder` API. Either way, config replaces boilerplate, not your code.
 - **Not an LLM gateway.** Bring your own API key.
 - **Not a vector database.** It calls MCP tools that do RAG — it doesn't implement retrieval itself.
 - **Not a web framework.** Cortex runs *inside* FastAPI/Django/Flask/Click.

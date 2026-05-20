@@ -60,6 +60,10 @@ def _extract_section(raw: dict, section_id: str) -> dict:
         return {"blueprint": dict(raw.get("blueprint", {}))}
     elif section_id == "code_registry":
         return {"code_sandbox": dict(raw.get("code_sandbox", {}))}
+    elif section_id == "app_control":
+        return {"app_control": dict(raw.get("app_control", {}))}
+    elif section_id == "playwright_mcp":
+        return {"playwright_mcp": dict(raw.get("playwright_mcp", {}))}
     elif section_id == "auto_mcps":
         agent = raw.get("agent", {})
         ext = agent.get("capability_scout", {}).get("external_discovery", {})
@@ -113,6 +117,10 @@ def _merge_section(raw: dict, section_id: str, data: dict) -> dict:
         raw["blueprint"] = data.get("blueprint", {})
     elif section_id == "code_registry":
         raw["code_sandbox"] = data.get("code_sandbox", {})
+    elif section_id == "app_control":
+        raw["app_control"] = data.get("app_control", {})
+    elif section_id == "playwright_mcp":
+        raw["playwright_mcp"] = data.get("playwright_mcp", {})
     elif section_id == "auto_mcps":
         agent = dict(raw.get("agent", {}))
         cs = dict(agent.get("capability_scout", {}))

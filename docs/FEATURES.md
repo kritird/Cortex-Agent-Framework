@@ -9,20 +9,40 @@ A complete feature matrix of everything Cortex ships with.
 | Feature | Description |
 |---|---|
 | **Fan-out / fan-in execution** | Primary agent decomposes requests into a dependency DAG; independent tasks run in parallel |
-| **Three execution modes** | `adaptive` (LLM free-form), `pinned` (LLM executes, but DAG locked to blueprint topology), `scripted` (Python handler, no LLM) |
+| **Three task execution modes** | `adaptive` (LLM free-form), `pinned` (LLM executes, but DAG locked to blueprint topology), `scripted` (Python code node, no LLM) |
+| **Planned vs. static graphs** | `agent.execution_mode`: `planned` (LLM generates the DAG per request) or `static` (the configured `task_types` *are* the graph — no decomposition / intent-gate / scout LLM calls, no replan) |
 | **Typed task graph** | Every task has a declared type, output format, dependencies, capability hint, and execution mode |
 | **Cycle detection** | Task graph compiler rejects cyclic graphs before execution starts |
 | **Topological execution** | Tasks run as soon as their dependencies complete — no fixed pipeline stages |
+| **ReAct sub-agent execution** | Every non-scripted task runs a reason → act → observe loop — the sub-agent's LLM picks one action, observes its result, and repeats until it emits `finish`. Replaces single-pass task dispatch; a failed action becomes an observation the loop adapts to rather than aborting the task |
+| **ReAct loop tunables** | Per-task-type `react` block bounds loop cost — `max_iterations` (safety cap, default 10), `observation_max_tokens` (default 600), `context_char_budget` (default 24000, past which the oldest steps are digested into a summary). The loop is always on for LLM-driven tasks; scripted code nodes skip it |
 | **Capability-aware decomposition** | Decomposer sees currently-available MCP tools and plans around them |
 | **Intent Gate** | Pre-scout classifier (heuristic → LLM cascade) routes chat-shaped turns directly to a streaming reply; only task-shaped turns run the full decompose pipeline. Emits `IntentClassifiedEvent` before decomposition. |
 | **`interaction_mode`** | `interactive` (chat/CLI/dev) or `rpc` (MCP/automation) — `rpc` forces every turn to the task path and suppresses interactive clarifications |
 | **Replan with scratchpad** | Mid-session re-entry into the Primary Agent grows the DAG; a session-scoped reasoning trace (confirmed facts, open questions, strategy) is carried forward across replans and into synthesis |
+| **Context-rich replan prompt** | Replan receives a trigger-reason label (`mandatory_failure`, `stale_blueprint`, `adaptive_completed`), the full instruction + `depends_on` of each pending task, and head-and-tail-truncated completed summaries — so `modify`/`remove` ops act on task bodies the LLM has actually seen |
 | **Clean-wave replan skip** | Replanning is skipped when every task in a wave passed first attempt with no validator feedback — avoids unnecessary LLM calls |
+| **Conversational retry-with-feedback** | When a task fails the validation gate, the retry threads the prior attempt's output and the judge's feedback as real conversation turns; attempts accumulate so attempt 3 sees attempts 1 and 2, letting the model fix only what was flagged |
+| **Session context for sub-tasks** | With `agent.inject_session_context` (default on), each sub-task LLM call sees the original user request and the live planner scratchpad — workers reason about why their task exists instead of running blind |
 | **Synthesis step** | Primary agent stitches task outputs into a coherent final response |
 | **Smart synthesis excerpts (Tier 1)** | File-output tasks contribute a keyword-grep excerpt (up to 8 KB) instead of a blind 2 KB head truncation |
 | **Iterative file summarisation (Tier 2)** | Up to 3 concurrent LLM summaries of file outputs run before final synthesis — richer context with no developer configuration |
 | **File output on large results** | When tasks produce file outputs, synthesis is written to `synthesis_{session_id}.md` and streamed as a `ResultEvent` with `metadata.output_type="file"` |
 | **Clarification support** | Agent can pause mid-session and ask follow-up questions via `ClarificationEvent` |
+
+## Code-first agents
+
+| Feature | Description |
+|---|---|
+| **`CortexBuilder`** | Fluent Python API that assembles a `CortexConfig` — `.llm()`, `.provider()`, `.tool_server()`, `.task()`, `.node()`, `.storage()`, `.validation()`, `.configure()`, `.build()`. No `cortex.yaml` required |
+| **`CortexFramework(config=...)`** | The framework constructor accepts a pre-built `CortexConfig` object, not just a YAML path |
+| **`@node` code nodes** | The `.node()` decorator registers a plain Python function as a graph node — LangGraph-style. Works bare or parameterised (`@agent.node(depends_on=[...])`); sync or async |
+| **Static-DAG execution** | Registering a code node flips the agent to `execution_mode="static"` — the declared graph runs verbatim, skipping the planner. The wave engine, validation gate, retries, streaming, and persistence still apply |
+| **`TaskContext` runtime wiring** | Each node receives `ctx.request`, `ctx.deps` (upstream node outputs), `await ctx.llm(prompt)`, and `await ctx.call_tool(server, tool, ...)` — the same providers and MCP servers the rest of the agent uses |
+| **Flexible node returns** | A node may return a `str`, a `(str, format)` tuple, a `dict`/`list` (auto-JSON), or `None` |
+| **`SessionResult.node_outputs`** | Per-node raw outputs keyed by node name — read individual results without parsing the synthesised response |
+| **Optional `event_queue`** | `run_session()` no longer requires an `event_queue` — omit it when you only want the returned `SessionResult` |
+| **Handler registry** | In-process registry (`cortex:node:<id>` scheme) backs code-node handlers; dotted-path handlers (`"module.function"`) in `cortex.yaml` continue to work |
 
 ## LLM providers (8 built-in)
 
@@ -43,6 +63,8 @@ A complete feature matrix of everything Cortex ships with.
 **Per-task model routing**: override the default model for specific task types via `task_types[n].llm_provider`, or enable **Adaptive Model Routing (AMR)** to let the decomposer select the LLM automatically based on task complexity.
 
 **Adaptive Model Routing (AMR)**: when `adaptive_model_routing.enabled: true`, the decomposition LLM grades each task as `low`, `medium`, or `high` complexity. AMR maps those tiers to named providers in `llm_access.providers`. Assessment is objective — the grading criteria are purely task-structural; no provider preference is baked in. Explicit `llm_provider` on a task type always overrides AMR. Ant sub-tasks inherit the parent's AMR config. The validation provider auto-selects the first non-default named provider when left blank.
+
+**Auto-tuned LLM concurrency**: the framework picks an initial `max_parallel_llm_calls` ceiling from your configured provider+model via a small lookup table — `1` for local Ollama, `8` for Anthropic Haiku / GPT-4o-mini, `4` for Opus / GPT-4, etc. — then `AdaptiveLLMGate` self-tunes it at runtime using AIMD (halve on errors or latency spikes, grow additively under sustained saturation). No wizard knob to tune. Pin an explicit value in `cortex.yaml` only for benchmarking or hard-rate-limited APIs. See [LLM concurrency auto-tuning](CONFIGURATION.md#llm-concurrency-auto-tuning).
 
 ## Model Context Protocol (MCP)
 
@@ -83,8 +105,9 @@ A complete feature matrix of everything Cortex ships with.
 | `SessionTokenUsageEvent` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | Cumulative token counters emitted at session end |
 | `SynthesisTierEvent` | `tier`, `reason` | Which excerpt tier (short / medium / full / structured) was selected for synthesis |
 | `LearningEvent` | `action`, `complexity_score`, `validation_score` | Gate decision and staged/applied task lists |
+| `UserInterruptEvent` | `message`, `action` | User injected a mid-run message; `action` is `queued` → `replan` or `terminate` |
 
-Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`, `ANT_HATCHED`, `ANT_STOPPED`, `LEARNING`, `INTENT_CLASSIFIED`, `TASK_BLUEPRINT`, `TASK_TOOL_CALL`, `WORKSPACE_EVENT`, `FILE_OUTPUT`, `SESSION_TOKEN_USAGE`, `SYNTHESIS_TIER`.
+Event types: `SESSION_START`, `TASK_START`, `TASK_COMPLETE`, `STATUS`, `RESULT`, `ERROR`, `SESSION_END`, `CLARIFICATION`, `ANT_HATCHED`, `ANT_STOPPED`, `LEARNING`, `INTENT_CLASSIFIED`, `TASK_BLUEPRINT`, `TASK_TOOL_CALL`, `WORKSPACE_EVENT`, `FILE_OUTPUT`, `SESSION_TOKEN_USAGE`, `SYNTHESIS_TIER`, `USER_INTERRUPT`.
 
 Wires into FastAPI SSE, WebSockets, or any async consumer pattern.
 
@@ -96,6 +119,7 @@ Wires into FastAPI SSE, WebSockets, or any async consumer pattern.
 | **Configurable threshold** | Set a minimum acceptable score (hard floor: 0.60) |
 | **Per-session validation report** | Returned on `SessionResult.validation_report` |
 | **Model override** | Run validation with a different model than task execution |
+| **Iterative remediation** | A sub-threshold response is corrected over up to `validation.max_remediation_attempts` passes; each pass sees the prior attempt and the findings it still failed, so it doesn't repeat mistakes. Best-scoring candidate is delivered if none clears the threshold. |
 
 ## Autonomic learning
 
@@ -183,6 +207,57 @@ When no `web_search` tool server is configured (or one fails), Cortex falls back
 | **Configured server first** | If a tool server has `web_search` capability, it is tried first |
 | **Automatic fallback** | On failure or absence, the built-in DuckDuckGo client runs instead |
 | **No config needed** | The `web_search` capability is always available as a built-in — just add task types that use it |
+
+---
+
+## App Control (native applications)
+
+`app_control` lets the agent launch and drive desktop applications on the host machine. Enable it via `app_control.enabled: true` (or the Setup Wizard / Config Studio).
+
+| Feature | Detail |
+|---|---|
+| **Two-path execution** | Primary: discover the app's scripting interface (macOS sdef, Windows UI Automation / COM, Linux AT-SPI / xdotool) and inject it into the LLM prompt so it generates precise actions. Fallback: screenshot → vision LLM → action → repeat. |
+| **Cross-platform actions** | `launch_app`, `run_applescript` (macOS), `run_powershell` (Windows), `run_shell_command`, `screenshot`, `get_window_text`, `get_running_apps`, `copy_to_clipboard`, `paste_from_clipboard` |
+| **HITL gate** | Every mutating action (launch / script / screenshot) requires user approval. Read-only queries (`get_running_apps`, `get_window_text`, `paste_from_clipboard`) never prompt. Batch approval covers a whole vision-loop task. |
+| **Accessibility preflight (macOS)** | Detects missing Accessibility permission before AppleScript runs and surfaces a clear instruction message (instead of a cryptic `-1743` error). Result is cached per-session. |
+| **Already-running check** | `launch_app` skips the launch and just activates the window if the app is already running — avoids duplicate instances. |
+| **Auto-activate** | AppleScript that targets a specific app is auto-prefixed with `tell application "X" to activate` + a 0.3s delay so the window is frontmost before any keystroke. |
+| **File pipeline** | When an upstream `code_exec` task produces files, they're surfaced as `UPSTREAM_FILES:` in the next task's instruction — letting `app_control` open / use whatever was just generated. |
+
+## Built-in Browser Automation (Playwright)
+
+`playwright_mcp.enabled: true` starts `@playwright/mcp` as an internal stdio MCP server at framework boot. It is NOT exposed as a configurable `tool_server` entry — users get a `browser` capability automatically. Requires Node.js + `npx` on PATH.
+
+| Feature | Detail |
+|---|---|
+| **Three browser engines** | `chromium`, `firefox`, or `webkit` |
+| **Headless or visible** | `headless: false` (default) for development; `headless: true` for CI / servers |
+| **Configurable viewport** | `viewport_width` / `viewport_height` (default 1280×720) |
+| **Session persistence** | Cookies + localStorage persisted to `storage_state_path` (auto-defaults to `{storage}/playwright_session.json`) so logins survive across runs |
+| **Full profile mode** | Set `user_data_dir` for a complete persistent browser profile (extensions, IndexedDB, service workers). Takes precedence over `storage_state_path` when set. |
+| **All Playwright MCP tools** | Navigate, click, type, screenshot, form fill, file upload — surfaced under the `browser` capability for the agent to use without any tool-server wiring |
+
+## Polyglot code execution
+
+`code_sandbox` is not Python-only. The first comment line of any generated script can declare its language with `# LANGUAGE: <lang>`.
+
+| Language | Header | Runner | Notes |
+|---|---|---|---|
+| Python | (default — no header) | dedicated venv | Sentinel-wrapped result extraction; subprocess permitted |
+| Node.js | `# LANGUAGE: node` | `node` | `# NPM_PACKAGES:` header triggers `npm install --prefix output_dir` |
+| TypeScript | `# LANGUAGE: typescript` | `npx --yes ts-node --transpile-only` | Same NPM package mechanism |
+| Deno | `# LANGUAGE: deno` | `deno run --allow-all` | TypeScript-native; no install needed |
+| Shell / Bash | `# LANGUAGE: shell` | `bash` | Source written with exec bit set |
+| Ruby | `# LANGUAGE: ruby` | `ruby` | `# GEM_PACKAGES:` header triggers `gem install` |
+| Go | `# LANGUAGE: go` | `go run` | `# GO_PACKAGES:` header triggers `go get` |
+| Rust | `# LANGUAGE: rust` | `rustc` → run | Compile-then-run; binary cleaned up after |
+| C | `# LANGUAGE: c` | `cc` → run | Compile-then-run |
+| Java | `# LANGUAGE: java` | `java` (single-file mode) | Java 11+ single-file source execution |
+| Kotlin | `# LANGUAGE: kotlin` | `kotlinc -script` | Kotlin scripts (`.kts`) |
+
+Two extra execution modes are available beyond the standard `execute()` path:
+- **`execute_background()`** — start long-running processes (servers, daemons) and return immediately with a PID file (`.cortex_pid`) and log file (`.cortex_bg.log`) downstream tasks can read.
+- **`execute_streaming()`** — line-by-line stdout streaming via an `on_line` async callback so the UI can show progress from long pipelines.
 
 ---
 

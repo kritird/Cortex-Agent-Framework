@@ -27,6 +27,7 @@ from typing import List, Optional
 from cortex.config.schema import IntentGateConfig
 from cortex.llm.client import LLMClient
 from cortex.modules.history_store import HistoryRecord
+from cortex.prompts import INTENT_GATE_SYSTEM, INTENT_GATE_USER
 
 logger = logging.getLogger(__name__)
 
@@ -263,40 +264,17 @@ class IntentGate:
         known_scripts = ", ".join(code_util_names) if code_util_names else "(none)"
         known_caps = ", ".join(capabilities) if capabilities else "(none)"
 
-        system = (
-            "You classify a single user turn for an agent that can either "
-            "chat or execute tasks. Return STRICT JSON only (no prose, no "
-            "markdown) matching this schema:\n"
-            '{"mode":"chat|task|hybrid","needs_clarify":bool,'
-            '"clarify_q":string|null,"scout_hint":[string,...],'
-            '"rationale":string}\n\n'
-            "Guidance:\n"
-            "- Prefer 'chat' for greetings, acknowledgements, small talk, and "
-            "questions about the agent itself (what can you do, who are you).\n"
-            "- Prefer 'task' when the user wants something done — search, "
-            "fetch, summarise, create, analyse, etc.\n"
-            "- Use 'hybrid' when the turn mixes chat with a real task "
-            "(\"hi, can you also search for X?\").\n"
-            "- Set needs_clarify=true ONLY when the turn is so ambiguous that "
-            "neither chat nor task can proceed at all. This is a last resort. "
-            "A short vague turn should default to chat; a vague instruction "
-            "should default to task with a best-guess scout_hint.\n"
-            "- scout_hint: list up to 3 capability names from the known "
-            "capabilities that the task would likely use. Empty list for chat.\n"
-            "- rationale: one short sentence."
-        )
-
-        user = (
-            f"Known task types: {known_tasks}\n"
-            f"Known scripts: {known_scripts}\n"
-            f"Known capabilities: {known_caps}\n"
-            f"Recent history:\n{history_snippet or '(none)'}\n\n"
-            f"Current turn:\n{request}"
+        user = INTENT_GATE_USER.format(
+            known_tasks=known_tasks,
+            known_scripts=known_scripts,
+            known_caps=known_caps,
+            history_snippet=history_snippet or "(none)",
+            request=request,
         )
 
         resp = await self._llm.complete(
             messages=[{"role": "user", "content": user}],
-            system=system,
+            system=INTENT_GATE_SYSTEM,
             provider_name=self._config.llm_provider or "default",
             max_tokens=300,
         )

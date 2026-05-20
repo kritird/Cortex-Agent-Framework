@@ -16,6 +16,8 @@ from typing import Callable, Dict, List, Optional
 import aiohttp
 import yaml
 
+from cortex.prompts import ANT_YAML_SYSTEM, ANT_YAML_USER
+
 logger = logging.getLogger(__name__)
 
 _ANT_READY_SENTINEL = "__ANT_READY__"
@@ -459,17 +461,15 @@ class AntColony:
         task_description = description
         if llm_client:
             try:
-                prompt = (
-                    f"You are generating a cortex.yaml task description for a specialist AI agent.\n"
-                    f"Capability: {capability}\n"
-                    f"Description: {description}\n\n"
-                    f"Write a concise one-sentence task description (max 120 chars) for a task_type "
-                    f"named '{name}' that fills this capability. Return ONLY the description string."
+                prompt = ANT_YAML_USER.format(
+                    capability=capability,
+                    description=description,
+                    name=name,
                 )
                 tokens = []
                 async for token in llm_client.stream(
                     messages=[{"role": "user", "content": prompt}],
-                    system="You are a concise technical writer. Return only the requested string.",
+                    system=ANT_YAML_SYSTEM,
                     provider_name="default",
                 ):
                     tokens.append(token)

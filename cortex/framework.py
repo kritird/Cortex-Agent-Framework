@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -12,6 +12,7 @@ from cortex.config.schema import CortexConfig
 from cortex.exceptions import CortexConfigError, CortexException, CortexInvalidUserError, CortexSecurityError
 from cortex.identity import Principal
 from cortex.llm.client import LLMClient
+from cortex.llm.model_power import recommend_max_parallel_llm_calls
 from cortex.modules.history_store import (
     HistoryRecord, HistoryStore, TaskCompletion, TokenUsageByRole
 )
@@ -32,7 +33,7 @@ from cortex.storage.memory_backend import MemoryBackend
 from cortex.streaming.sse import SSEBuffer, SSEGenerator
 from cortex.streaming.status_events import (
     ClarificationEvent, EventType, IntentClassifiedEvent, LearningEvent,
-    SessionTokenUsageEvent, StatusEvent, TaskBlueprintEvent,
+    SessionTokenUsageEvent, StatusEvent, TaskBlueprintEvent, UserInterruptEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ _PENDING_TIMEOUT_EXTENSIONS: Dict[str, dict] = {}
 # How long to wait for the user to answer a timeout-extension prompt before
 # defaulting to "exit" (silence = exit, as agreed with the user).
 _TIMEOUT_EXTENSION_PROMPT_WINDOW_S: int = 60
+
+# Per-session interrupt queues. Populated by inject_user_message(); drained
+# by the wave loop after each asyncio.gather() completes.
+# {session_id: asyncio.Queue[str]}
+_ACTIVE_SESSION_INTERRUPT_QUEUES: Dict[str, "asyncio.Queue[str]"] = {}
 
 
 async def _prompt_timeout_extension(
@@ -111,6 +117,10 @@ class SessionResult:
     duration_seconds: float
     history_record: Optional[HistoryRecord] = None
     error: Optional[str] = None
+    # Per-node outputs keyed by task/node name. Populated for every task-mode
+    # session; the natural way to read individual results from a static-DAG
+    # (code-node) agent without parsing the synthesised response.
+    node_outputs: Dict[str, str] = field(default_factory=dict)
 
 
 class CortexFramework:
@@ -119,20 +129,40 @@ class CortexFramework:
 
     Developers instantiate this class once and call run_session() for each request.
 
-    Usage:
-        framework = CortexFramework("cortex.yaml")
-        await framework.initialize()
+    The agent definition can come from a cortex.yaml file *or* from a
+    CortexConfig object built in Python (see cortex.builder.CortexBuilder):
 
+        # From YAML
+        framework = CortexFramework("cortex.yaml")
+
+        # From a config object built in code
+        framework = CortexFramework(config=my_cortex_config)
+
+        await framework.initialize()
         result = await framework.run_session(
             user_id="user_123",
             request="Analyse Q3 revenue trends",
-            event_queue=asyncio.Queue(),
         )
     """
 
-    def __init__(self, config_path: str = "cortex.yaml"):
+    def __init__(
+        self,
+        config_path: str = "cortex.yaml",
+        config: Optional[CortexConfig] = None,
+    ):
+        """Create a framework instance.
+
+        Args:
+            config_path: Path to a cortex.yaml file. Ignored when ``config``
+                is supplied. Still used as the write target for autonomic
+                learning delta auto-apply.
+            config: A pre-built CortexConfig object. When provided, no YAML
+                file is read — the object is used as-is. This is the entry
+                point for code-first agents built with CortexBuilder.
+        """
         self._config_path = config_path
-        self._config: Optional[CortexConfig] = None
+        self._config: Optional[CortexConfig] = config
+        self._config_prebuilt = config is not None
         self._initialized = False
 
         # Core components (set during initialize())
@@ -158,6 +188,7 @@ class CortexFramework:
         self._tool_forge_config = None
         self._intent_gate = None  # cortex.modules.intent_gate.IntentGate
         self._workspace_bash = None  # cortex.modules.workspace_bash.WorkspaceBash
+        self._app_control = None    # cortex.modules.app_control.AppControl
 
     async def initialize(self) -> "CortexFramework":
         """
@@ -165,10 +196,17 @@ class CortexFramework:
         Must be called before run_session().
         Returns self for chaining.
         """
-        logger.info("Initializing Cortex Agent Framework from %s", self._config_path)
-
-        # Load and validate config
-        self._config = load_config(self._config_path)
+        # Load and validate config — unless one was supplied directly to
+        # __init__() (code-first agents built with CortexBuilder).
+        if self._config is None:
+            logger.info("Initializing Cortex Agent Framework from %s", self._config_path)
+            self._config = load_config(self._config_path)
+        else:
+            logger.info(
+                "Initializing Cortex Agent Framework from in-memory config "
+                "(agent=%s, execution_mode=%s)",
+                self._config.agent.name, self._config.agent.execution_mode,
+            )
         cfg = self._config
 
         # Environment override for interaction_mode. `cortex publish mcp`
@@ -176,6 +214,7 @@ class CortexFramework:
         # callable RPC) sets CORTEX_INTERACTION_MODE=rpc so the loaded
         # cortex.yaml stays unchanged. Accepted values: "interactive", "rpc".
         import os as _os
+        import platform as _platform
         env_mode = _os.environ.get("CORTEX_INTERACTION_MODE", "").strip().lower()
         if env_mode in ("interactive", "rpc"):
             if cfg.agent.interaction_mode != env_mode:
@@ -210,8 +249,17 @@ class CortexFramework:
             extra_patterns=cfg.security.secret_scrub_patterns
         )
 
-        # LLM client
-        self._llm_client = LLMClient(cfg.llm_access)
+        # LLM client — auto-derive max_parallel_llm_calls from provider+model
+        # when the user hasn't pinned a value. AdaptiveLLMGate then self-tunes
+        # at runtime if cfg.agent.concurrency.adaptive_llm_concurrency is on.
+        mpl = cfg.agent.concurrency.max_parallel_llm_calls
+        if mpl is None:
+            mpl = recommend_max_parallel_llm_calls(cfg.llm_access)
+        self._llm_client = LLMClient(
+            cfg.llm_access,
+            max_parallel_llm_calls=mpl,
+            adaptive_llm_concurrency=cfg.agent.concurrency.adaptive_llm_concurrency,
+        )
         verify_results = await self._llm_client.verify_all()
         for pname, ok in verify_results.items():
             if not ok:
@@ -377,14 +425,126 @@ class CortexFramework:
             )
             logger.info("WorkspaceBash enabled (default_workspace=%s)", default_workspace or "none")
 
+        # AppControl — cross-platform app launch and control (macOS, Windows, Linux)
+        self._app_control = None
+        if cfg.app_control.enabled:
+            from cortex.modules.app_control import AppControl
+            if not cfg.app_control.hitl_enabled:
+                logger.warning(
+                    "app_control.hitl_enabled is False — overriding to True "
+                    "(HITL cannot be disabled for app control operations)"
+                )
+            self._app_control = AppControl(
+                event_queue=None,   # set per-session at execution time
+                hitl_enabled=True,  # always enforced
+                timeout_seconds=cfg.app_control.timeout_seconds,
+            )
+            logger.info("AppControl enabled (platform=%s, timeout=%ds)", _platform.system(), cfg.app_control.timeout_seconds)
+
+        # Playwright MCP — built-in browser automation (not exposed in tool_servers)
+        if cfg.playwright_mcp.enabled:
+            from cortex.config.schema import ToolServerConfig, ToolServerConnectionConfig
+
+            # Session-persistence args. Prefer user_data_dir (full persistent
+            # context) over storage_state (cookies + localStorage only).
+            pw_cfg = cfg.playwright_mcp
+            session_args: list[str] = []
+            if pw_cfg.user_data_dir:
+                _os.makedirs(pw_cfg.user_data_dir, exist_ok=True)
+                session_args.append(f"--user-data-dir={pw_cfg.user_data_dir}")
+            elif pw_cfg.storage_state_path:
+                _os.makedirs(
+                    _os.path.dirname(pw_cfg.storage_state_path) or ".",
+                    exist_ok=True,
+                )
+                session_args.append(f"--storage-state={pw_cfg.storage_state_path}")
+            else:
+                # Default: persist to {storage_base}/playwright_session.json so
+                # logins survive across runs without explicit configuration.
+                default_state = _os.path.join(
+                    cfg.storage.local_path, "playwright_session.json"
+                )
+                _os.makedirs(_os.path.dirname(default_state), exist_ok=True)
+                session_args.append(f"--storage-state={default_state}")
+
+            session_args.append(
+                f"--viewport-size={pw_cfg.viewport_width},{pw_cfg.viewport_height}"
+            )
+
+            playwright_server = ToolServerConfig(
+                name="playwright",
+                description=(
+                    "Control a browser via Playwright — navigate, click, type, screenshot. "
+                    "Built-in; requires Node.js and npx on PATH."
+                ),
+                transport="stdio",
+                command="npx",
+                args=[
+                    "-y",
+                    "@playwright/mcp@latest",
+                    f"--browser={pw_cfg.browser}",
+                ] + (["--headless"] if pw_cfg.headless else []) + session_args,
+                startup_timeout_seconds=pw_cfg.startup_timeout_seconds,
+                connection=ToolServerConnectionConfig(
+                    timeout_seconds=120, read_timeout_seconds=600
+                ),
+            )
+            try:
+                pw_info = await self._tool_registry._init_server(
+                    "playwright",
+                    playwright_server,
+                    discovery_timeout=cfg.playwright_mcp.startup_timeout_seconds,
+                )
+                pw_info.scope = "permanent"
+                self._tool_registry._servers["playwright"] = pw_info
+                self._tool_registry._configs["playwright"] = playwright_server
+                for cap in pw_info.capabilities or ["browser"]:
+                    self._tool_registry._capability_map.setdefault(cap, [])
+                    if "playwright" not in self._tool_registry._capability_map[cap]:
+                        self._tool_registry._capability_map[cap].append("playwright")
+                # Ensure "browser" is always mapped
+                self._tool_registry._capability_map.setdefault("browser", [])
+                if "playwright" not in self._tool_registry._capability_map["browser"]:
+                    self._tool_registry._capability_map["browser"].append("playwright")
+                logger.info(
+                    "Playwright MCP started (browser=%s, headless=%s, tools=%d)",
+                    cfg.playwright_mcp.browser,
+                    cfg.playwright_mcp.headless,
+                    len(pw_info.tools),
+                )
+            except Exception as pw_err:
+                logger.warning(
+                    "Playwright MCP failed to start (%s) — browser capability unavailable. "
+                    "Ensure Node.js and npx are installed.",
+                    pw_err,
+                )
+
         # Register built-in capabilities so they surface in the system prompt
-        self._tool_registry.register_builtin_capabilities([
+        builtin_caps = [
             {"name": "llm_synthesis",  "description": "LLM text generation and reasoning"},
             {"name": "bash",           "description": "Bash commands in Cortex session directory"},
-            {"name": "code_exec",      "description": "Generate and execute Python in isolated sandbox"},
+            {"name": "code_exec",      "description": "Generate and execute code in polyglot sandbox (Python, Node.js, Shell, Ruby, Go)"},
             {"name": "workspace_bash", "description": "Read, write, and execute code in user workspace directory"},
             {"name": "web_search",     "description": "Search the internet for live/current information (built-in DuckDuckGo, no API key needed)"},
-        ])
+        ]
+        if cfg.app_control.enabled:
+            builtin_caps.append({
+                "name": "app_control",
+                "description": (
+                    "Launch and control native applications on the host machine "
+                    "(macOS AppleScript, Windows PowerShell, Linux xdotool). "
+                    "Take screenshots, read window state, send commands."
+                ),
+            })
+        if cfg.playwright_mcp.enabled:
+            builtin_caps.append({
+                "name": "browser",
+                "description": (
+                    "Automate a browser via Playwright — navigate URLs, click, type, "
+                    "fill forms, take screenshots, extract page content."
+                ),
+            })
+        self._tool_registry.register_builtin_capabilities(builtin_caps)
 
         # Ant Colony — self-spawning specialist agent subsystem
         if cfg.ant_colony.enabled:
@@ -478,7 +638,7 @@ class CortexFramework:
         self,
         user_id: str,
         request: str,
-        event_queue: asyncio.Queue,
+        event_queue: Optional[asyncio.Queue] = None,
         file_refs: Optional[List[str]] = None,
         user_task_types: Optional[List] = None,
         user_consent: str = "none",
@@ -491,8 +651,9 @@ class CortexFramework:
         Args:
             user_id: Application-provided user identifier (trusted as-is)
             request: The user's natural language request
-            event_queue: asyncio.Queue for streaming status/result events to the caller
-            file_refs: Optional list of file paths attached to the request
+            event_queue: Optional asyncio.Queue for streaming status/result
+                events to the caller. Omit it when you only need the final
+                SessionResult — an internal queue is created and discarded.
             user_task_types: Optional task type overrides from user config
             user_consent: "positive" | "negative" | "none" for learning engine
             resume_session_id: If set, resume a previously timed-out session instead of
@@ -509,6 +670,11 @@ class CortexFramework:
         self._assert_initialized()
         self._assert_valid_user_id(user_id)
         start_time = time.time()
+
+        # Library callers may omit event_queue — they only want the result.
+        # An unbounded internal queue collects events and is discarded on return.
+        if event_queue is None:
+            event_queue = asyncio.Queue()
 
         # Build principal — use explicit one if provided, otherwise derive from user_id
         if principal is None:
@@ -542,14 +708,24 @@ class CortexFramework:
 
         task_completion = TaskCompletion()
         token_usage = TokenUsageByRole()
+        # Task names of mandatory tasks that crashed — surfaced as SessionResult.error.
+        mandatory_failures: List[str] = []
         final_response = None
         validation_report = None
+        node_outputs: Dict[str, str] = {}
         _hitl_relay = None
+
+        # Register per-session interrupt queue so inject_user_message() can post to it.
+        _interrupt_queue: "asyncio.Queue[str]" = asyncio.Queue()
+        _ACTIVE_SESSION_INTERRUPT_QUEUES[session_id] = _interrupt_queue
 
         try:
             from cortex.modules.primary_agent import PrimaryAgent
             from cortex.modules.generic_mcp_agent import GenericMCPAgent
-            from cortex.modules.capability_scout import CapabilityScout as _CapabilityScout
+            from cortex.modules.capability_scout import (
+                CapabilityScout as _CapabilityScout,
+                ScoutResult as _ScoutResult,
+            )
 
             _scout_instance = _CapabilityScout()
             _ext_disc_cfg = self._config.agent.capability_scout.external_discovery
@@ -589,6 +765,8 @@ class CortexFramework:
                 sandbox_config=self._config.code_sandbox,
                 discovery_callback=_mid_run_discovery,
                 workspace_bash=self._workspace_bash,
+                app_control=self._app_control,
+                app_control_config=self._config.app_control,
                 hitl_relay_url=_hitl_relay_url,
                 builtin_web_search_enabled=self._config.agent.builtin_web_search_enabled,
             )
@@ -620,86 +798,101 @@ class CortexFramework:
             if self._code_store is not None:
                 try:
                     code_util_names = [
-                        r.task_name for r in self._code_store.list_all()
+                        r.task_name for r in self._code_store.list_scripts()
                     ]
                 except Exception as e:  # defensive — never block a session on this
-                    logger.debug("Code store list_all failed in intent gate: %s", e)
+                    logger.debug("Code store list_scripts failed in intent gate: %s", e)
 
-            intent_decision = await self._intent_gate.classify(
-                request=request,
-                history=history_context,
-                file_refs=file_refs or [],
-                task_type_names=task_type_names,
-                code_util_names=code_util_names,
-                capabilities=capabilities,
-                interaction_mode=self._config.agent.interaction_mode,
-            )
+            # A static-DAG agent (execution_mode="static") runs its configured
+            # task graph verbatim — no intent classification, capability scout,
+            # or decomposition LLM call. See AgentConfig.execution_mode and
+            # cortex.builder.CortexBuilder.node().
+            static_mode = (self._config.agent.execution_mode == "static")
 
-            # Optional single clarification round *before* any heavy work.
-            # Only valid in interactive mode with clarification enabled.
-            if (
-                intent_decision.needs_clarify
-                and intent_decision.clarify_q
-                and self._config.agent.interaction_mode == "interactive"
-                and self._config.agent.clarification.enabled
-            ):
-                clar_id = f"intent_{session_id[-4:]}"
-                clar_event = asyncio.Event()
-                primary._clarification_events[session_id] = clar_event
-                await event_queue.put(ClarificationEvent(
-                    question=intent_decision.clarify_q,
-                    session_id=session_id,
-                    clarification_id=clar_id,
-                ))
-                try:
-                    await asyncio.wait_for(clar_event.wait(), timeout=300)
-                    clar_answer = primary._clarification_answers.pop(session_id, "")
-                    primary._clarification_events.pop(session_id, None)
-                    if clar_answer:
-                        request = f"{request}\n\nClarification: {clar_answer}"
-                        intent_decision = await self._intent_gate.classify(
-                            request=request,
-                            history=history_context,
-                            file_refs=file_refs or [],
-                            task_type_names=task_type_names,
-                            code_util_names=code_util_names,
-                            capabilities=capabilities,
-                            interaction_mode=self._config.agent.interaction_mode,
+            if static_mode:
+                intent_decision = None
+                intent_is_chat = False
+                logger.info(
+                    "Static-DAG session %s — %d task node(s), decomposition skipped",
+                    session_id, len(self._config.task_types),
+                )
+            else:
+                intent_decision = await self._intent_gate.classify(
+                    request=request,
+                    history=history_context,
+                    file_refs=file_refs or [],
+                    task_type_names=task_type_names,
+                    code_util_names=code_util_names,
+                    capabilities=capabilities,
+                    interaction_mode=self._config.agent.interaction_mode,
+                )
+
+                # Optional single clarification round *before* any heavy work.
+                # Only valid in interactive mode with clarification enabled.
+                if (
+                    intent_decision.needs_clarify
+                    and intent_decision.clarify_q
+                    and self._config.agent.interaction_mode == "interactive"
+                    and self._config.agent.clarification.enabled
+                ):
+                    clar_id = f"intent_{session_id[-4:]}"
+                    clar_event = asyncio.Event()
+                    primary._clarification_events[session_id] = clar_event
+                    await event_queue.put(ClarificationEvent(
+                        question=intent_decision.clarify_q,
+                        session_id=session_id,
+                        clarification_id=clar_id,
+                    ))
+                    try:
+                        await asyncio.wait_for(clar_event.wait(), timeout=300)
+                        clar_answer = primary._clarification_answers.pop(session_id, "")
+                        primary._clarification_events.pop(session_id, None)
+                        if clar_answer:
+                            request = f"{request}\n\nClarification: {clar_answer}"
+                            intent_decision = await self._intent_gate.classify(
+                                request=request,
+                                history=history_context,
+                                file_refs=file_refs or [],
+                                task_type_names=task_type_names,
+                                code_util_names=code_util_names,
+                                capabilities=capabilities,
+                                interaction_mode=self._config.agent.interaction_mode,
+                            )
+                    except asyncio.TimeoutError:
+                        primary._clarification_events.pop(session_id, None)
+                        logger.info(
+                            "Intent-gate clarification timed out for session %s — "
+                            "defaulting to task routing", session_id,
                         )
-                except asyncio.TimeoutError:
-                    primary._clarification_events.pop(session_id, None)
-                    logger.info(
-                        "Intent-gate clarification timed out for session %s — "
-                        "defaulting to task routing", session_id,
-                    )
-                    intent_decision.mode = "task"
-                    intent_decision.needs_clarify = False
+                        intent_decision.mode = "task"
+                        intent_decision.needs_clarify = False
 
-            intent_is_chat = (intent_decision.mode == "chat")
-            logger.info(
-                "Intent gate: session=%s mode=%s source=%s rationale=%r",
-                session_id, intent_decision.mode,
-                intent_decision.source, intent_decision.rationale[:120],
-            )
-            await event_queue.put(IntentClassifiedEvent(
-                session_id=session_id,
-                intent_mode=intent_decision.mode,
-                confidence=0.95 if intent_decision.source == "heuristic" else 0.75,
-                reasoning=intent_decision.rationale,
-            ))
+                intent_is_chat = (intent_decision.mode == "chat")
+                logger.info(
+                    "Intent gate: session=%s mode=%s source=%s rationale=%r",
+                    session_id, intent_decision.mode,
+                    intent_decision.source, intent_decision.rationale[:120],
+                )
+                await event_queue.put(IntentClassifiedEvent(
+                    session_id=session_id,
+                    intent_mode=intent_decision.mode,
+                    confidence=0.95 if intent_decision.source == "heuristic" else 0.75,
+                    reasoning=intent_decision.rationale,
+                ))
 
             stale_task_names: set = set()
             scout_result = None
             decomposed_tasks: List = []
             all_envelopes: List[ResultEnvelope] = []
             timed_out = False
+            user_terminated = False
 
             # ── Capability Scout (pre-decomposition) ────────────────────────────
             # Identifies which MCP servers are relevant to this request and fetches
             # their actual tool descriptions, giving the decomposition LLM real
             # vocabulary instead of abstract capability names.
             # Skipped on chat turns — nothing to route.
-            if not intent_is_chat and self._config.agent.capability_scout.enabled and capabilities:
+            if not static_mode and not intent_is_chat and self._config.agent.capability_scout.enabled and capabilities:
                 await event_queue.put(StatusEvent(
                     message="Identifying relevant tools...",
                     session_id=session_id,
@@ -754,6 +947,19 @@ class CortexFramework:
                 except Exception as e:
                     logger.warning("Capability scout failed (%s) — proceeding without enrichment", e)
 
+            # Persisted code utilities belong to the agent's own code store,
+            # not MCP discovery — surface them to the decomposer even when the
+            # capability scout is disabled or skipped above.
+            if (
+                scout_result is None
+                and self._code_store is not None
+                and not static_mode
+                and not intent_is_chat
+            ):
+                _fallback_code_utils = _scout_instance.collect_code_utils(self._code_store)
+                if _fallback_code_utils:
+                    scout_result = _ScoutResult(code_utils=_fallback_code_utils)
+
             # ── Blueprint staleness check (pre-decomposition) ────────────────────
             # For each task type that references a blueprint, check whether the
             # blueprint's last_successful_run_at is older than the configured
@@ -761,7 +967,7 @@ class CortexFramework:
             # decomposition prompt so the LLM re-discovers subtasks rather than
             # blindly following the stored topology.
             # Skipped on chat turns.
-            if not intent_is_chat and self._config.blueprint.enabled:
+            if not static_mode and not intent_is_chat and self._config.blueprint.enabled:
                 staleness_days = self._config.blueprint.staleness_warning_days
                 for tt in self._config.task_types:
                     ref = getattr(tt, "blueprint", None)
@@ -779,7 +985,23 @@ class CortexFramework:
             # ── LLM CALL #1: Decomposition ──────────────────────────────────────
             # Persisted agent scripts are surfaced via scout_result.code_utils.
             # Skipped on chat turns — converse() handles them directly below.
-            if not intent_is_chat:
+            # Skipped entirely in static mode — the configured task graph is the
+            # plan, so we build the DecomposedTask list from task_types directly.
+            if static_mode:
+                from cortex.modules.task_graph_compiler import DecomposedTask
+                for _tt in self._config.task_types:
+                    decomposed_tasks.append(DecomposedTask(
+                        task_name=_tt.name,
+                        instruction=request,
+                        depends_on=list(_tt.depends_on),
+                        context_hints={"request": request[:4000]},
+                        capability_hint=_tt.capability_hint,
+                    ))
+                logger.info(
+                    "Static-DAG session %s — instantiating %d node(s)",
+                    session_id, len(decomposed_tasks),
+                )
+            elif not intent_is_chat:
                 async for task in primary.decompose(
                     session_id=session_id,
                     user_id=user_id,
@@ -792,27 +1014,30 @@ class CortexFramework:
                     stale_task_names=stale_task_names,
                 ):
                     decomposed_tasks.append(task)
-                if decomposed_tasks:
-                    _wave_map: Dict[str, int] = {}
-                    for _t in decomposed_tasks:
-                        _deps = getattr(_t, "depends_on", []) or []
-                        _wave = max((_wave_map.get(d, 0) for d in _deps), default=0) + 1
-                        _wave_map[getattr(_t, "task_name", "")] = _wave
-                    _blueprint_tasks = [
-                        {
-                            "id": getattr(t, "task_id", ""),
-                            "name": getattr(t, "task_name", ""),
-                            "description": getattr(t, "instruction", "")[:120],
-                            "depends_on": getattr(t, "depends_on", []) or [],
-                            "wave": _wave_map.get(getattr(t, "task_name", ""), 1),
-                        }
-                        for t in decomposed_tasks
-                    ]
-                    await event_queue.put(TaskBlueprintEvent(
-                        session_id=session_id,
-                        tasks=_blueprint_tasks,
-                        waves=max(_wave_map.values(), default=1),
-                    ))
+
+            # Emit the task blueprint for any UI listening — for both the
+            # LLM-decomposed graph and a static-DAG agent's fixed graph.
+            if decomposed_tasks:
+                _wave_map: Dict[str, int] = {}
+                for _t in decomposed_tasks:
+                    _deps = getattr(_t, "depends_on", []) or []
+                    _wave = max((_wave_map.get(d, 0) for d in _deps), default=0) + 1
+                    _wave_map[getattr(_t, "task_name", "")] = _wave
+                _blueprint_tasks = [
+                    {
+                        "id": getattr(t, "task_id", ""),
+                        "name": getattr(t, "task_name", ""),
+                        "description": getattr(t, "instruction", "")[:120],
+                        "depends_on": getattr(t, "depends_on", []) or [],
+                        "wave": _wave_map.get(getattr(t, "task_name", ""), 1),
+                    }
+                    for t in decomposed_tasks
+                ]
+                await event_queue.put(TaskBlueprintEvent(
+                    session_id=session_id,
+                    tasks=_blueprint_tasks,
+                    waves=max(_wave_map.values(), default=1),
+                ))
 
             if intent_is_chat:
                 # Chat turn — direct conversational reply, no tasks.
@@ -824,6 +1049,10 @@ class CortexFramework:
                     event_queue=event_queue,
                     task_type_names=task_type_names,
                 )
+                # Chat turns consume LLM tokens too — record them so the
+                # session's token_usage is not reported as zero.
+                token_usage.primary_agent_tokens += primary.primary_tokens
+                token_usage.total_tokens += primary.primary_tokens
             elif not decomposed_tasks:
                 # Task mode but decomposer returned no tasks. In rpc mode this
                 # is a client error (no actionable instruction); in interactive
@@ -876,8 +1105,14 @@ class CortexFramework:
                     max_parallel = self._config.agent.concurrency.max_parallel_tasks
                     sem = asyncio.Semaphore(max_parallel)
 
+                    _inject_ctx = self._config.agent.inject_session_context
                     for task in ready:
                         task.status = "running"
+                        # Refresh transient session context so each worker sees
+                        # the goal and the latest replan scratchpad for its wave.
+                        if _inject_ctx:
+                            task.session_goal = request
+                            task.session_scratchpad = primary._scratchpad
                         self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name, principal=task.principal)
 
                     async def _run_with_sem(task):
@@ -900,6 +1135,17 @@ class CortexFramework:
                             logger.error("Task %s raised exception: %s", task.task_id, result)
                             self._task_compiler.mark_failed(runtime_graph, task.task_id)
                             task_completion.failed_tasks += 1
+                            # A crashed mandatory task is a hard session error —
+                            # surface it instead of silently continuing.
+                            if getattr(getattr(task, "config", None), "mandatory", False):
+                                mandatory_failures.append(task.task_name)
+                                await event_queue.put(StatusEvent(
+                                    message=(
+                                        f"Mandatory task '{task.task_name}' failed: {result}"
+                                    ),
+                                    session_id=session_id,
+                                    event_type=EventType.ERROR,
+                                ))
                             continue
 
                         self._observability.emit_task_complete(session_id, result)
@@ -914,6 +1160,11 @@ class CortexFramework:
                                 all_envelopes.append(result)
                                 self._task_compiler.mark_complete(runtime_graph, task.task_id)
                                 task_completion.completed_tasks += 1
+                                await event_queue.put(StatusEvent(
+                                    message=f"Completed task: {task.task_name}",
+                                    session_id=session_id,
+                                    event_type=EventType.TASK_COMPLETE,
+                                ))
                             else:
                                 task.attempt_count += 1
                                 if task.attempt_count >= 3:
@@ -938,6 +1189,19 @@ class CortexFramework:
                                     # Re-queue for another attempt with feedback.
                                     # Do NOT append the envelope — the next
                                     # attempt's envelope will replace it.
+                                    # Record this attempt so the sub-agent's
+                                    # next call sees its own prior output and
+                                    # the rule that fired, not just the latest
+                                    # feedback alone.
+                                    prev_output = (
+                                        result.output_value
+                                        if result.output_type != "file"
+                                        else (result.content_summary or "")
+                                    )
+                                    task.attempt_history.append({
+                                        "output": str(prev_output or "")[:4000],
+                                        "feedback": feedback,
+                                    })
                                     task.validation_feedback = feedback
                                     task.hitl_ask_count = 0
                                     task.status = "pending"
@@ -998,7 +1262,20 @@ class CortexFramework:
                             len(_wave_pairs),
                         )
 
-                    if _wave_needs_replan:
+                    # Static-DAG agents never replan — the graph is fixed.
+                    if _wave_needs_replan and not static_mode:
+                        # Build a specific trigger label so the replan prompt
+                        # tells the LLM why it was woken instead of forcing
+                        # inference from completed-task content.
+                        _trigger_parts: List[str] = []
+                        for t, res in _wave_pairs:
+                            if res.status == "failed" and getattr(getattr(t, "config", None), "mandatory", False):
+                                _trigger_parts.append(f"mandatory_failure:{t.task_name}")
+                            elif res.status == "complete" and t.task_name in stale_task_names:
+                                _trigger_parts.append(f"stale_blueprint:{t.task_name}")
+                        if _soft_trigger and not _trigger_parts:
+                            _trigger_parts.append("adaptive_completed")
+                        _trigger_reason = ", ".join(_trigger_parts) or "unspecified"
                         try:
                             await primary.replan(
                                 runtime_graph=runtime_graph,
@@ -1006,6 +1283,7 @@ class CortexFramework:
                                 task_compiler=self._task_compiler,
                                 event_queue=event_queue,
                                 principal=principal,
+                                trigger_reason=_trigger_reason,
                             )
                         except Exception as e:
                             logger.debug("Replan hook raised (non-fatal): %s", e)
@@ -1046,6 +1324,30 @@ class CortexFramework:
                                     "ToolForge: failed to hatch forge ant '%s': %s — continuing",
                                     _forge_name, _forge_err,
                                 )
+
+                    # ── User interrupt check (between waves) ─────────────────
+                    # Drain any messages injected via inject_user_message().
+                    # We process at most one interrupt per wave boundary to keep
+                    # control flow simple; the next wave boundary handles more.
+                    if not _interrupt_queue.empty():
+                        interrupt_msg = await _interrupt_queue.get()
+                        await event_queue.put(StatusEvent(
+                            message="Processing your in-flight message…",
+                            session_id=session_id,
+                            event_type=EventType.STATUS,
+                        ))
+                        interrupt_action = await primary.handle_user_interrupt(
+                            message=interrupt_msg,
+                            session_id=session_id,
+                            runtime_graph=runtime_graph,
+                            completed_envelopes=all_envelopes,
+                            task_compiler=self._task_compiler,
+                            event_queue=event_queue,
+                            principal=principal,
+                        )
+                        if interrupt_action == "terminate":
+                            user_terminated = True
+                            break
 
                     # Check time remaining
                     remaining = deadline - time.monotonic()
@@ -1090,6 +1392,16 @@ class CortexFramework:
                 token_usage.mcp_agent_tokens = mcp_tokens
                 token_usage.total_tokens += mcp_tokens
 
+                # ── Early-exit note when user terminated mid-run ─────────────
+                if user_terminated:
+                    await event_queue.put(StatusEvent(
+                        message=(
+                            "Session stopped by user. Synthesising completed work…"
+                        ),
+                        session_id=session_id,
+                        event_type=EventType.STATUS,
+                    ))
+
                 # ── Snapshot on timeout so session can be resumed ─────────────
                 if timed_out:
                     try:
@@ -1111,6 +1423,21 @@ class CortexFramework:
                     except Exception as e:
                         logger.warning("Failed to save graph snapshot on timeout: %s", e)
 
+                # ── Per-node outputs ─────────────────────────────────────────
+                # Expose each node's raw output on SessionResult.node_outputs
+                # so callers (especially static-DAG agents) can read individual
+                # results without parsing the synthesised response.
+                _env_by_id = {e.task_id: e for e in all_envelopes}
+                for _tid, _t in runtime_graph.tasks.items():
+                    _env = _env_by_id.get(_tid)
+                    if _env is None:
+                        continue
+                    node_outputs[_t.task_name] = (
+                        _env.output_value
+                        if _env.output_type != "file"
+                        else (_env.content_summary or _env.output_value)
+                    )
+
                 # ── LLM CALL #2 (optional): Re-evaluation if needed ──────────
                 # (Skipped if all tasks completed normally)
 
@@ -1129,7 +1456,7 @@ class CortexFramework:
             # Validation is scoped to task synthesis — skipped for chat turns
             # because the validator's rubric targets task completeness, not
             # conversational quality.
-            if final_response and not intent_is_chat:
+            if final_response and not intent_is_chat and self._config.validation.enabled:
                 final_response, validation_report = await self._validation_agent.validate_with_remediation(
                     user_request=request,
                     initial_response=final_response,
@@ -1285,6 +1612,7 @@ class CortexFramework:
 
         except Exception as e:
             logger.error("Session %s failed with exception: %s", session_id, e, exc_info=True)
+            _ACTIVE_SESSION_INTERRUPT_QUEUES.pop(session_id, None)
             if _hitl_relay is not None:
                 try:
                     await _hitl_relay.stop()
@@ -1308,7 +1636,11 @@ class CortexFramework:
                 token_usage=token_usage,
                 duration_seconds=duration,
                 error=str(e),
+                node_outputs=node_outputs,
             )
+
+        # Deregister interrupt queue — session is winding down
+        _ACTIVE_SESSION_INTERRUPT_QUEUES.pop(session_id, None)
 
         # Stop per-session HITL relay now that the session is complete
         if _hitl_relay is not None:
@@ -1419,6 +1751,11 @@ class CortexFramework:
             token_usage=token_usage,
             duration_seconds=duration,
             history_record=history_record,
+            node_outputs=node_outputs,
+            error=(
+                f"Mandatory task(s) failed: {', '.join(mandatory_failures)}"
+                if mandatory_failures else None
+            ),
         )
 
     async def _resume_session(
@@ -1472,6 +1809,10 @@ class CortexFramework:
             event_type=EventType.SESSION_START,
         ))
 
+        # Register interrupt queue for the resumed session
+        _resume_interrupt_queue: "asyncio.Queue[str]" = asyncio.Queue()
+        _ACTIVE_SESSION_INTERRUPT_QUEUES[session_id] = _resume_interrupt_queue
+
         try:
             from cortex.modules.primary_agent import PrimaryAgent
             from cortex.modules.generic_mcp_agent import GenericMCPAgent
@@ -1484,6 +1825,8 @@ class CortexFramework:
                 code_sandbox=self._code_sandbox,
                 code_store=self._code_store,
                 sandbox_config=self._config.code_sandbox,
+                app_control=self._app_control,
+                app_control_config=self._config.app_control,
                 builtin_web_search_enabled=self._config.agent.builtin_web_search_enabled,
             )
 
@@ -1504,6 +1847,7 @@ class CortexFramework:
             # ── Resume wave loop (pending tasks only) ─────────────────────────
             deadline = time.monotonic() + self._config.agent.time.default_max_wait_seconds
             timed_out = False
+            user_terminated = False
             deadline_extended = False
 
             while True:
@@ -1514,8 +1858,12 @@ class CortexFramework:
                 max_parallel = self._config.agent.concurrency.max_parallel_tasks
                 sem = asyncio.Semaphore(max_parallel)
 
+                _inject_ctx = self._config.agent.inject_session_context
                 for task in ready:
                     task.status = "running"
+                    if _inject_ctx:
+                        task.session_goal = original_request
+                        task.session_scratchpad = primary._scratchpad
                     self._observability.emit_task_dispatch(session_id, task.task_id, task.task_name, principal=task.principal)
 
                 async def _run_with_sem(task):
@@ -1549,6 +1897,11 @@ class CortexFramework:
                             all_envelopes.append(result)
                             self._task_compiler.mark_complete(runtime_graph, task.task_id)
                             task_completion.completed_tasks += 1
+                            await event_queue.put(StatusEvent(
+                                message=f"Completed task: {task.task_name}",
+                                session_id=session_id,
+                                event_type=EventType.TASK_COMPLETE,
+                            ))
                         else:
                             task.attempt_count += 1
                             if task.attempt_count >= 3:
@@ -1598,6 +1951,27 @@ class CortexFramework:
                     except Exception as e:
                         logger.debug("Replan hook raised (non-fatal): %s", e)
 
+                # ── User interrupt check (between waves) ─────────────────
+                if not _resume_interrupt_queue.empty():
+                    interrupt_msg = await _resume_interrupt_queue.get()
+                    await event_queue.put(StatusEvent(
+                        message="Processing your in-flight message…",
+                        session_id=session_id,
+                        event_type=EventType.STATUS,
+                    ))
+                    interrupt_action = await primary.handle_user_interrupt(
+                        message=interrupt_msg,
+                        session_id=session_id,
+                        runtime_graph=runtime_graph,
+                        completed_envelopes=all_envelopes,
+                        task_compiler=self._task_compiler,
+                        event_queue=event_queue,
+                        principal=principal,
+                    )
+                    if interrupt_action == "terminate":
+                        user_terminated = True
+                        break
+
                 remaining = deadline - time.monotonic()
                 if remaining < 0:
                     total_time = self._config.agent.time.default_max_wait_seconds
@@ -1632,6 +2006,14 @@ class CortexFramework:
             token_usage.mcp_agent_tokens = mcp_tokens
             token_usage.total_tokens += mcp_tokens
 
+            # ── Early-exit note when user terminated mid-run ─────────────────
+            if user_terminated:
+                await event_queue.put(StatusEvent(
+                    message="Session stopped by user. Synthesising completed work…",
+                    session_id=session_id,
+                    event_type=EventType.STATUS,
+                ))
+
             # ── Snapshot again if timed out a second time ──────────────────────
             if timed_out:
                 try:
@@ -1662,7 +2044,7 @@ class CortexFramework:
             )
 
             # ── Validation ─────────────────────────────────────────────────────
-            if final_response:
+            if final_response and self._config.validation.enabled:
                 final_response, validation_report = await self._validation_agent.validate_with_remediation(
                     user_request=original_request,
                     initial_response=final_response,
@@ -1674,6 +2056,7 @@ class CortexFramework:
 
         except Exception as e:
             logger.error("Resume session %s failed: %s", session_id, e, exc_info=True)
+            _ACTIVE_SESSION_INTERRUPT_QUEUES.pop(session_id, None)
             await event_queue.put(StatusEvent(
                 message=f"Resume error: {str(e)[:200]}",
                 session_id=session_id, event_type=EventType.ERROR,
@@ -1686,6 +2069,9 @@ class CortexFramework:
                 task_completion=task_completion, token_usage=token_usage,
                 duration_seconds=duration, error=str(e),
             )
+
+        # Deregister interrupt queue — resumed session is winding down
+        _ACTIVE_SESSION_INTERRUPT_QUEUES.pop(session_id, None)
 
         duration = time.time() - start_time
         history_record = HistoryRecord(
@@ -2038,6 +2424,47 @@ class CortexFramework:
                 event.set()
             return True
         return False
+
+    def inject_user_message(self, session_id: str, message: str) -> bool:
+        """
+        Inject an in-flight message into a running session.
+
+        The message is queued and processed at the next wave boundary (after
+        the current wave's asyncio.gather() completes). The agent will then
+        decide — via an LLM call — whether to terminate the session or replan
+        its remaining tasks in light of the new input.
+
+        A ``UserInterruptEvent`` is placed on the session's event_queue once
+        the message is processed (action="queued" immediately, then
+        action="replan" or "terminate" after the LLM decides).
+
+        Args:
+            session_id: The session_id returned by (or visible in events from)
+                        run_session().
+            message:    The user's free-text message, e.g. "stop", "focus only
+                        on X", or "add a step to verify Y".
+
+        Returns:
+            True if the session is active and the message was queued.
+            False if no active session with that ID was found (already finished
+            or never started).
+
+        Usage:
+            # While run_session() is awaited in another task:
+            queued = framework.inject_user_message(session_id, "stop the analysis")
+        """
+        queue = _ACTIVE_SESSION_INTERRUPT_QUEUES.get(session_id)
+        if queue is None:
+            return False
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning(
+                "inject_user_message: interrupt queue full for session %s — message dropped",
+                session_id,
+            )
+            return False
+        return True
 
     async def get_resumable_sessions(self, user_id: str) -> List[Dict]:
         """

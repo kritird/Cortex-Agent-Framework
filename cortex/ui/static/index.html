@@ -99,6 +99,8 @@ body.sidebar-collapsed.rail-hidden{grid-template-columns:52px 1fr 0px}
 .msg-user{align-self:flex-end;max-width:74%;background:var(--accent-dim);border:1px solid var(--accent-focus);border-radius:14px 14px 4px 14px;padding:12px 16px}
 .msg-assistant{align-self:flex-start;max-width:82%;background:var(--bg-card);border:1px solid var(--border);border-radius:4px 14px 14px 14px;padding:14px 18px}
 .msg-role{font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px}
+.msg-interjection{border-color:var(--warning);border-style:dashed;background:rgba(245,158,11,.08)}
+.interject-tag{margin-left:6px;font-size:9px;font-weight:600;padding:1px 6px;border-radius:6px;background:rgba(245,158,11,.18);color:var(--warning);letter-spacing:.04em}
 .msg-content{font-size:14px;line-height:1.7;color:var(--text-primary);word-wrap:break-word}
 .msg-content p{margin-bottom:.6em}.msg-content p:last-child{margin-bottom:0}
 .msg-content pre{background:rgba(0,0,0,.4);border-radius:8px;padding:12px;overflow-x:auto;margin:.6em 0}
@@ -361,8 +363,11 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
     <template x-for="msg in messages" :key="msg.id">
       <div class="msg-wrap">
         <!-- User bubble -->
-        <div x-show="msg.role==='user'" class="msg-user">
-          <div class="msg-role">You</div>
+        <div x-show="msg.role==='user'" class="msg-user" :class="{'msg-interjection':msg.interjection}">
+          <div class="msg-role">
+            <span x-text="msg.interjection?'You · mid-run':'You'"></span>
+            <span x-show="msg.interjection&&msg.interjectStatus" class="interject-tag" x-text="interjectLabel(msg.interjectStatus)"></span>
+          </div>
           <div style="font-size:14px;line-height:1.7;white-space:pre-wrap;word-wrap:break-word;color:var(--text-primary)" x-text="msg.content"></div>
           <div class="output-chips" x-show="msg.files&&msg.files.length>0">
             <template x-for="f in msg.files" :key="f.filename">
@@ -416,8 +421,11 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-primary btn-sm" @click="answerHitl(card,'approve')">✓ Approve</button>
-                <button class="btn btn-danger btn-sm" @click="answerHitl(card,'deny')">✗ Deny</button>
+                <!-- Buttons follow the event's own options (e.g. App Control
+                     sends ["yes","no"]); fall back to approve/deny otherwise. -->
+                <template x-for="opt in (card.options&&card.options.length?card.options:['approve','deny'])" :key="opt">
+                  <button class="btn btn-sm" :class="optBtnClass(opt)" @click="answerHitl(card,opt)" x-text="optBtnLabel(opt)"></button>
+                </template>
                 <button class="btn btn-secondary btn-sm" @click="card.dismissed=true">Skip</button>
               </div>
             </div>
@@ -440,6 +448,7 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
               <span style="width:16px;text-align:center;flex-shrink:0" x-html="taskStatusIcon(task.status)"></span>
               <span class="task-name" x-text="task.name"></span>
               <span class="task-meta">
+                <span x-show="task.reactStep>0" style="color:var(--accent)" x-text="'↻'+task.reactStep"></span>
                 <span x-show="task.toolCalls>0" x-text="task.toolCalls+'c'"></span>
                 <span x-show="task.elapsed>0" x-text="task.elapsed+'s'"></span>
                 <span x-show="task.blueprint!=null" class="blueprint-tag" x-text="'📋'+task.blueprint"></span>
@@ -536,6 +545,7 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
                   <span class="dag-node-name" x-text="task.name"></span>
                 </div>
                 <div class="dag-node-meta">
+                  <span x-show="task.reactStep>0" style="color:var(--accent)" x-text="'↻ step '+task.reactStep+(task.reactAction?' · '+task.reactAction:'')"></span>
                   <span x-show="task.toolCalls>0" x-text="task.toolCalls+' calls'"></span>
                   <span x-show="task.elapsed>0" x-text="task.elapsed+'s'"></span>
                   <span x-show="task.server" x-text="task.server" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
@@ -770,7 +780,7 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
 
       <textarea id="composer-input"
         class="composer-textarea"
-        :placeholder="streaming?'Session running… (Cmd+Enter to cancel)':'Message the agent… (/ for commands, Cmd+Enter to send)'"
+        :placeholder="streaming?'Send the agent a mid-run message… (Cmd+Enter; empty = cancel)':'Message the agent… (/ for commands, Cmd+Enter to send)'"
         x-model="inputText"
         @input="handleInput($event)"
         @keydown="handleKeydown($event)"
@@ -782,9 +792,10 @@ body.rail-hidden .rail{border-left:none;overflow:hidden}
           :style="voiceActive?'border-color:var(--danger);color:var(--danger);animation:pulse .8s infinite':''">🎙</button>
         <span class="forced-mode-chip" x-show="forcedMode" x-text="'mode: '+forcedMode"
           @click="forcedMode=null;showToast('Intent mode: auto','info')" title="Click to reset to auto"></span>
-        <button class="send-btn" :class="{stop:streaming}" @click="streaming?cancelSession():send()"
-          :disabled="!streaming&&!canSend" :title="streaming?'Cancel session':'Send (Cmd+Enter)'">
-          <span x-text="streaming?'⏹':'→'"></span>
+        <button class="send-btn" :class="{stop:streaming&&!inputText.trim()}" @click="composerAction()"
+          :disabled="streaming?false:!canSend"
+          :title="streaming?(inputText.trim()?'Send mid-run message (Cmd+Enter)':'Cancel session (Cmd+Enter)'):'Send (Cmd+Enter)'">
+          <span x-text="streaming?(inputText.trim()?'↪':'⏹'):'→'"></span>
         </button>
       </div>
     </div>
@@ -1118,9 +1129,17 @@ navTabs:[
       this.debugEvents.unshift({time:new Date().toLocaleTimeString(),type,data:JSON.stringify(data).slice(0,180),idx:this.dbgIdx++});
       if(this.debugEvents.length>300)this.debugEvents.pop();
 
-      if(type==='status'){this.statusText=data.message||'';}
+      if(type==='status'){
+        this.statusText=data.message||'';
+        // ReAct loop progress rides on status events (metadata is spread into
+        // the payload by StatusEvent.to_sse) — attach it to the matching task.
+        if(data.react_step&&data.task_name){
+          const t=this.taskMap[data.task_name];
+          if(t){t.reactStep=data.react_step;if(data.action)t.reactAction=data.action;}
+        }
+      }
       else if(type==='task_start'){
-        const task={name:data.task_name,status:'running',toolCalls:0,elapsed:0,blueprint:null,server:null,startTs:Date.now()};
+        const task={name:data.task_name,status:'running',toolCalls:0,elapsed:0,blueprint:null,server:null,startTs:Date.now(),reactStep:0,reactAction:null};
         this.taskMap[data.task_name]=task;
         const wNum=data.wave??this.waves.length+1;
         let wave=this.waves.find(w=>w.num===wNum);
@@ -1160,6 +1179,12 @@ navTabs:[
       else if(type==='ant_hatched'){this.ants.push({ant_id:data.ant_id||'ant',port:data.port||'?',capabilities:data.capabilities||[],parent_task:data.parent_task,status:'running'});}
       else if(type==='ant_stopped'){const a=this.ants.find(x=>x.ant_id===data.ant_id);if(a)a.status='stopped';}
       else if(type==='session_token_usage'){this.tokenUsage={input:data.input_tokens||0,output:data.output_tokens||0};}
+      else if(type==='user_interrupt'){
+        const im=[...this.messages].reverse().find(m=>m.interjection&&m.content===data.message);
+        if(im)im.interjectStatus=data.action||'queued';
+        if(data.action==='replan')this.showToast('Agent is replanning around your message','info');
+        else if(data.action==='terminate')this.showToast('Agent is winding down at your request','info');
+      }
       else if(type==='error'){
         const msg=this.messages.find(m=>m.streaming);
         if(msg){msg.content=`⚠ Error: ${data.message||'Unknown error'}`;msg.streaming=false;}
@@ -1182,7 +1207,7 @@ navTabs:[
     ['status','task_start','task_complete','task_tool_call','task_blueprint',
      'intent_classified','synthesis_tier','result','file_output',
      'clarification','clarification_request','learning','external_mcp_auth_required',
-     'ant_hatched','ant_stopped','session_token_usage','error','done'
+     'ant_hatched','ant_stopped','session_token_usage','user_interrupt','error','done'
     ].forEach(t=>es.addEventListener(t,e=>{try{onEv(t,JSON.parse(e.data));}catch(err){console.error('SSE parse error',err);}}));
 
     es.onerror=()=>{
@@ -1206,6 +1231,20 @@ navTabs:[
     card.dismissed=true;
     fetch(`/api/session/${this.currentUiId}/clarify`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clarification_id:card.clarification_id,answer})}).catch(()=>{});
     this.showToast('Answer sent: '+answer,'info');
+  },
+  _hitlAffirm:['yes','y','approve','allow','ok','accept'],
+  _hitlDeny:['no','n','deny','reject','cancel','disallow'],
+  optBtnClass(opt){
+    const o=String(opt).toLowerCase();
+    if(this._hitlAffirm.includes(o))return 'btn-primary';
+    if(this._hitlDeny.includes(o))return 'btn-danger';
+    return 'btn-secondary';
+  },
+  optBtnLabel(opt){
+    const o=String(opt).toLowerCase();
+    if(this._hitlAffirm.includes(o))return '✓ '+opt;
+    if(this._hitlDeny.includes(o))return '✗ '+opt;
+    return opt;
   },
   retry(){const last=[...this.messages].reverse().find(m=>m.role==='user');if(last)this.inputText=last.content;},
   appendExplain(){this.inputText='Please explain your last response in more detail.';this.showPalette=false;this.$nextTick(()=>document.getElementById('composer-input')?.focus());},
@@ -1294,8 +1333,50 @@ navTabs:[
       if(e.key==='Tab'||e.key==='Enter'){e.preventDefault();const cmd=this.paletteCmds[this.paletteIndex];if(cmd)this.runCmd(cmd);return;}
       if(e.key==='Escape'){this.showPalette=false;return;}
     }
-    if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();this.streaming?this.cancelSession():this.send();return;}
+    if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();this.composerAction();return;}
     if(e.key==='Escape')this.showPalette=false;
+  },
+
+  // Composer button / Cmd+Enter dispatch. While a session streams, typed text
+  // is injected as a mid-run message; an empty composer cancels the session.
+  composerAction(){
+    if(this.streaming){
+      if(this.inputText.trim())this.sendInterrupt();
+      else this.cancelSession();
+    }else{
+      this.send();
+    }
+  },
+
+  interjectLabel(s){
+    return {sending:'sending…',queued:'queued',replan:'replanning',terminate:'stopping',failed:'failed'}[s]||s;
+  },
+
+  async sendInterrupt(){
+    const msg=this.inputText.trim();
+    if(!msg||!this.streaming||!this.currentUiId)return;
+    this.inputText='';this.showPalette=false;
+    const ta=document.getElementById('composer-input');if(ta)ta.style.height='auto';
+    const im={id:'i'+Date.now(),role:'user',content:msg,files:[],sessionId:null,interjection:true,interjectStatus:'sending'};
+    this.messages.push(im);
+    this.$nextTick(()=>this.scrollToBottom());
+    try{
+      const r=await fetch(`/api/session/${this.currentUiId}/interrupt`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:msg})
+      });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok){
+        im.interjectStatus='failed';
+        this.showToast(j.error||'Could not deliver the message','error');
+      }else{
+        im.interjectStatus='queued';
+        this.showToast('Message sent — the agent will weigh it at the next wave','info');
+      }
+    }catch(e){
+      im.interjectStatus='failed';
+      this.showToast('Interrupt failed: '+e.message,'error');
+    }
   },
   runCmd(cmd){if(!cmd)return;this.inputText='';this.showPalette=false;cmd.action();},
   autoResize(el){if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px';},

@@ -16,6 +16,20 @@ result = await framework.run_session(user_id="u1", request="Analyse Q3 revenue")
 
 That's the integration. Everything else — orchestration, parallelism, tool calls, retries, validation, streaming, history — is handled.
 
+Prefer code to config? Build the agent in Python with `CortexBuilder` instead — and wire in **code nodes** (plain Python functions as graph nodes, LangGraph-style):
+
+```python
+agent = CortexBuilder("MyAgent", "...").llm("anthropic", api_key_env="ANTHROPIC_API_KEY")
+
+@agent.node()
+async def step(ctx):
+    return await ctx.llm(ctx.request)
+
+framework = CortexFramework(config=agent.build())
+```
+
+Same engine either way. See [Getting Started § Code-First Agents](GETTING_STARTED.md#code-first-agents--cortexbuilder).
+
 ---
 
 ## Why teams choose Cortex
@@ -70,8 +84,8 @@ The **autonomic Learning Engine** observes task patterns across sessions and fir
 
 | Capability | Cortex | Typical agent frameworks |
 |---|---|---|
-| **Configuration** | Single `cortex.yaml` drives everything | Scattered code, env vars, multiple config files |
-| **Task orchestration** | LLM-generated DAG with parallel fan-out/fan-in | Sequential chain or hand-coded state machine |
+| **Configuration** | Single `cortex.yaml` *or* a Python `CortexBuilder` | Scattered code, env vars, multiple config files |
+| **Task orchestration** | LLM-generated DAG *or* a hand-authored static DAG of code nodes — parallel fan-out/fan-in either way | Sequential chain or hand-coded state machine |
 | **Tool protocol** | Native MCP (SSE, stdio, streamable-HTTP) | Custom tool wrappers per integration |
 | **Multi-agent** | Any agent becomes an MCP tool in one command | Bespoke inter-agent protocols |
 | **Self-expanding mesh** | Ant Colony hatches specialist agents at runtime; ToolForge generates brand-new MCP servers from LLM-written code at wave boundaries | Static tool lists, no self-expansion |
@@ -106,9 +120,10 @@ The **autonomic Learning Engine** observes task patterns across sessions and fir
 
 ## The 60-second pitch
 
-You write a YAML file describing your agent. Cortex reads it and gives you:
+You describe your agent — in a YAML file, or in Python with `CortexBuilder`. Cortex reads it and gives you:
 
 - **Automatic task decomposition** — the LLM breaks requests into a typed dependency graph
+- **Code-first option** — build the agent in Python and wire `@node` functions in as graph nodes; a static DAG runs them verbatim
 - **Parallel execution** — independent tasks run simultaneously, not sequentially
 - **Intent Gate** — chat-shaped turns (greetings, small talk) skip the full pipeline; only task-shaped turns decompose
 - **MCP tool servers** — connect any tool with three lines of YAML
@@ -139,7 +154,7 @@ All of this is in the box. No plugins to install. No boilerplate to write. No in
 
 ## What Cortex is *not*
 
-- **Not a low-code builder.** It's a Python library you integrate into your app. The config file replaces boilerplate, not code.
+- **Not a low-code builder.** It's a Python library you integrate into your app — drive it with `cortex.yaml` or the `CortexBuilder` API. Config replaces boilerplate, not your code.
 - **Not an LLM gateway.** It uses providers; it doesn't replace them. Bring your own API key.
 - **Not a vector database or RAG system.** It calls MCP tools that do RAG — it doesn't implement retrieval itself.
 - **Not a replacement for your web framework.** Cortex runs *inside* FastAPI/Django/Flask/Click. The built-in chat UI is a standalone publish target, not a framework you build on.

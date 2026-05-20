@@ -377,6 +377,49 @@ async def handle_session_clarify(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_session_interrupt(request: web.Request) -> web.Response:
+    """Inject a user message into a running session (mid-run interrupt).
+
+    The framework processes it at the next wave boundary and decides whether to
+    replan or terminate; a ``user_interrupt`` SSE event reports the outcome.
+    """
+    framework: CortexFramework = request.app["framework"]
+    user_id = _resolve_user(request)
+    if user_id is None:
+        return _unauthorised(framework)
+
+    ui_id = request.match_info["ui_id"]
+    pending: Optional[_PendingSession] = request.app["pending"].get(ui_id)
+    if not pending or pending.user_id != user_id:
+        return web.Response(status=404, text="unknown session")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    message = (body.get("message") or "").strip()
+    if not message:
+        return web.json_response({"error": "message required"}, status=400)
+
+    # real_session_id is captured from the first event the session emits; until
+    # then the framework has no interrupt queue registered to post to.
+    if not pending.real_session_id:
+        return web.json_response(
+            {"ok": False, "error": "session still starting — retry shortly"},
+            status=409,
+        )
+
+    queued = framework.inject_user_message(pending.real_session_id, message)
+    if not queued:
+        return web.json_response(
+            {"ok": False, "queued": False,
+             "error": "session not accepting interrupts (already finished)"},
+            status=409,
+        )
+    return web.json_response({"ok": True, "queued": True})
+
+
 async def handle_session_upload(request: web.Request) -> web.Response:
     """Accept additional files mid-session and queue them into the running session."""
     framework: CortexFramework = request.app["framework"]
@@ -700,6 +743,7 @@ def build_app(framework: CortexFramework) -> web.Application:
     app.router.add_post("/api/session", handle_new_session)
     app.router.add_get("/api/session/{ui_id}/events", handle_events)
     app.router.add_post("/api/session/{ui_id}/clarify", handle_session_clarify)
+    app.router.add_post("/api/session/{ui_id}/interrupt", handle_session_interrupt)
     app.router.add_post("/api/session/{ui_id}/upload", handle_session_upload)
     app.router.add_get("/api/history", handle_history_list)
     app.router.add_get("/api/history/search", handle_history_search)

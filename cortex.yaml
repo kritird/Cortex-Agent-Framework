@@ -1,119 +1,117 @@
 agent:
-  name: ResearchAgent
+  builtin_web_search_enabled: true
+  capability_scout:
+    external_discovery:
+      search_timeout_s: 10
+    timeout_seconds: 10
   description: A research assistant that finds, reads, and synthesizes information
     from across the web with proper citations.
+  name: ResearchAgent
   synthesis_guidance: Always cite sources with [number] markers and a sources section
     at the end. Prefer authoritative primary sources. Compare multiple perspectives
     where they differ.
   time:
     default_task_timeout_seconds: 300
-  builtin_web_search_enabled: true   # zero-config DuckDuckGo fallback; set false to require a configured tool server
-  capability_scout:
-    timeout_seconds: 10
-    external_discovery:
-      search_timeout_s: 10
-llm_access:
-  default:
-    provider: local
-    model: gemma4:e4b
-    api_key_env_var: ''
-    max_tokens: 4096
-    base_url: http://localhost:11434/v1
-    temperature: 1
-  # providers:
-  #   fast:
-  #     provider: anthropic
-  #     model: claude-haiku-4-5-20251001
-  #     api_key_env_var: ANTHROPIC_API_KEY
-  #   powerful:
-  #     provider: anthropic
-  #     model: claude-opus-4-7
-  #     api_key_env_var: ANTHROPIC_API_KEY
-
-# Adaptive Model Routing (AMR) — per-task LLM selection driven by the decomposer.
-# Set enabled: true and map each complexity tier to a provider key defined above.
-# adaptive_model_routing:
-#   enabled: true
-#   tiers:
-#     low: fast        # simple retrieval, formatting, short text
-#     medium: default  # multi-step reasoning, moderate code
-#     high: powerful   # complex architecture, deep synthesis, long codegen
-#   validation_provider: ""  # "" = auto-select first non-default provider
-storage:
-  base_path: ./cortex_storage
-ui:
+ant_colony:
   enabled: true
-  title: Research Agent
-task_types:
-- name: web_search
-  description: Search the web for information on a topic and return relevant results.
-  output_format: text
-  capability_hint: web_search
-  timeout_seconds: 60
-- name: read_page
-  description: Fetch and extract clean readable text from a URL.
-  output_format: text
-  capability_hint: web_search
-  timeout_seconds: 30
-- name: synthesize
-  description: Synthesize findings from multiple sources into a structured report
-    with numbered citations.
-  output_format: markdown
-  capability_hint: llm_synthesis
-  timeout_seconds: 120
+  llm_model: gemma4:e4b
 blueprint:
   enabled: true
-tool_servers:
-  brave_search:
-    transport: stdio
-    command: npx
-    args:
-    - -y
-    - '@modelcontextprotocol/server-brave-search'
-    description: Privacy-focused web search via the Brave Search API.
-    startup_timeout_seconds: 100
-    connection:
-      timeout_seconds: 100
-      read_timeout_seconds: 600
-    env:
-      BRAVE_API_KEY: ''
-  fetch:
-    transport: stdio
-    command: uvx
-    args:
-    - mcp-server-fetch
-    description: Fetch web pages and extract clean content for AI consumption.
-    startup_timeout_seconds: 100
-    connection:
-      timeout_seconds: 100
-      read_timeout_seconds: 600
-validation:
-  threshold: 0.75
-  timeout_seconds: 15
+code_sandbox:
+  allow_network: true
+  auto_add_to_yaml: true
+  enabled: true
+  timeout_seconds: 60
 history:
   enabled: true
   retention_days: 90
 learning:
-  enabled: true
   auto_apply_delta: true
+  enabled: true
+llm_access:
+  default:
+    api_key_env_var: ''
+    base_url: http://localhost:11434/v1
+    max_tokens: 4096
+    model: gemma4:e4b
+    provider: local
+    temperature: 1
 startup:
   discovery_timeout_seconds: 15
-code_sandbox:
-  enabled: true
+storage:
+  base_path: ./cortex_storage
+task_types:
+- capability_hint: web_search
+  description: Search the web for information on a topic and return relevant results.
+  name: web_search
+  output_format: text
   timeout_seconds: 60
-  allow_network: true
-  auto_add_to_yaml: true
+- capability_hint: web_search
+  description: Fetch and extract clean readable text from a URL.
+  name: read_page
+  output_format: text
+  timeout_seconds: 30
+- capability_hint: llm_synthesis
+  description: Synthesize findings from multiple sources into a structured report
+    with numbered citations.
+  name: synthesize
+  output_format: markdown
+  timeout_seconds: 120
+tool_servers:
+  brave_search:
+    args:
+    - -y
+    - '@modelcontextprotocol/server-brave-search'
+    command: npx
+    connection:
+      read_timeout_seconds: 600
+      timeout_seconds: 100
+    description: Privacy-focused web search via the Brave Search API.
+    env:
+      BRAVE_API_KEY: ''
+    startup_timeout_seconds: 100
+    transport: stdio
+  fetch:
+    args:
+    - mcp-server-fetch
+    command: uvx
+    connection:
+      read_timeout_seconds: 600
+      timeout_seconds: 100
+    description: Fetch web pages and extract clean content for AI consumption.
+    startup_timeout_seconds: 100
+    transport: stdio
+ui:
+  enabled: true
+  title: Research Agent
+validation:
+  threshold: 0.75
+  timeout_seconds: 15
 workspace_bash:
+  default_workspace: null
   enabled: true
   hitl_enabled: true
-  # default_workspace: ~/projects/myapp   # set via Synapse sidebar, CORTEX_DEFAULT_WORKSPACE env var, or here
-ant_colony:
-  enabled: true
-  llm_model: gemma4:e4b
-# ToolForge — LLM-generated MCP servers spawned at wave boundaries.
-# Requires ant_colony.enabled and code_sandbox.enabled (both true above).
-# tool_forge:
-#   enabled: true
-#   persist_by_default: false      # true = forged servers survive restart (auto_restart in ants.yaml)
-#   spawn_timeout_seconds: 30      # health-check timeout after spawning the generated script
-#   codegen_llm_provider: default  # provider key used for MCP server code generation
+# App Control — launch and drive native applications via AppleScript (macOS),
+# PowerShell + UIA (Windows), or a screenshot vision loop (any app without a
+# scripting interface). Every mutating action requires user approval (HITL).
+app_control:
+  enabled: false
+  hitl_enabled: true       # require human approval for launch / script / screenshot
+  timeout_seconds: 30      # per-action subprocess timeout
+  sdef_max_chars: 8000     # max chars of scripting-dictionary summary to inject
+  max_vision_steps: 10     # cap on screenshot → action loop iterations
+  vision_provider: default # LLM provider for vision steps (default = primary provider)
+# Built-in Playwright MCP — browser automation. Started internally; users do NOT
+# add a tool_server entry for it. Requires Node.js + npx on PATH.
+playwright_mcp:
+  enabled: false
+  browser: chromium        # chromium | firefox | webkit
+  headless: false          # false = visible window; true = headless
+  startup_timeout_seconds: 60
+  # Session persistence — login state survives across runs. Leave both null to
+  # use the default at {storage.local_path}/playwright_session.json (cookies +
+  # localStorage). Set user_data_dir for a full persistent profile.
+  storage_state_path: null
+  user_data_dir: null
+  viewport_width: 1280
+  viewport_height: 720

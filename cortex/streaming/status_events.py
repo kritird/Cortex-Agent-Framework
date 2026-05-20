@@ -26,6 +26,7 @@ class EventType(str, Enum):
     WORKSPACE_EVENT = "workspace_event"        # file-system change in workspace
     FILE_OUTPUT = "file_output"                # agent produced a downloadable file
     SESSION_TOKEN_USAGE = "session_token_usage"  # cumulative token counters
+    USER_INTERRUPT = "user_interrupt"            # user injected a message mid-run
 
 
 @dataclass
@@ -330,6 +331,34 @@ class FileOutputEvent:
             "timestamp": self.timestamp,
         }
         return f"event: file_output\ndata: {json.dumps(data)}\n\n"
+
+
+@dataclass
+class UserInterruptEvent:
+    """Emitted when a user injects a message mid-run.
+
+    ``action`` reflects what the framework decided to do with the message:
+    - ``"replan"``  — the agent updated its task graph and will continue
+    - ``"terminate"`` — the user requested a stop; session is winding down
+    - ``"queued"``  — the interrupt was received and will be processed after
+                      the current wave completes
+    """
+    session_id: str
+    message: str
+    action: str = "queued"   # queued | replan | terminate
+    event_type: EventType = EventType.USER_INTERRUPT
+    timestamp: float = field(default_factory=time.time)
+
+    def to_sse(self) -> str:
+        import json
+        data = {
+            "type": self.event_type.value,
+            "session_id": self.session_id,
+            "message": self.message,
+            "action": self.action,
+            "timestamp": self.timestamp,
+        }
+        return f"event: user_interrupt\ndata: {json.dumps(data)}\n\n"
 
 
 @dataclass

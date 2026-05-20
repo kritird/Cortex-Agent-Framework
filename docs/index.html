@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cortex Agent Framework — One YAML file. A production AI agent.</title>
-<meta name="description" content="Production-grade, configuration-driven AI agent framework for Python. 8 LLM providers, MCP-native, multi-agent mesh, built-in chat UI, 4 deploy targets.">
+<meta name="description" content="Production-grade, configuration-driven AI agent framework for Python. 8 LLM providers, MCP-native, multi-agent mesh, built-in chat UI, native app control, browser automation, polyglot code sandbox, 4 deploy targets.">
 <meta property="og:title" content="Cortex Agent Framework">
-<meta property="og:description" content="One YAML file. One method call. A production AI agent.">
+<meta property="og:description" content="One YAML file. One method call. A production AI agent — now with native app control, browser automation, and polyglot code sandbox.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -604,8 +604,8 @@ body {
       <h1 class="hero-headline-top">Stop rebuilding<br>the agent stack.</h1>
     </div>
     <h1 class="hero-headline-bottom"><span>Ship the agent instead.</span></h1>
-    <p class="hero-sub">The best frameworks don't constrain your thinking — they eliminate the thinking that shouldn't be yours. Parallel task graphs, self-spawning agents, runtime tool generation, and signal-driven learning: Cortex absorbs the infrastructure so your team ships the product.</p>
-    <div class="badge"><span class="badge-dot"></span> v1.4.0 · MIT · Python 3.11+ · Production-grade</div>
+    <p class="hero-sub">The best frameworks don't constrain your thinking — they eliminate the thinking that shouldn't be yours. Parallel task graphs, self-spawning agents, runtime tool generation, native app control, built-in browser automation, polyglot code sandbox, and signal-driven learning: Cortex absorbs the infrastructure so your team ships the product.</p>
+    <div class="badge"><span class="badge-dot"></span> v1.5.0 · MIT · Python 3.11+ · Production-grade</div>
     <div class="hero-ctas">
       <a href="#quickstart" class="btn btn-accent btn-lg">Get Started →</a>
       <a href="#docs" class="btn btn-ghost btn-lg">Read the Docs</a>
@@ -646,6 +646,9 @@ body {
     <div class="marquee-item"><span class="icon">◈</span> 8 LLM Providers + Local</div>
     <div class="marquee-item"><span class="icon">◈</span> MCP Native (SSE · stdio · HTTP)</div>
     <div class="marquee-item"><span class="icon">◈</span> Fan-out / Fan-in DAG</div>
+    <div class="marquee-item"><span class="icon">◈</span> Native App Control</div>
+    <div class="marquee-item"><span class="icon">◈</span> Built-in Browser Automation</div>
+    <div class="marquee-item"><span class="icon">◈</span> Polyglot Code Sandbox</div>
     <div class="marquee-item"><span class="icon">◈</span> Autonomic Learning</div>
     <div class="marquee-item"><span class="icon">◈</span> Built-in Chat UI</div>
     <div class="marquee-item"><span class="icon">◈</span> Quality Validation</div>
@@ -659,6 +662,9 @@ body {
     <div class="marquee-item"><span class="icon">◈</span> 8 LLM Providers + Local</div>
     <div class="marquee-item"><span class="icon">◈</span> MCP Native (SSE · stdio · HTTP)</div>
     <div class="marquee-item"><span class="icon">◈</span> Fan-out / Fan-in DAG</div>
+    <div class="marquee-item"><span class="icon">◈</span> Native App Control</div>
+    <div class="marquee-item"><span class="icon">◈</span> Built-in Browser Automation</div>
+    <div class="marquee-item"><span class="icon">◈</span> Polyglot Code Sandbox</div>
     <div class="marquee-item"><span class="icon">◈</span> Autonomic Learning</div>
     <div class="marquee-item"><span class="icon">◈</span> Built-in Chat UI</div>
     <div class="marquee-item"><span class="icon">◈</span> Quality Validation</div>
@@ -674,8 +680,9 @@ body {
 <!-- ════ STATS ════ -->
 <div class="stats-bar">
   <div class="stat"><div class="stat-number">8+</div><div class="stat-label">LLM Providers</div></div>
+  <div class="stat"><div class="stat-number">11</div><div class="stat-label">Sandbox Languages</div></div>
   <div class="stat"><div class="stat-number">4</div><div class="stat-label">Deploy Targets</div></div>
-  <div class="stat"><div class="stat-number">3</div><div class="stat-label">Storage Backends</div></div>
+  <div class="stat"><div class="stat-number">3</div><div class="stat-label">Browser Engines</div></div>
   <div class="stat"><div class="stat-number">18</div><div class="stat-label">Streaming Event Types</div></div>
   <div class="stat"><div class="stat-number">1</div><div class="stat-label">YAML File to Configure All</div></div>
 </div>
@@ -703,6 +710,11 @@ body {
         <div class="feature-icon icon-purple">⚡</div>
         <h3>Fan-out / Fan-in DAG</h3>
         <p>LLM-generated dependency graph with parallel execution. Independent tasks run simultaneously. Topological ordering ensures dependencies always resolve. Cycle detection at compile time.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon icon-cyan">🐍</div>
+        <h3>Code-First Agents</h3>
+        <p>Build the whole agent in Python with <code>CortexBuilder</code> — no YAML required. The <code>@node</code> decorator wires plain functions in as graph nodes, LangGraph-style; the declared DAG runs verbatim as a static graph.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon icon-green">✅</div>
@@ -756,13 +768,28 @@ body {
       </div>
       <div class="feature-card">
         <div class="feature-icon icon-purple">🧪</div>
-        <h3>Code Sandbox</h3>
-        <p>Sandboxed Python execution with configurable timeout and network isolation. Generated scripts that pass validation are auto-persisted to <code>AgentCodeStore</code> via the autonomic learning gate — accumulating reusable code over time.</p>
+        <h3>Polyglot Code Sandbox</h3>
+        <p>One <code>#&nbsp;LANGUAGE:</code> header picks the runtime — Python, Node, TypeScript, Deno, Shell, Ruby, Go, Rust, C, Java, or Kotlin. Per-ecosystem package install (<code>npm</code>, <code>gem</code>, <code>go get</code>) and background-process mode for long-running servers.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon icon-orange">🖥️</div>
+        <h3>Native App Control</h3>
+        <p>Launch and drive desktop apps via AppleScript (macOS), PowerShell + UI Automation (Windows), or a screenshot vision loop when no scripting interface exists. Auto-discovers each app's scripting dictionary. Every mutating action gated by HITL.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon icon-green">🌐</div>
+        <h3>Built-in Browser Automation</h3>
+        <p>Playwright MCP starts inside the framework — agents get a <code>browser</code> capability automatically with chromium, firefox, or webkit. Session state persists across runs so logins survive. Zero tool-server wiring required.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon icon-cyan">🎚️</div>
         <h3>Adaptive Model Routing</h3>
         <p>The decomposer grades each task <code>low</code> / <code>medium</code> / <code>high</code> complexity and AMR maps the tier to a provider. Send fast tasks to Haiku, heavy reasoning to Opus — automatically. Per-task overrides always win.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon icon-cyan">⚙️</div>
+        <h3>Auto-tuned LLM concurrency</h3>
+        <p>No more guessing <code>max_parallel_llm_calls</code> in the setup wizard. The framework picks an initial ceiling from your provider+model — <code>1</code> for local Ollama, <code>8</code> for Haiku, <code>4</code> for Opus — and then <code>AdaptiveLLMGate</code> self-tunes it at runtime via AIMD on observed latency and errors. <a href="CONFIGURATION.html#llm-concurrency-auto-tuning">Details</a>.</p>
       </div>
     </div>
   </div>
@@ -838,6 +865,65 @@ print(result.response)
   </div>
 </section>
 
+<!-- ════ CODE-FIRST ════ -->
+<section class="section" id="code-first" style="padding-top:0;">
+  <div class="section-inner">
+    <div class="centered">
+      <div class="section-tag">Or skip the YAML</div>
+      <h2 class="section-title">Code-first agents. LangGraph-style.</h2>
+      <p class="section-sub">Prefer code to config? Build the whole agent with <code>CortexBuilder</code> and wire in <strong>code nodes</strong> — plain Python functions as graph nodes. No YAML, no decomposition LLM call: the DAG you declare is the plan.</p>
+    </div>
+    <div class="code-split">
+      <div class="code-pane">
+        <div class="code-pane-header">
+          <span class="code-lang-badge">Python</span>
+          <span style="color:var(--text-muted);font-size:12px;margin-left:8px;">build the agent</span>
+        </div>
+        <pre><code class="language-python">from cortex import CortexBuilder, CortexFramework
+
+agent = CortexBuilder("ResearchAgent",
+                      "Searches the web, writes reports")
+agent.llm("anthropic", model="claude-sonnet-4-6",
+          api_key_env="ANTHROPIC_API_KEY")
+agent.tool_server("brave",
+                  url="http://localhost:9000/sse")
+
+@agent.node()
+async def web_research(ctx):
+    return await ctx.call_tool(
+        "brave", "search", query=ctx.request)
+
+@agent.node(depends_on=["web_research"])
+async def write_report(ctx):
+    return await ctx.llm(
+        f"Write a report:\n{ctx.deps['web_research']}")</code></pre>
+      </div>
+      <div class="code-pane">
+        <div class="code-pane-header">
+          <span class="code-lang-badge">Python</span>
+          <span style="color:var(--text-muted);font-size:12px;margin-left:8px;">run it</span>
+        </div>
+        <pre><code class="language-python">framework = CortexFramework(config=agent.build())
+await framework.initialize()
+
+result = await framework.run_session(
+    user_1, "Research vector DB benchmarks")
+
+print(result.response)                      # synthesised
+print(result.node_outputs["write_report"])  # raw node
+
+# Registering a code node switches the agent to
+# static execution — the declared graph runs
+# verbatim. You still keep the wave engine,
+# validation gate, retries, streaming, and
+# session persistence. Cortex just skips the
+# planner. Mix .task() (LLM-routed) and .node()
+# (Python) freely in one agent.</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ════ COMPARISON ════ -->
 <section class="section" id="compare" style="padding-top:0;">
   <div class="section-inner">
@@ -856,8 +942,8 @@ print(result.response)
           </tr>
         </thead>
         <tbody>
-          <tr><td>Configuration</td><td class="good">Single <code>cortex.yaml</code> drives everything</td><td>Scattered code, env vars, multiple files</td></tr>
-          <tr><td>Task orchestration</td><td class="good">LLM-generated DAG · parallel fan-out/fan-in</td><td>Sequential chain or hand-coded state machine</td></tr>
+          <tr><td>Configuration</td><td class="good">Single <code>cortex.yaml</code> — or a Python <code>CortexBuilder</code></td><td>Scattered code, env vars, multiple files</td></tr>
+          <tr><td>Task orchestration</td><td class="good">LLM-generated DAG — or a hand-authored static DAG of code nodes</td><td>Sequential chain or hand-coded state machine</td></tr>
           <tr><td>Tool protocol</td><td class="good">Native MCP (SSE, stdio, streamable-HTTP)</td><td>Custom tool wrappers per integration</td></tr>
           <tr><td>Multi-agent</td><td class="good">Any agent becomes an MCP tool in one command</td><td>Bespoke inter-agent protocols</td></tr>
           <tr><td>Self-expanding mesh</td><td class="good">Ant Colony + ToolForge generate agents at runtime</td><td>Static tool lists, no self-expansion</td></tr>
@@ -1047,11 +1133,19 @@ print(result.response)
             </div>
           </div>
           <h2>What is Cortex?</h2>
-          <p>Cortex is a <strong>production-grade, configuration-driven AI agent framework</strong> for Python. You define an agent — its identity, LLM, tools, task types, quality bar, and deployment target — in a single <code>cortex.yaml</code> file. Cortex handles everything else: decomposing user requests into parallel task graphs, calling MCP tool servers, streaming live progress, scoring response quality, persisting sessions, and deploying as Docker, a Python package, an MCP server, or a ready-made chat UI.</p>
+          <p>Cortex is a <strong>production-grade AI agent framework</strong> for Python. You define an agent — its identity, LLM, tools, task types, quality bar, and deployment target — in a single <code>cortex.yaml</code> file, <em>or</em> in pure Python with <code>CortexBuilder</code>. Cortex handles everything else: decomposing user requests into parallel task graphs, calling MCP tool servers, streaming live progress, scoring response quality, persisting sessions, and deploying as Docker, a Python package, an MCP server, or a ready-made chat UI.</p>
           <pre><code class="language-python">framework = CortexFramework("cortex.yaml")
 await framework.initialize()
 result = await framework.run_session(user_id="u1", request="Analyse Q3 revenue")
 # That's the integration. Everything else is handled.</code></pre>
+          <p>Or build it in code — and wire plain Python functions in as graph nodes:</p>
+          <pre><code class="language-python">agent = CortexBuilder("MyAgent", "...").llm("anthropic", api_key_env="ANTHROPIC_API_KEY")
+
+@agent.node()
+async def step(ctx):
+    return await ctx.llm(ctx.request)
+
+framework = CortexFramework(config=agent.build())   # no YAML file</code></pre>
 
           <h2>Why teams choose Cortex</h2>
           <h3>Skip months of framework engineering</h3>
@@ -1064,7 +1158,7 @@ cortex publish ui       # Cortex Synapse chat UI at localhost:8090</code></pre>
           <p>Three commands. You have a working agent with <strong>Cortex Synapse</strong> — a professional web frontend with task blueprint display, intent classification indicators, live workspace events, token usage tracking, full-text history search, and artifact downloads.</p>
 
           <h3>Change behavior without changing code</h3>
-          <p>LLM provider? YAML. Task types? YAML. Concurrency limits? YAML. Validation threshold? YAML. Tool servers? YAML. Your Python code stays a thin wrapper — the agent's behavior lives in <code>cortex.yaml</code>, versioned, diffable, reviewable.</p>
+          <p>LLM provider? YAML. Task types? YAML. Concurrency limits? YAML. Validation threshold? YAML. Tool servers? YAML. Your Python code stays a thin wrapper — the agent's behavior lives in <code>cortex.yaml</code>, versioned, diffable, reviewable. Prefer code? <code>CortexBuilder</code> assembles the same config in Python, and <code>@node</code> functions become graph nodes for fully deterministic, LangGraph-style control.</p>
 
           <h3>Multi-agent composition for free</h3>
           <p>Any Cortex agent can be published as an MCP server in one command. Another Cortex agent adds it to <code>tool_servers</code> and calls it like any tool. Standard MCP end-to-end, nothing custom.</p>
@@ -1077,16 +1171,17 @@ cortex publish ui       # Cortex Synapse chat UI at localhost:8090</code></pre>
 
           <h2>What Cortex is not</h2>
           <ul>
-            <li><strong>Not a low-code builder.</strong> It's a Python library. The config replaces boilerplate, not code.</li>
+            <li><strong>Not a low-code builder.</strong> It's a Python library — drive it with <code>cortex.yaml</code> or the <code>CortexBuilder</code> API. Config replaces boilerplate, not code.</li>
             <li><strong>Not an LLM gateway.</strong> Bring your own API key.</li>
             <li><strong>Not a vector database.</strong> It calls MCP tools that do RAG — it doesn't implement retrieval itself.</li>
             <li><strong>Not a web framework.</strong> Cortex runs inside FastAPI/Django/Flask/Click.</li>
           </ul>
 
           <h2>The 60-second pitch</h2>
-          <p>You write a YAML file describing your agent. Cortex gives you:</p>
+          <p>You describe your agent — in YAML or in Python. Cortex gives you:</p>
           <ul>
             <li><strong>Automatic task decomposition</strong> — LLM breaks requests into a typed dependency graph</li>
+            <li><strong>Code-first option</strong> — build the agent in Python; <code>@node</code> functions become a static DAG</li>
             <li><strong>Parallel execution</strong> — independent tasks run simultaneously, not sequentially</li>
             <li><strong>Intent Gate</strong> — chat turns skip the full pipeline; only task-shaped turns decompose</li>
             <li><strong>MCP tool servers</strong> — connect any tool with three lines of YAML</li>
@@ -1524,7 +1619,7 @@ task_types:
   - name: web_research
     description: Search the web for current information
     output_format: md          # text|md|json|file|html|csv|code
-    capability_hint: web_search  # auto|llm_synthesis|web_search|bash|code_exec|document_generation
+    capability_hint: web_search  # auto|llm_synthesis|web_search|bash|code_exec|app_control|browser|document_generation
     timeout_seconds: 60
   - name: analysis
     description: Analyse data and produce structured insights
@@ -1562,7 +1657,17 @@ learning:
 
 workspace_bash:
   enabled: true
-  hitl_enabled: true         # Cannot be disabled — enforced at runtime</code></pre>
+  hitl_enabled: true         # Cannot be disabled — enforced at runtime
+
+app_control:                 # Launch + drive native desktop applications
+  enabled: true
+  hitl_enabled: true         # Approve every launch / script / screenshot
+  max_vision_steps: 10       # Fallback screenshot loop cap
+
+playwright_mcp:              # Built-in browser automation
+  enabled: true
+  browser: chromium          # chromium | firefox | webkit
+  headless: false            # Persistent session — logins survive runs</code></pre>
 
           <h2>interaction_mode</h2>
           <table class="inline-table">

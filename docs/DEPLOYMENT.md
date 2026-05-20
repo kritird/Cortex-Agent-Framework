@@ -357,6 +357,7 @@ A `forge_mcp` task generates a FastMCP server script, writes it to `cortex_stora
 - ☐ `CORTEX_LOG_LEVEL=INFO` in production, `DEBUG` only for investigation
 - ☐ OpenTelemetry OTLP endpoint configured if you want traces/metrics
 - ☐ Per-user concurrency caps set to prevent one user from starving others
+- ☐ `max_parallel_llm_calls` left unset (auto-derives from provider+model and self-tunes via `AdaptiveLLMGate`) unless you need to pin it for a hard-rate-limited API
 - ☐ Session timeouts set generous enough for worst-case task graphs
 - ☐ `cortex dry-run` wired into CI so bad configs fail at build time
 - ☐ Chat UI auth mode set to `token` or `basic` if exposed beyond localhost

@@ -1120,6 +1120,9 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
                   </select>
                 </div>
               </div>
+              <div class="row">
+                <div class="field"><label>Max remediation attempts</label><input type="number" min="1" class="form-input" x-model.number="form.validation_max_remediation_attempts"><div class="hint">Passes to fix a sub-threshold response — each sees the prior attempt and the findings it still failed. 1 = single-shot (legacy).</div></div>
+              </div>
               <div class="row-3">
                 <div class="field"><label>Weight: intent</label><input type="number" step="0.05" class="form-input" x-model.number="form.validation_weights_intent_match"></div>
                 <div class="field"><label>Weight: completeness</label><input type="number" step="0.05" class="form-input" x-model.number="form.validation_weights_completeness"></div>
@@ -1348,6 +1351,82 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; li
               <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
                 Use <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">workspace_bash</code> as <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">capability_hint</code> on task types that need to read, write, or execute files in the user's project folder.
                 The workspace path is extracted from the task instruction — your UI should inject it into every message (e.g. <em>"Workspace: /Users/me/project\n\n&lt;user request&gt;"</em>).
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="field-group glass">
+          <div class="group-title">App Control</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable native app control</label>
+              <div class="hint">Launch and drive desktop applications via AppleScript (macOS), PowerShell + UI Automation (Windows), or a screenshot vision loop. <strong>Every mutating action requires user approval (HITL)</strong> unless you disable it below.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" x-model="form.app_control_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+          </div>
+          <template x-if="form.app_control_enabled">
+            <div style="margin-top:10px;padding:10px 0 0;border-top:1px solid var(--border)">
+              <div class="toggle-row">
+                <div>
+                  <label>Require HITL approval</label>
+                  <div class="hint">Prompt the user before each launch / script / screenshot. Disable only in trusted automation contexts.</div>
+                </div>
+                <label class="toggle"><input type="checkbox" x-model="form.app_control_hitl_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+              </div>
+              <div class="row">
+                <div class="field"><label>Per-action timeout (s)</label><input type="number" class="form-input" x-model.number="form.app_control_timeout_seconds"><div class="hint">Subprocess timeout for AppleScript / PowerShell / shell calls.</div></div>
+                <div class="field"><label>Max vision-loop steps</label><input type="number" class="form-input" x-model.number="form.app_control_max_vision_steps"><div class="hint">Cap on screenshot → action iterations when no scripting dictionary is found.</div></div>
+              </div>
+              <div class="row">
+                <div class="field"><label>Scripting-dictionary max chars</label><input type="number" class="form-input" x-model.number="form.app_control_sdef_max_chars"><div class="hint">Trim long sdef / UIA summaries before injecting into LLM context.</div></div>
+                <div class="field"><label>Vision provider</label><input class="form-input" x-model="form.app_control_vision_provider"><div class="hint">LLM provider to use for vision steps. "default" = primary provider.</div></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="field-group glass">
+          <div class="group-title">Playwright Browser (built-in)</div>
+          <div class="toggle-row">
+            <div>
+              <label>Enable browser automation</label>
+              <div class="hint">Start <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">@playwright/mcp</code> as an internal stdio MCP. The agent gets a <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">browser</code> capability automatically — no tool_server entry needed. <strong>Requires Node.js + npx</strong> on PATH.</div>
+            </div>
+            <label class="toggle"><input type="checkbox" x-model="form.playwright_mcp_enabled"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+          </div>
+          <template x-if="form.playwright_mcp_enabled">
+            <div style="margin-top:10px;padding:10px 0 0;border-top:1px solid var(--border)">
+              <div class="row">
+                <div class="field"><label>Browser</label>
+                  <select class="form-select" x-model="form.playwright_mcp_browser">
+                    <option value="chromium">chromium</option>
+                    <option value="firefox">firefox</option>
+                    <option value="webkit">webkit</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Run headless</label>
+                  <label class="toggle" style="margin-top:6px"><input type="checkbox" x-model="form.playwright_mcp_headless"><span class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                  <div class="hint">Hide the browser window (CI / server mode). Off = visible.</div>
+                </div>
+              </div>
+              <div class="row">
+                <div class="field"><label>Viewport width</label><input type="number" class="form-input" x-model.number="form.playwright_mcp_viewport_width"></div>
+                <div class="field"><label>Viewport height</label><input type="number" class="form-input" x-model.number="form.playwright_mcp_viewport_height"></div>
+              </div>
+              <div class="row">
+                <div class="field"><label>Startup timeout (s)</label><input type="number" class="form-input" x-model.number="form.playwright_mcp_startup_timeout_seconds"></div>
+              </div>
+              <div class="field">
+                <label>Storage state path (optional)</label>
+                <input class="form-input" x-model="form.playwright_mcp_storage_state_path" placeholder="(default: {storage}/playwright_session.json)">
+                <div class="hint">JSON file that persists cookies + localStorage across runs so logins survive. Leave blank for the auto default.</div>
+              </div>
+              <div class="field">
+                <label>User data dir (optional, advanced)</label>
+                <input class="form-input" x-model="form.playwright_mcp_user_data_dir" placeholder="(full profile dir; takes precedence over storage state)">
+                <div class="hint">Full persistent browser profile (extensions, service workers, IndexedDB). Wins over storage_state_path when set.</div>
               </div>
             </div>
           </template>
@@ -2079,6 +2158,7 @@ function defaultForm() {
     builtin_web_search_enabled: true,
     validation_enabled: false, wave_gate_llm_provider: 'default',
     validation_threshold: 0.75, validation_critical_threshold: 0.40, validation_timeout_seconds: 150,
+    validation_max_remediation_attempts: 2,
     validation_weights_intent_match: 0.50, validation_weights_completeness: 0.30, validation_weights_coherence: 0.20,
     validation_expose_report_to_user: true, validation_expose_score_to_user: false,
     history_enabled: false, history_retention_days: 90, history_max_sessions_in_context: 5,
@@ -2098,6 +2178,24 @@ function defaultForm() {
     code_sandbox_enabled: false, code_sandbox_timeout_seconds: 600,
     code_sandbox_allow_network: false, code_sandbox_auto_add_to_yaml: false,
     workspace_bash_enabled: false,
+    // App Control — toggle off by default; sub-fields are pre-filled with sane
+    // production defaults so enabling is a single click.
+    app_control_enabled: false,
+    app_control_hitl_enabled: true,
+    app_control_timeout_seconds: 30,
+    app_control_sdef_max_chars: 8000,
+    app_control_max_vision_steps: 10,
+    app_control_vision_provider: 'default',
+    // Playwright MCP — same pattern. Storage state defaults to the runtime auto
+    // path when left blank, so login persistence works out of the box.
+    playwright_mcp_enabled: false,
+    playwright_mcp_browser: 'chromium',
+    playwright_mcp_headless: false,
+    playwright_mcp_startup_timeout_seconds: 60,
+    playwright_mcp_storage_state_path: '',
+    playwright_mcp_user_data_dir: '',
+    playwright_mcp_viewport_width: 1280,
+    playwright_mcp_viewport_height: 720,
     ant_colony_enabled: false, ant_colony_base_port: 8100, ant_colony_max_ants: 20,
     ant_colony_auto_restart: true, ant_colony_auto_hatch_on_gap: false,
     ant_colony_llm_provider: 'default',
@@ -2787,6 +2885,7 @@ function wizard() {
         validation_threshold: f.validation_threshold,
         validation_critical_threshold: f.validation_critical_threshold,
         validation_timeout_seconds: f.validation_timeout_seconds,
+        validation_max_remediation_attempts: f.validation_max_remediation_attempts,
         validation_weights_intent_match: f.validation_weights_intent_match,
         validation_weights_completeness: f.validation_weights_completeness,
         validation_weights_coherence: f.validation_weights_coherence,
@@ -2828,6 +2927,20 @@ function wizard() {
         code_sandbox_allow_network: f.code_sandbox_allow_network,
         code_sandbox_auto_add_to_yaml: f.code_sandbox_auto_add_to_yaml,
         workspace_bash_enabled: f.workspace_bash_enabled,
+        app_control_enabled: f.app_control_enabled,
+        app_control_hitl_enabled: f.app_control_hitl_enabled,
+        app_control_timeout_seconds: f.app_control_timeout_seconds,
+        app_control_sdef_max_chars: f.app_control_sdef_max_chars,
+        app_control_max_vision_steps: f.app_control_max_vision_steps,
+        app_control_vision_provider: f.app_control_vision_provider,
+        playwright_mcp_enabled: f.playwright_mcp_enabled,
+        playwright_mcp_browser: f.playwright_mcp_browser,
+        playwright_mcp_headless: f.playwright_mcp_headless,
+        playwright_mcp_startup_timeout_seconds: f.playwright_mcp_startup_timeout_seconds,
+        playwright_mcp_storage_state_path: f.playwright_mcp_storage_state_path,
+        playwright_mcp_user_data_dir: f.playwright_mcp_user_data_dir,
+        playwright_mcp_viewport_width: f.playwright_mcp_viewport_width,
+        playwright_mcp_viewport_height: f.playwright_mcp_viewport_height,
         interaction_mode: f.interaction_mode || 'interactive',
         ant_colony_enabled: f.ant_colony_enabled,
         ant_colony_base_port: f.ant_colony_base_port,

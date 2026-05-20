@@ -64,12 +64,23 @@ class RuntimeTask:
     # inner exception-retry loop in GenericMCPAgent). Capped at 3.
     attempt_count: int = 0
     validation_feedback: Optional[str] = None  # set by gate, consumed by sub-agent on retry
+    # Per-attempt history accumulated by the wave validation gate so the
+    # sub-agent can see what it produced last time and which rule fired.
+    # Each entry: {"output": <prev_output_str>, "feedback": <judge_feedback>}.
+    # The Nth entry corresponds to attempt N (1-indexed).
+    attempt_history: List[Dict[str, str]] = field(default_factory=list)
     # HITL budget per sub-agent attempt. Reset by the wave gate on each retry.
     # Hard-capped at 3 asks per attempt to prevent runaway clarification loops.
     hitl_ask_count: int = 0
     # Identity of the principal who owns this task (propagated from session).
     # Used for audit logging and agent-to-agent delegation tracking.
     principal: Optional[Principal] = None
+    # Transient session context, refreshed by the framework at each wave
+    # dispatch (not serialized — re-populated on resume). Lets a worker
+    # sub-agent see the overall goal and accumulated reasoning so it can
+    # reason about why its task exists rather than running in isolation.
+    session_goal: str = ""
+    session_scratchpad: str = ""
 
 
 @dataclass
@@ -489,6 +500,7 @@ class TaskGraphCompiler:
                 "is_adhoc": task.is_adhoc,
                 "attempt_count": task.attempt_count,
                 "validation_feedback": task.validation_feedback,
+                "attempt_history": task.attempt_history,
                 "hitl_ask_count": task.hitl_ask_count,
                 "principal": task.principal.to_dict() if task.principal else None,
             }
@@ -526,6 +538,7 @@ class TaskGraphCompiler:
                 is_adhoc=data.get("is_adhoc", False),
                 attempt_count=data.get("attempt_count", 0),
                 validation_feedback=data.get("validation_feedback"),
+                attempt_history=list(data.get("attempt_history") or []),
                 hitl_ask_count=data.get("hitl_ask_count", 0),
                 principal=Principal.from_dict(data["principal"]) if data.get("principal") else None,
             )

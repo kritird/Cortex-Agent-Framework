@@ -1,23 +1,42 @@
-"""ResultValidator — ensures sandbox output is text/doc only, never executable."""
+"""ResultValidator — validates sandbox output files.
+
+Source code files (.py, .js, .sh, etc.) are now explicitly allowed so the
+agent can write programs to the output directory and run them. Native compiled
+libraries (.so, .dylib, .dll) remain blocked — the agent has no business
+generating shared libraries. Archives and databases are also still blocked.
+"""
 import mimetypes
 import os
 from pathlib import Path
 
 from cortex.exceptions import CortexSecurityError
 
-# Allowed output file extensions (text and document formats only)
+# Allowed output file extensions — text, docs, source code, and images
 ALLOWED_EXTENSIONS = {
+    # Text / docs
     ".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml",
     ".html", ".xml", ".toml", ".log", ".tsv", ".ndjson",
+    # Source code (agent can write programs and run them)
+    ".py", ".js", ".ts", ".jsx", ".tsx",
+    ".sh", ".bash", ".zsh", ".fish",
+    ".rb", ".go", ".rs", ".java", ".kt",
+    ".c", ".cpp", ".h", ".cs", ".swift",
+    ".ps1",             # PowerShell scripts
+    # Config / build
+    ".env", ".ini", ".cfg", ".properties",
+    ".dockerfile", ".makefile",
+    # Images (screenshots)
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    # Executables the agent builds (Windows and Unix)
+    ".exe", ".out", ".bin",
 }
 
-# Explicitly blocked regardless of MIME
+# Explicitly blocked regardless of MIME — native compiled libs and archives
 BLOCKED_EXTENSIONS = {
-    ".py", ".sh", ".bash", ".zsh", ".rb", ".js", ".ts",
-    ".exe", ".bin", ".so", ".dylib", ".dll", ".out",
-    ".bat", ".cmd", ".ps1", ".vbs",
-    ".zip", ".tar", ".gz", ".bz2",
-    ".pkl", ".pickle", ".db", ".sqlite",
+    ".so", ".dylib", ".dll",        # native shared libraries
+    ".zip", ".tar", ".gz", ".bz2",  # archives
+    ".pkl", ".pickle",              # Python serialised objects (RCE risk)
+    ".db", ".sqlite",               # databases
 }
 
 # Max result text size (5 MB)
@@ -90,12 +109,6 @@ class ResultValidator:
                 raise CortexSecurityError(
                     f"Sandbox output file has non-text MIME type: {mime}"
                 )
-
-        # Check file is not executable
-        if os.access(str(path), os.X_OK):
-            raise CortexSecurityError(
-                f"Sandbox output file has executable bit set: {file_path}"
-            )
 
     def collect_output_files(self, output_dir: str) -> list[tuple[str, str]]:
         """

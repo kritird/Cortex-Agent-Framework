@@ -28,6 +28,24 @@ Your Application
 
 ### 1. Install
 
+Cortex is a Python package and requires **Python 3.11 or newer**. Install it
+into a **virtual environment** so its dependencies stay isolated from your
+system Python.
+
+**Create and activate a virtual environment:**
+
+```bash
+python3 -m venv .venv
+
+# Activate it — run this in every new shell you work in:
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows (PowerShell / cmd)
+```
+
+Your prompt now shows `(.venv)`. To leave the environment later, run `deactivate`.
+
+**Install Cortex into the activated environment:**
+
 ```bash
 # From PyPI
 pip install cortex-agent-framework
@@ -35,14 +53,15 @@ pip install cortex-agent-framework
 # Or from source
 git clone <repo-url>
 cd cortex-agent-framework
-python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
 Verify the install:
 
 ```bash
-cortex --help     # should list: setup, dev, dry-run, publish, spec, replay, delta, migrate, ants
+cortex --help     # lists: setup, dev, dry-run, publish, spec, replay, delta,
+                  # migrate, ants, config-ui, run, chat, sessions, blueprints,
+                  # mcps, stats, config, providers, storage
 ```
 
 ### 2. Hello World (no external tools)
@@ -165,6 +184,130 @@ print(result.response)
 ```
 
 What changes is **what wraps those lines**. Below are all the ways developers use Cortex, with complete working examples.
+
+---
+
+## Code-First Agents — `CortexBuilder`
+
+A `cortex.yaml` file is optional. You can build the entire agent in Python with
+**`CortexBuilder`** and pass the result straight to the framework. This is the
+path for developers who prefer code to config, want their agent definition in
+the same repo as the rest of their app, or want **code nodes** — plain Python
+functions wired in as graph nodes, LangGraph-style.
+
+### The builder
+
+```python
+from cortex import CortexBuilder, CortexFramework
+
+agent = CortexBuilder("ResearchAgent", "Searches the web and writes reports")
+agent.llm("anthropic", model="claude-sonnet-4-5", api_key_env="ANTHROPIC_API_KEY")
+agent.storage(base_path="./cortex_storage")
+agent.tool_server("brave", url="http://localhost:9000/sse",
+                  capability_hints=["web_search"])
+
+# An LLM-routed task type — same as a `task_types:` entry in cortex.yaml.
+agent.task("web_research", capability="web_search", output="md")
+agent.task("write_report", capability="document_generation",
+           depends_on=["web_research"])
+
+framework = CortexFramework(config=agent.build())   # no YAML file
+await framework.initialize()
+result = await framework.run_session("user_1", "Research vector DB benchmarks")
+```
+
+Every builder method returns `self`, so calls chain. `.build()` returns a
+validated `CortexConfig`; `CortexFramework(config=...)` consumes it directly.
+
+| Method | Purpose |
+|---|---|
+| `.llm(provider, model=, api_key_env=)` | Set the `default` LLM provider (required) |
+| `.provider(key, provider, ...)` | Register a named provider for per-task routing |
+| `.storage(base_path=, ...)` | Storage location and options |
+| `.tool_server(name, url= / command=, ...)` | Register an MCP tool server (SSE or stdio) |
+| `.task(name, capability=, depends_on=, ...)` | Add an LLM-routed task type |
+| `.node(...)` | Register a Python code node (decorator — see below) |
+| `.validation(threshold=, enabled=)` | Tune the Validation Agent |
+| `.execution_mode("planned" / "static")` | Force the execution mode |
+| `.configure(**sections)` | Escape hatch — merge any raw config section |
+| `.build()` | Validate and return the `CortexConfig` |
+
+### Code nodes — `@agent.node`
+
+A **code node** is a Python function used as a graph node. Decorate it with
+`@agent.node` and it joins the DAG:
+
+```python
+agent = CortexBuilder("Pipeline", "fetch → summarise → publish")
+agent.llm("anthropic", model="claude-sonnet-4-5", api_key_env="ANTHROPIC_API_KEY")
+
+@agent.node()
+async def fetch(ctx):
+    return await ctx.call_tool("brave", "search", query=ctx.request)
+
+@agent.node(depends_on=["fetch"])
+async def summarise(ctx):
+    return await ctx.llm(f"Summarise concisely:\n{ctx.deps['fetch']}")
+
+@agent.node(depends_on=["summarise"])
+def publish(ctx):                      # sync functions work too
+    return f"PUBLISHED: {ctx.deps['summarise']}"
+
+framework = CortexFramework(config=agent.build())
+await framework.initialize()
+result = await framework.run_session("user_1", "latest on RAG benchmarks")
+
+print(result.response)                  # synthesised answer
+print(result.node_outputs["summarise"]) # raw output of one node
+```
+
+The decorator works bare (`@agent.node`) or parameterised
+(`@agent.node(depends_on=[...], name=..., output=..., timeout=...)`). The
+function name becomes the node name unless you pass `name=`.
+
+### The `TaskContext`
+
+Each node receives one argument — a `TaskContext` (`ctx`) — wiring it into the
+running session:
+
+| Attribute / method | What it gives you |
+|---|---|
+| `ctx.request` | The original user request for the session |
+| `ctx.deps` | `dict` of upstream node outputs, keyed by node name |
+| `await ctx.llm(prompt, system=, max_tokens=, provider=)` | One-shot LLM completion via the agent's providers |
+| `await ctx.call_tool(server, tool, **params)` | Invoke an MCP tool on a configured tool server |
+| `ctx.task_name`, `ctx.session_id`, `ctx.user_id` | Identity / bookkeeping |
+| `ctx.instruction`, `ctx.input_refs`, `ctx.context_hints` | Lower-level task metadata |
+
+A node returns its output as a `str`, a `(str, format)` tuple, a `dict`/`list`
+(serialised to JSON), or `None`.
+
+### Static vs. planned execution
+
+Registering **any** code node flips the agent to **static execution**
+(`execution_mode="static"`):
+
+- **`planned`** (default) — the decomposition LLM generates the task graph at
+  runtime from your `task_types`. Flexible; one LLM call to plan.
+- **`static`** — the graph you declared *is* the plan. It runs verbatim in
+  dependency order with **no decomposition, intent-gate, or capability-scout
+  LLM calls**. Deterministic and cheaper per run.
+
+Either way you keep the rest of Cortex: parallel fan-out/fan-in waves, the
+wave validation gate, retries, streaming events, session persistence, and the
+final synthesis + validation. Static mode just skips the planner.
+
+You can also run a static DAG built only from `.task()` (LLM-routed) nodes —
+call `.execution_mode("static")` explicitly. And `.task()` and `.node()` mix
+freely in one agent.
+
+### When to use which
+
+| Use… | When |
+|---|---|
+| `cortex.yaml` | Config should be diffable / reviewed separately; non-developers tune the agent; you want the wizard and CLI |
+| `CortexBuilder` + `.task()` | You prefer code, but still want the LLM to plan the graph per request |
+| `CortexBuilder` + `.node()` | You want deterministic control of the graph and to run real Python at each step (LangGraph-style) |
 
 ---
 
@@ -432,12 +575,12 @@ task_types:
   - name: research
     description: Delegate web research to the ResearchAgent sub-agent
     output_format: md
-    capability_hint: web_search         # routes to the `research` tool_server
+    capability_hint: web_search         # planning hint (web_search → research server)
 
   - name: review_code
     description: Delegate code review to the CodeReviewAgent sub-agent
     output_format: md
-    capability_hint: auto               # decomposer picks code_review server
+    capability_hint: auto               # no hint — let the planner decide
 
   - name: write_report
     description: Generate a final written report from research + review inputs
@@ -458,7 +601,7 @@ result = await framework.run_session(
 
 The parent decomposes the request into three tasks, fans out `research` and `review_code` in parallel to the two MCP sub-agents, waits for both, then runs `write_report` to synthesise. Each sub-agent is independently deployable and has its own `cortex.yaml`.
 
-> **Common pitfall**: adding a `tool_server` without a matching `task_type` is a silent no-op — the decomposer only generates tasks it has types for. If a sub-agent never gets called, check that a `task_type` references it via `capability_hint`.
+> **Common pitfall**: adding a `tool_server` without a matching `task_type` is a silent no-op — the decomposer only generates tasks for the types you've declared, and a tool server is only reached while *executing* a task. If a sub-agent never gets called, make sure a `task_type` exists whose work would actually need that server's capability.
 
 **Composing agent hierarchies**:
 
@@ -874,7 +1017,15 @@ result.validation_report   # Quality scores (intent_match, completeness, coheren
 result.task_completion     # Which tasks succeeded/failed/timed out
 result.token_usage         # Token counts by role (decomposition, execution, synthesis, validation)
 result.duration_seconds    # Wall-clock time
+result.node_outputs        # dict {node_name: raw_output} — read individual task/node results
 result.error               # Error message if session failed (None on success)
+```
+
+`event_queue` is **optional** — omit it when you only need the returned
+`SessionResult` and don't consume streaming events:
+
+```python
+result = await framework.run_session("user_1", "Summarise this")  # no queue
 ```
 
 ---

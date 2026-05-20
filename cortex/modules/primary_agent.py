@@ -13,8 +13,46 @@ from cortex.modules.history_store import HistoryRecord
 from cortex.modules.result_envelope_store import ResultEnvelope
 from cortex.modules.task_graph_compiler import DecomposedTask
 from cortex.modules.validation_agent import ValidationFinding
+from cortex.prompts import (
+    BLUEPRINT_SYSTEM,
+    CONVERSE_INTRO,
+    DECOMP_BLUEPRINT_HEADER,
+    DECOMP_BLUEPRINT_INTRO,
+    DECOMP_CAPABILITIES_GUIDANCE,
+    DECOMP_CAPABILITIES_HEADER,
+    DECOMP_CAPABILITIES_SELECT,
+    DECOMP_CAPABILITY_DESCRIPTIONS,
+    DECOMP_CLARIFICATION_HEADER,
+    DECOMP_CLARIFICATION_INTRO,
+    DECOMP_FORMAT_BLOCK_WITH_AMR,
+    DECOMP_FORMAT_BLOCK_WITHOUT_AMR,
+    DECOMP_FORMAT_HEADER,
+    DECOMP_FORMAT_INTRO,
+    DECOMP_FORMAT_SUFFIX,
+    DECOMP_MCP_NO_TYPES_INTRO,
+    DECOMP_MCP_TOOLS_HEADER,
+    DECOMP_MCP_WITH_TYPES_INTRO,
+    DECOMP_PREBUILT_SCRIPTS_HEADER,
+    DECOMP_PREBUILT_SCRIPTS_INTRO,
+    DECOMP_SYNTHESIS_GUIDANCE_HEADER,
+    DECOMP_TASK_TYPES_HEADER,
+    FILE_SUMMARY_SYSTEM,
+    FILE_SUMMARY_USER,
+    REMEDIATE_PRIOR_ATTEMPT,
+    REMEDIATE_SYSTEM,
+    REMEDIATE_USER,
+    INTERRUPT_REPLAN_SYSTEM,
+    INTERRUPT_REPLAN_USER,
+    REPLAN_SCRATCHPAD_BLOCK,
+    REPLAN_SYSTEM,
+    REPLAN_USER,
+    SYNTHESIS_SYSTEM_DIRECT,
+    SYNTHESIS_SYSTEM_WITH_RESULTS,
+    TASK_VALIDATE_SYSTEM,
+    TASK_VALIDATE_USER,
+)
 from cortex.streaming.status_events import (
-    ClarificationEvent, EventType, ResultEvent, StatusEvent
+    ClarificationEvent, EventType, ResultEvent, StatusEvent, UserInterruptEvent
 )
 
 logger = logging.getLogger(__name__)
@@ -53,11 +91,8 @@ def build_system_prompt(
 
     # ── Pre-built scripts (highest priority — free to execute) ─────────────
     if has_scripts:
-        lines.append("## Pre-built Agent Scripts")
-        lines.append(
-            "These task names have tested, persisted code that runs without LLM generation. "
-            "Prefer them over other options when they match the request:"
-        )
+        lines.append(DECOMP_PREBUILT_SCRIPTS_HEADER)
+        lines.append(DECOMP_PREBUILT_SCRIPTS_INTRO)
         for script in scout_result.code_utils:
             use_str = f" (used {script.use_count}×)" if script.use_count else ""
             desc = f": {script.description}" if script.description else ""
@@ -66,7 +101,7 @@ def build_system_prompt(
 
     # ── Task type vocabulary ────────────────────────────────────────────────
     if has_predefined_tasks:
-        lines.append("## Available Task Types")
+        lines.append(DECOMP_TASK_TYPES_HEADER)
         for task_type in config.task_types:
             mandatory_str = "(mandatory)" if task_type.mandatory else "(optional)"
             deps_str = (
@@ -83,16 +118,11 @@ def build_system_prompt(
         # Surface actual tool names and descriptions discovered from MCP servers.
         # These become the task name vocabulary when no predefined types exist,
         # or supplement predefined types when they do.
-        lines.append("## Discovered MCP Tools")
+        lines.append(DECOMP_MCP_TOOLS_HEADER)
         if not has_predefined_tasks:
-            lines.append(
-                "No predefined task types are configured. "
-                "Use the tool names below as task names when decomposing."
-            )
+            lines.append(DECOMP_MCP_NO_TYPES_INTRO)
         else:
-            lines.append(
-                "The following tools are available in addition to the predefined task types above."
-            )
+            lines.append(DECOMP_MCP_WITH_TYPES_INTRO)
         lines.append("")
         for cap, tools in scout_result.tools_by_capability().items():
             lines.append(f"Capability: {cap}")
@@ -102,38 +132,22 @@ def build_system_prompt(
         lines.append("")
     # Always surface available capabilities so the decomposition LLM can set
     # the <capability> field even when task_types or scout tools are defined.
-    _CAPABILITY_DESCRIPTIONS = {
-        "web_search":           "Search the internet, look up live data (weather, news, prices, etc.)",
-        "llm_synthesis":        "Reason, write, summarise, generate text/code/documents — no live data",
-        "workspace_bash":       "Read, write, or execute files in the user's workspace directory",
-        "bash":                 "Run shell commands in a sandboxed environment",
-        "code_exec":            "Generate and run Python code in a sandbox",
-        "document_generation":  "Create structured documents (PDF, DOCX, reports)",
-        "image_generation":     "Generate or manipulate images",
-    }
     if capabilities:
-        lines += ["## Available Capabilities"]
-        lines.append("Choose the capability that best matches each task's needs:")
+        lines += [DECOMP_CAPABILITIES_HEADER]
+        lines.append(DECOMP_CAPABILITIES_SELECT)
         for cap in sorted(capabilities):
-            desc = _CAPABILITY_DESCRIPTIONS.get(cap, "")
+            desc = DECOMP_CAPABILITY_DESCRIPTIONS.get(cap, "")
             lines.append(f"  - {cap}" + (f": {desc}" if desc else ""))
         lines += [
             "",
-            "IMPORTANT: Use 'web_search' for ANY task needing live/current information "
-            "(weather, news, prices, recent events). Use 'workspace_bash' for creating "
-            "or editing files. Use 'llm_synthesis' only for pure reasoning/writing with "
-            "no live data or file I/O needed.",
+            DECOMP_CAPABILITIES_GUIDANCE,
             "",
         ]
 
     # ── Task blueprints (accumulated guidance from prior runs) ──────────────
     if blueprint_blocks:
-        lines.append("## Task Blueprints")
-        lines.append(
-            "The following blueprints capture dos/don'ts, clarifications, and "
-            "lessons from prior runs of these tasks. Treat them as authoritative "
-            "guidance unless the user's request explicitly overrides them."
-        )
+        lines.append(DECOMP_BLUEPRINT_HEADER)
+        lines.append(DECOMP_BLUEPRINT_INTRO)
         lines.append("")
         for block in blueprint_blocks:
             lines.append(block)
@@ -142,44 +156,9 @@ def build_system_prompt(
     # ── Decomposition format ────────────────────────────────────────────────
     amr = config.adaptive_model_routing
     if amr.enabled:
-        lines += [
-            "## Decomposition Output Format",
-            "Decompose the user request into tasks. For each task, output a block:",
-            "```",
-            "<task>",
-            "  <name>task_type_name</name>",
-            "  <capability>capability_name</capability>",
-            "  <model_tier>low|medium|high</model_tier>",
-            "  <instruction>specific instruction for this task</instruction>",
-            "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
-            "</task>",
-            "```",
-            "Set <capability> to the best matching capability from the Available Capabilities list.",
-            "",
-            "## Model Tier Assessment",
-            "For <model_tier>, assess each task's inherent complexity independently and objectively:",
-            "  low    — direct retrieval, format conversion, short text generation, single-fact lookup,",
-            "           simple translation, data extraction from a clearly structured source.",
-            "  medium — multi-step reasoning, moderate code generation (< ~100 lines), single-document",
-            "           analysis, structured writing with a defined template, data aggregation.",
-            "  high   — complex architecture design, multi-file code generation, deep research synthesis,",
-            "           long-form content (> 1000 words), advanced algorithms, cross-domain reasoning.",
-            "Assess based solely on the task's own requirements — not on the capabilities of any model.",
-        ]
+        lines += [DECOMP_FORMAT_HEADER, DECOMP_FORMAT_INTRO] + DECOMP_FORMAT_BLOCK_WITH_AMR
     else:
-        lines += [
-            "## Decomposition Output Format",
-            "Decompose the user request into tasks. For each task, output a block:",
-            "```",
-            "<task>",
-            "  <name>task_type_name</name>",
-            "  <capability>capability_name</capability>",
-            "  <instruction>specific instruction for this task</instruction>",
-            "  <depends_on>comma_separated_task_names_or_empty</depends_on>",
-            "</task>",
-            "```",
-            "Set <capability> to the best matching capability from the Available Capabilities list.",
-        ]
+        lines += [DECOMP_FORMAT_HEADER, DECOMP_FORMAT_INTRO] + DECOMP_FORMAT_BLOCK_WITHOUT_AMR
     guidance_parts = []
     if has_scripts:
         guidance_parts.append("prefer pre-built script names when they match")
@@ -189,21 +168,19 @@ def build_system_prompt(
         guidance_parts.append("use discovered tool names as task names")
     if guidance_parts:
         lines.append("Priority: " + ", then ".join(guidance_parts) + ".")
-    lines.append("Output ALL task blocks before any other text.")
+    lines.append(DECOMP_FORMAT_SUFFIX)
 
     if config.agent.clarification.enabled:
         lines += [
             "",
-            "## Clarification",
-            "If the request is ambiguous and you need clarification before proceeding, output:",
-            "<clarification>Your question here</clarification>",
-            "Wait for the user's response before proceeding with decomposition.",
+            DECOMP_CLARIFICATION_HEADER,
+            DECOMP_CLARIFICATION_INTRO,
         ]
 
     if config.agent.synthesis_guidance:
         lines += [
             "",
-            "## Synthesis Guidance",
+            DECOMP_SYNTHESIS_GUIDANCE_HEADER,
             config.agent.synthesis_guidance,
         ]
 
@@ -288,6 +265,52 @@ def _amr_validation_provider(config: "CortexConfig") -> str:
     return "default"
 
 
+def _head_tail(text: str, head: int = 200, tail: int = 120) -> str:
+    """Truncate while preserving both ends. Long task summaries often have
+    decision-relevant tokens (URLs, IDs, error codes) at the tail that a plain
+    `text[:N]` cut silently drops. Newlines collapsed to spaces so each entry
+    fits on one line in the replan prompt."""
+    s = (text or "").replace("\n", " ").strip()
+    if len(s) <= head + tail + 5:
+        return s
+    return f"{s[:head]} … {s[-tail:]}"
+
+
+def _format_history_record(rec: "HistoryRecord") -> str:
+    """Render one prior session for the decomposition history snippet.
+
+    Beyond request/summary, this surfaces the *outcome* — task completion
+    counts and the validation verdict — so the decomposer has signal about
+    whether a similar plan worked last time, not just what was asked."""
+    lines = [
+        f"[Prior session {rec.session_id[:8]}]",
+        f"  Request: {_head_tail(rec.original_request or '', head=200, tail=80)}",
+        f"  Summary: {_head_tail(rec.response_summary or '', head=240, tail=100)}",
+    ]
+
+    tc = rec.task_completion
+    if tc and getattr(tc, "total_tasks", 0):
+        outcome = f"{tc.completed_tasks}/{tc.total_tasks} tasks completed"
+        problems = []
+        if getattr(tc, "failed_tasks", 0):
+            problems.append(f"{tc.failed_tasks} failed")
+        if getattr(tc, "timed_out_tasks", 0):
+            problems.append(f"{tc.timed_out_tasks} timed out")
+        if problems:
+            outcome += " (" + ", ".join(problems) + ")"
+        lines.append(f"  Outcome: {outcome}")
+
+    if rec.validation_score is not None:
+        verdict = (
+            "passed" if rec.validation_passed
+            else "failed" if rec.validation_passed is False
+            else "n/a"
+        )
+        lines.append(f"  Validation: {rec.validation_score:.2f} ({verdict})")
+
+    return "\n".join(lines)
+
+
 class PrimaryAgent:
     """
     Thin orchestrator. Up to 3 LLM calls per session on the hot path
@@ -310,10 +333,15 @@ class PrimaryAgent:
         self._clarification_events: Dict[str, asyncio.Event] = {}
         self._clarification_answers: Dict[str, str] = {}
         self._scratchpad: str = ""  # session-scoped reasoning trace, reset each session
+        # Estimated tokens consumed by this agent's own streaming LLM calls
+        # (converse/decompose/synthesise). Streaming yields no usage object, so
+        # this is a chars//4 estimate — the heuristic GenericMCPAgent also uses.
+        self.primary_tokens: int = 0
 
     def reset_session_state(self) -> None:
         """Clear per-session state so a reused PrimaryAgent starts fresh."""
         self._scratchpad = ""
+        self.primary_tokens = 0
 
     async def _load_blueprint_blocks(
         self,
@@ -372,10 +400,7 @@ class PrimaryAgent:
             f"You are {self._config.agent.name}.",
             self._config.agent.description,
             "",
-            "You are replying to a conversational turn from the user. "
-            "Answer directly and concisely. Do not pretend to execute a task. "
-            "If the user asks what you can do, describe the capabilities and "
-            "task types listed below in plain language.",
+            CONVERSE_INTRO,
         ]
         if caps:
             system_parts.append("")
@@ -417,6 +442,9 @@ class PrimaryAgent:
             partial=False,
         ))
 
+        _in_chars = len(system_prompt) + sum(len(m.get("content", "")) for m in messages)
+        self.primary_tokens += (_in_chars + len(full_response)) // 4
+
         logger.info(
             "Converse complete for session %s (%d chars)",
             session_id, len(full_response),
@@ -446,16 +474,16 @@ class PrimaryAgent:
             self._config, available_capabilities, scout_result, blueprint_blocks
         )
 
-        # Build history context snippet
+        # Build history context snippet. Each prior session contributes its
+        # request/summary plus an outcome line (task completion + validation)
+        # so the decomposer can learn from how similar requests fared — e.g.
+        # avoid a plan shape that failed tasks last time.
         history_snippet = ""
         if history_context:
-            snippets = []
-            for rec in history_context[-self._config.history.max_sessions_in_context:]:
-                snippets.append(
-                    f"[Prior session {rec.session_id[:8]}]: "
-                    f"Request: {rec.original_request[:200]} | "
-                    f"Summary: {rec.response_summary[:300]}"
-                )
+            snippets = [
+                _format_history_record(rec)
+                for rec in history_context[-self._config.history.max_sessions_in_context:]
+            ]
             history_snippet = "\n\nPrior session context:\n" + "\n".join(snippets)
 
         user_message = request
@@ -638,16 +666,14 @@ class PrimaryAgent:
         failure so it never blocks synthesis.
         """
         try:
-            user_msg = (
-                f"Task: {task_label}\n"
-                f"Instruction: {instruction[:300]}\n\n"
-                f"File path: {file_path}\n\n"
-                f"Summarise the content of this file in the context of the task above. "
-                f"Surface the most decision-relevant facts only. Be concise (≤150 words)."
+            user_msg = FILE_SUMMARY_USER.format(
+                task_label=task_label,
+                instruction_excerpt=instruction[:300],
+                file_path=file_path,
             )
             response = await self._llm.complete(
                 messages=[{"role": "user", "content": user_msg}],
-                system="You are a precise summariser. Output only the summary, no preamble.",
+                system=FILE_SUMMARY_SYSTEM,
                 provider_name="default",
                 max_tokens=_ITERATIVE_SUMMARY_TOKENS,
             )
@@ -730,17 +756,13 @@ class PrimaryAgent:
             context_parts.append(f"\n{self._config.agent.synthesis_guidance}")
 
         if has_envelopes:
-            synthesis_system = (
-                f"You are {self._config.agent.name}. "
-                f"Synthesise the task results into a complete, coherent response for the user. "
-                f"Use the task summaries provided — do not invent information not present in the summaries. "
-                f"Do NOT cite internal task IDs, task names, or task summary references in your response. "
-                f"If you reference a source, use the actual URL, document title, or resource name — never internal labels like task IDs."
+            synthesis_system = SYNTHESIS_SYSTEM_WITH_RESULTS.format(
+                agent_name=self._config.agent.name,
             )
         else:
-            synthesis_system = (
-                f"You are {self._config.agent.name}. {self._config.agent.description} "
-                f"Respond directly and concisely to the user's request below."
+            synthesis_system = SYNTHESIS_SYSTEM_DIRECT.format(
+                agent_name=self._config.agent.name,
+                agent_description=self._config.agent.description,
             )
 
         await event_queue.put(StatusEvent(
@@ -790,6 +812,14 @@ class PrimaryAgent:
         logger.info("Synthesis complete for session %s (%d chars)", session_id, len(full_response))
         return full_response
 
+    @staticmethod
+    def _format_findings(findings: List[ValidationFinding]) -> str:
+        """Render validation findings as a bullet list for a remediation prompt."""
+        return "\n".join(
+            f"- [{f.dimension}] {f.issue} → Suggestion: {f.suggestion}"
+            for f in findings
+        ) or "General quality improvement needed."
+
     async def remediate(
         self,
         session_id: str,
@@ -797,23 +827,43 @@ class PrimaryAgent:
         original_response: str,
         validation_findings: List[ValidationFinding],
         event_queue: asyncio.Queue,
+        prior_attempts: Optional[List[tuple]] = None,
+        stream: bool = True,
     ) -> str:
         """
         Called when ValidationAgent scores below threshold but above critical.
-        Single LLM call to correct specific findings.
-        """
-        findings_text = "\n".join(
-            f"- [{f.dimension}] {f.issue} → Suggestion: {f.suggestion}"
-            for f in validation_findings
-        ) or "General quality improvement needed."
+        One LLM call to correct specific findings.
 
-        remediation_prompt = (
-            f"The following response to the user request needs improvement:\n\n"
-            f"USER REQUEST:\n{original_request}\n\n"
-            f"ORIGINAL RESPONSE:\n{original_response}\n\n"
-            f"QUALITY ISSUES FOUND:\n{findings_text}\n\n"
-            f"Please provide a corrected response that addresses all the issues above. "
-            f"Return only the corrected response, no meta-commentary."
+        ``prior_attempts`` is a list of ``(response, findings)`` tuples from
+        earlier remediation passes in this session — empty/None on the first
+        pass. When present, each is rendered into the prompt so this pass does
+        not repeat a correction that already proved insufficient.
+
+        ``stream`` controls token emission. When the caller may run several
+        passes (iterative remediation), it sets ``stream=False`` so discarded
+        intermediate attempts are not streamed to the user — the caller emits
+        the single chosen response itself once all passes are done.
+        """
+        findings_text = self._format_findings(validation_findings)
+
+        prior_attempts_block = ""
+        for i, (att_response, att_findings) in enumerate(prior_attempts or [], start=1):
+            att_findings_text = (
+                self._format_findings(att_findings)
+                if att_findings and not isinstance(att_findings, str)
+                else (att_findings or "General quality improvement needed.")
+            )
+            prior_attempts_block += REMEDIATE_PRIOR_ATTEMPT.format(
+                n=i,
+                attempt_response=att_response,
+                attempt_findings=att_findings_text,
+            )
+
+        remediation_prompt = REMEDIATE_USER.format(
+            original_request=original_request,
+            original_response=original_response,
+            findings_text=findings_text,
+            prior_attempts_block=prior_attempts_block,
         )
 
         await event_queue.put(StatusEvent(
@@ -825,21 +875,23 @@ class PrimaryAgent:
         corrected = ""
         async for token in self._llm.stream(
             messages=[{"role": "user", "content": remediation_prompt}],
-            system=f"You are {self._config.agent.name}. Improve the response as directed.",
+            system=REMEDIATE_SYSTEM.format(agent_name=self._config.agent.name),
             provider_name="default",
         ):
             corrected += token
-            await event_queue.put(ResultEvent(
-                content=token,
-                session_id=session_id,
-                partial=True,
-            ))
+            if stream:
+                await event_queue.put(ResultEvent(
+                    content=token,
+                    session_id=session_id,
+                    partial=True,
+                ))
 
-        await event_queue.put(ResultEvent(
-            content=corrected,
-            session_id=session_id,
-            partial=False,
-        ))
+        if stream:
+            await event_queue.put(ResultEvent(
+                content=corrected,
+                session_id=session_id,
+                partial=False,
+            ))
 
         logger.info("Remediation complete for session %s", session_id)
         return corrected
@@ -879,37 +931,7 @@ class PrimaryAgent:
         if not task_inputs:
             return {}
 
-        system = (
-            "You curate per-task 'blueprints' that guide an AI agent on how to execute a "
-            "recurring task. Given each task's instruction, output summary, user clarifications, "
-            "and validation findings, produce a concise structured update the framework will "
-            "merge into the stored blueprint.\n\n"
-            "Rules:\n"
-            "- Be specific and actionable. Generic advice ('do a good job') is forbidden.\n"
-            "- For scripted tasks (complexity=scripted): the task runs a Python handler — "
-            "  leave both 'topology' and 'discovery_hints' empty; focus on preconditions and failure modes.\n"
-            "- For pinned tasks (complexity=pinned): populate 'topology' with a clear prose "
-            "  description of the subtask dependency graph (which subtasks run in parallel, which "
-            "  are serial, their exact order) distilled from what actually executed. This topology "
-            "  will be injected as a hard constraint on future runs. Leave 'discovery_hints' empty.\n"
-            "- For adaptive tasks (complexity=adaptive): populate 'discovery_hints' with soft "
-            "  navigation guidance (heuristics, common patterns, what to probe first). The LLM "
-            "  will decompose freely but be steered by these hints. Leave 'topology' empty.\n"
-            "- preconditions: entry conditions that must hold before this task starts. "
-            "  Only add NEW ones not already in the existing list.\n"
-            "- known_failure_modes: failure patterns observed this session. "
-            "  Only add NEW ones not already in the existing list.\n"
-            "- dos/donts: short imperative bullets. Only NEW guidance not already present.\n"
-            "- clarifications: Q/A pairs surfaced this session, formatted as 'Q: ... A: ...'.\n"
-            "- lesson_summary: one sentence capturing the single most important takeaway.\n"
-            "- If there is nothing new for a field, omit it or return it empty.\n\n"
-            "Respond with EXACTLY one JSON object and nothing else:\n"
-            '  {"updates": {"<task_name>": {'
-            '"topology": "...", "discovery_hints": "...", '
-            '"preconditions": ["..."], "known_failure_modes": ["..."], '
-            '"dos": ["..."], "donts": ["..."], '
-            '"clarifications": ["..."], "lesson_summary": "..."}}}'
-        )
+        system = BLUEPRINT_SYSTEM
 
         payload_lines = []
         if clarifications:
@@ -1009,22 +1031,12 @@ class PrimaryAgent:
         except Exception:
             summary = str(envelope)[:2000]
 
-        system = (
-            "You are a strict but fair task-output judge for an AI agent framework. "
-            "You will be given a sub-task's instruction, the developer's validation rules, "
-            "and the agent's produced output summary. Decide whether the output satisfies "
-            "the validation rules in the context of the instruction.\n\n"
-            "Respond with EXACTLY one JSON object and nothing else:\n"
-            '  {"verdict": "pass"}  — if the output satisfies the rules\n'
-            '  {"verdict": "fail", "feedback": "<concise actionable feedback>"}  — otherwise\n'
-            "Feedback must be short (≤3 sentences), specific, and actionable so the "
-            "agent can fix the issue on retry. Do not include any prose outside the JSON."
-        )
-        user_msg = (
-            f"Task name: {task_name}\n"
-            f"Task instruction:\n{instruction}\n\n"
-            f"Validation rules (developer-defined):\n{validation_notes}\n\n"
-            f"Agent output summary:\n{summary}"
+        system = TASK_VALIDATE_SYSTEM
+        user_msg = TASK_VALIDATE_USER.format(
+            task_name=task_name,
+            instruction=instruction,
+            validation_notes=validation_notes,
+            summary=summary,
         )
 
         try:
@@ -1063,6 +1075,7 @@ class PrimaryAgent:
         task_compiler,
         event_queue,
         principal=None,
+        trigger_reason: str = "unspecified",
     ) -> None:
         """Mid-session replanning — invoked by the wave loop only when a stale
         task completes its wave or a mandatory task fails.
@@ -1076,6 +1089,11 @@ class PrimaryAgent:
         instructions and applies them to the pending task list. Add operations
         are logged but not yet applied (requires task_compiler.add_task support).
         Failures are silently swallowed — replan must never block a session.
+
+        ``trigger_reason`` is a short label the wave loop passes so the prompt
+        tells the LLM *why* it was woken (e.g. 'mandatory_failure',
+        'stale_blueprint', 'adaptive_completed'). Without it the model has to
+        infer intent from completed-task content alone, which is brittle.
         """
         pending_tasks = [
             t for t in runtime_graph.tasks.values() if t.status == "pending"
@@ -1086,15 +1104,27 @@ class PrimaryAgent:
         if not pending_tasks and not completed_envelopes:
             return
 
-        # Summarise completed work (cap to last 10 envelopes to keep prompt small)
+        # Summarise completed work (cap to last 10 envelopes to keep prompt small).
+        # Head+tail truncation preserves URLs / identifiers that often live at
+        # the end of a summary and are exactly what a replan decision hinges on.
         completed_lines = []
         for env in completed_envelopes[-10:]:
             label = env.task_id.split("/", 1)[-1] if "/" in env.task_id else env.task_id
             icon = "✓" if env.status == "complete" else "✗"
-            snippet = (env.content_summary or "")[:300].replace("\n", " ")
+            snippet = _head_tail(env.content_summary or "", head=200, tail=120)
             completed_lines.append(f"- {label} [{icon}]: {snippet}")
 
-        pending_names = [t.task_name for t in pending_tasks]
+        # Pending tasks: render instruction + depends_on so the LLM can issue
+        # informed 'modify' / 'remove' ops without having to guess the body.
+        pending_lines = []
+        for t in pending_tasks:
+            instr = _head_tail(t.instruction or "", head=200, tail=80)
+            deps = ", ".join(t.depends_on) if t.depends_on else "(none)"
+            pending_lines.append(
+                f"- {t.task_name}\n"
+                f"    instruction: {instr}\n"
+                f"    depends_on: {deps}"
+            )
 
         # Available task types the replanner can pick from when adding.
         # Constrain to the declared set so we don't invent capability hints
@@ -1106,51 +1136,17 @@ class PrimaryAgent:
         ]
 
         scratchpad_block = (
-            f"\n\n## Reasoning Scratchpad (accumulated this session)\n{self._scratchpad}"
+            REPLAN_SCRATCHPAD_BLOCK.format(scratchpad=self._scratchpad)
             if self._scratchpad else ""
         )
 
-        system = (
-            "You are a session replanner for an AI agent framework. "
-            "Given the results of completed tasks and the remaining pending tasks, "
-            "decide whether the plan needs adjustment based on what was learned. "
-            "You can remove, modify, or ADD tasks to the graph.\n\n"
-            "Operations:\n"
-            "- 'remove' — drop a pending task that is now redundant or impossible.\n"
-            "- 'modify' — rewrite a pending task's instruction in light of new info.\n"
-            "- 'add' — introduce a NEW task the initial plan didn't anticipate "
-            "  (e.g. verify a suspicious result, read an extra file, run a fix "
-            "  after a failed test). New tasks may depend on tasks already "
-            "  completed OR on other newly-added tasks in this same batch.\n\n"
-            "Rules:\n"
-            "- Only propose changes when completed results clearly justify them. "
-            "  Minimal edits preferred; an empty changes list is valid and often best.\n"
-            "- Do NOT remove mandatory tasks unless their work was fully covered.\n"
-            "- For add ops: 'task_type' MUST be one of the types listed below — "
-            "  you cannot invent new types. 'depends_on' is a list of task_name "
-            "  strings. Never re-add work that is already pending or completed.\n\n"
-            "You must also update the reasoning scratchpad: a concise structured note "
-            "(max 300 words) accumulating what has been confirmed, what is still open, "
-            "and any strategy adjustments. This replaces the previous scratchpad entirely.\n\n"
-            "Respond with EXACTLY one JSON object and nothing else:\n"
-            "  {\"changes\": [\n"
-            "    {\"op\": \"remove\", \"task_name\": \"...\"},\n"
-            "    {\"op\": \"modify\", \"task_name\": \"...\", \"instruction\": \"...\"},\n"
-            "    {\"op\": \"add\", \"task_name\": \"...\", \"task_type\": \"...\", "
-            "\"instruction\": \"...\", \"depends_on\": [\"...\"]}\n"
-            "  ],\n"
-            "  \"scratchpad\": \"### Confirmed:\\n...\\n### Open:\\n...\\n### Strategy:\\n...\"\n"
-            "  }\n"
-            + scratchpad_block
-        )
+        system = REPLAN_SYSTEM.format(scratchpad_block=scratchpad_block)
 
-        user_msg = (
-            "Completed tasks:\n"
-            + ("\n".join(completed_lines) if completed_lines else "  (none)")
-            + "\n\nPending tasks:\n"
-            + ("\n".join(f"- {n}" for n in pending_names) if pending_names else "  (none)")
-            + "\n\nAvailable task types (for 'add' ops):\n"
-            + "\n".join(available_types)
+        user_msg = REPLAN_USER.format(
+            trigger_reason=trigger_reason or "unspecified",
+            completed_tasks="\n".join(completed_lines) if completed_lines else "  (none)",
+            pending_tasks="\n".join(pending_lines) if pending_lines else "  (none)",
+            available_types="\n".join(available_types),
         )
 
         try:
@@ -1235,3 +1231,194 @@ class PrimaryAgent:
 
         except Exception as e:
             logger.warning("Replan LLM call failed (%s) — skipping", e)
+
+    # ── Terminate keywords for fast-path detection ────────────────────────────
+    _TERMINATE_KEYWORDS = frozenset({
+        "stop", "cancel", "terminate", "abort", "quit", "halt", "kill",
+        "exit", "end", "cease", "drop", "enough", "nevermind", "forget",
+    })
+
+    async def handle_user_interrupt(
+        self,
+        message: str,
+        session_id: str,
+        runtime_graph,
+        completed_envelopes,
+        task_compiler,
+        event_queue,
+        principal=None,
+    ) -> str:
+        """Process a user message injected mid-run.
+
+        Fast-path: if the message contains a clear termination keyword AND no
+        pending tasks were described (e.g. "stop", "cancel that"), return
+        "terminate" immediately without an LLM call.
+
+        Otherwise: make one non-streaming LLM call to decide between
+        "terminate" and "replan", then apply any task-graph changes.
+
+        Returns:
+            "terminate" — caller should break the wave loop and wind down.
+            "replan"    — graph has been updated; caller continues wave loop.
+        """
+        tokens = set(message.lower().split())
+        is_short = len(tokens) <= 6
+        looks_like_stop = bool(tokens & self._TERMINATE_KEYWORDS)
+
+        # Fast-path: short message with a termination keyword — skip LLM
+        if is_short and looks_like_stop:
+            await event_queue.put(UserInterruptEvent(
+                session_id=session_id,
+                message=message,
+                action="terminate",
+            ))
+            await event_queue.put(StatusEvent(
+                message="Session terminated by user request.",
+                session_id=session_id,
+                event_type=EventType.STATUS,
+            ))
+            logger.info("Interrupt fast-path: terminate (message=%r)", message)
+            return "terminate"
+
+        # Slow-path: ask the LLM to decide
+        pending_tasks = [
+            t for t in runtime_graph.tasks.values() if t.status == "pending"
+        ]
+        completed_lines = []
+        for env in completed_envelopes[-10:]:
+            label = env.task_id.split("/", 1)[-1] if "/" in env.task_id else env.task_id
+            icon = "✓" if env.status == "complete" else "✗"
+            snippet = _head_tail(env.content_summary or "", head=200, tail=120)
+            completed_lines.append(f"- {label} [{icon}]: {snippet}")
+
+        pending_lines = []
+        for t in pending_tasks:
+            instr = _head_tail(t.instruction or "", head=200, tail=80)
+            deps = ", ".join(t.depends_on) if t.depends_on else "(none)"
+            pending_lines.append(
+                f"- {t.task_name}\n"
+                f"    instruction: {instr}\n"
+                f"    depends_on: {deps}"
+            )
+        available_types = [
+            f"- {tt.name} ({getattr(tt, 'capability_hint', 'auto')}): "
+            f"{(tt.description or '')[:120]}"
+            for tt in self._config.task_types
+        ]
+
+        scratchpad_block = (
+            REPLAN_SCRATCHPAD_BLOCK.format(scratchpad=self._scratchpad)
+            if self._scratchpad else ""
+        )
+
+        system = INTERRUPT_REPLAN_SYSTEM.format(scratchpad_block=scratchpad_block)
+        user_msg = INTERRUPT_REPLAN_USER.format(
+            user_message=message,
+            completed_tasks="\n".join(completed_lines) if completed_lines else "  (none)",
+            pending_tasks="\n".join(pending_lines) if pending_lines else "  (none)",
+            available_types="\n".join(available_types),
+        )
+
+        try:
+            response = await self._llm.complete(
+                messages=[{"role": "user", "content": user_msg}],
+                system=system,
+                provider_name="default",
+                max_tokens=1000,
+            )
+            raw = (response.content or "").strip()
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            parsed = json.loads(raw)
+            action = str(parsed.get("action", "replan")).lower()
+
+            if action == "terminate":
+                reason = str(parsed.get("reason", "User requested stop.")).strip()
+                await event_queue.put(UserInterruptEvent(
+                    session_id=session_id,
+                    message=message,
+                    action="terminate",
+                ))
+                await event_queue.put(StatusEvent(
+                    message=f"Session terminated by user: {reason}",
+                    session_id=session_id,
+                    event_type=EventType.STATUS,
+                ))
+                logger.info("Interrupt: terminate — %s", reason)
+                return "terminate"
+
+            # action == "replan"
+            changes = parsed.get("changes") or []
+            updated_scratchpad = (parsed.get("scratchpad") or "").strip()
+            if updated_scratchpad:
+                self._scratchpad = updated_scratchpad
+
+            applied = 0
+            add_batch: List[dict] = []
+            for change in changes:
+                op = str(change.get("op", "")).lower()
+                task_name = str(change.get("task_name", "")).strip()
+                if not task_name:
+                    continue
+                if op == "remove":
+                    for t in pending_tasks:
+                        if t.task_name == task_name and t.status == "pending":
+                            task_compiler.mark_failed(runtime_graph, t.task_id)
+                            logger.info("Interrupt replan: removed task '%s'", task_name)
+                            applied += 1
+                            break
+                elif op == "modify":
+                    new_instruction = str(change.get("instruction", "")).strip()
+                    if new_instruction:
+                        for t in pending_tasks:
+                            if t.task_name == task_name and t.status == "pending":
+                                t.instruction = new_instruction
+                                logger.info("Interrupt replan: modified task '%s'", task_name)
+                                applied += 1
+                                break
+                elif op == "add":
+                    add_batch.append({
+                        "task_name": task_name,
+                        "task_type": str(change.get("task_type", "")).strip(),
+                        "instruction": str(change.get("instruction", "")).strip(),
+                        "depends_on": change.get("depends_on") or [],
+                        "mandatory": change.get("mandatory"),
+                    })
+
+            if add_batch:
+                effective_types = {tt.name: tt for tt in self._config.task_types}
+                committed = task_compiler.add_tasks_batch(
+                    runtime_graph, add_batch, effective_types,
+                    principal=principal,
+                )
+                applied += len(committed)
+
+            summary = (
+                f"Interrupt processed: {applied} task adjustment(s) applied."
+                if applied else
+                "Interrupt acknowledged — no task changes needed."
+            )
+            await event_queue.put(UserInterruptEvent(
+                session_id=session_id,
+                message=message,
+                action="replan",
+            ))
+            await event_queue.put(StatusEvent(
+                message=summary,
+                session_id=session_id,
+                event_type=EventType.STATUS,
+            ))
+            logger.info("Interrupt: replan — %d change(s)", applied)
+            return "replan"
+
+        except Exception as e:
+            logger.warning("Interrupt LLM call failed (%s) — treating as replan no-op", e)
+            await event_queue.put(UserInterruptEvent(
+                session_id=session_id,
+                message=message,
+                action="replan",
+            ))
+            return "replan"

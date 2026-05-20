@@ -38,6 +38,8 @@ agent:
     Always cite sources with [n] markers.  # synthesis LLM call — useful for citation
                                            # style, tone, or output structure guidance.
   interaction_mode: interactive         # "interactive" | "rpc" — see below.
+  execution_mode: planned               # "planned" | "static" — see below.
+  inject_session_context: true          # Give sub-tasks the goal + scratchpad — see below.
   time:
     default_max_wait_seconds: 120       # Session-level timeout
     default_task_timeout_seconds: 40    # Per-task timeout
@@ -46,6 +48,12 @@ agent:
     max_concurrent_sessions_per_user: 3 # Per-user session cap
     max_parallel_tasks: 5               # Tasks running simultaneously per session
     max_tasks_per_session: 20           # Total tasks allowed in a single session
+    # max_parallel_llm_calls: <int>     # Optional. Omit to auto-derive from
+                                        # provider+model (see "LLM concurrency
+                                        # auto-tuning" below).
+    # adaptive_llm_concurrency: true    # Default true. Set false to pin the
+                                        # gate at max_parallel_llm_calls instead
+                                        # of self-tuning it.
   intent_gate:                          # Pre-scout turn classifier (see below)
     enabled: true
     heuristic_confidence_threshold: 0.7
@@ -63,6 +71,44 @@ agent:
 - `rpc` — agent is exposed as a callable (e.g. `cortex publish mcp`). Every turn is forced to the task path and no interactive clarifications are emitted, because an automated caller cannot answer them. If the decomposer returns no tasks for an rpc turn, the framework returns a structured empty response instead of hanging.
 
 Override at runtime with the `CORTEX_INTERACTION_MODE` env var (`interactive` | `rpc`). `cortex publish mcp` sets this to `rpc` automatically.
+
+### `execution_mode`
+
+- `planned` (default) — the decomposition LLM generates the task graph at runtime from your `task_types`. Intent gate, capability scout, and decomposition all run.
+- `static` — the `task_types` *are* the graph. They run as a fixed DAG in dependency order with **no decomposition, intent-gate, or capability-scout LLM calls**, and no mid-session replanning. The fan-out/fan-in waves, validation gate, retries, synthesis, and learning still run.
+
+Static mode powers **code-node agents** — agents whose nodes are Python functions (`complexity: scripted` + a `handler`). It is set automatically when you build the agent with [`CortexBuilder`](GETTING_STARTED.md#code-first-agents--cortexbuilder) and register a code node via `.node()`. You can also hand-write a static DAG of capability-routed `task_types` in `cortex.yaml` by setting `execution_mode: static`.
+
+### `inject_session_context`
+
+When `true` (default), each LLM-synthesis sub-task receives two extra pieces of context in its system prompt:
+
+- the **original user request**, so the worker knows the overall goal its task serves; and
+- the planner's current **reasoning scratchpad** (confirmed facts, open questions, strategy), refreshed at every wave dispatch so a worker in a later wave sees what earlier waves established.
+
+Without this, a sub-task only sees its own instruction and runs blind to the session. The worker is still told to produce output for *its task only* — the context is for consistency, not scope expansion.
+
+It adds modest tokens per sub-task call (request truncated to ~800 chars, scratchpad to ~1500). Set to `false` on latency- or budget-sensitive deployments to send the leaner legacy prompt.
+
+### LLM concurrency auto-tuning
+
+`max_parallel_llm_calls` is the ceiling on concurrent in-flight LLM HTTP requests. The right value depends entirely on the backend — a single local Ollama serializes inference (1 is correct), Anthropic Haiku and GPT-4o-mini happily serve eight or more parallel calls, Opus and GPT-4 sit somewhere in between — so the framework picks it for you.
+
+**Initial value — model-power registry.** When `max_parallel_llm_calls` is unset in `cortex.yaml`, the framework looks up the configured default `provider` + `model` against a small table in [`cortex/llm/model_power.py`](../cortex/llm/model_power.py). Representative picks:
+
+| Provider:model pattern | Initial ceiling |
+|---|---|
+| `local:*` (Ollama, vLLM, llama.cpp) | 1 |
+| `anthropic:*haiku*`, `openai:*mini*`, `gemini:*flash*` | 8 |
+| `anthropic:*sonnet*`, `openai:*gpt-4o*`, `mistral:*` | 6 |
+| `anthropic:*opus*`, `openai:*gpt-4*`, `grok:*` | 4 |
+| Unknown / unmatched | 2 |
+
+The pick is logged at startup so you can see what the framework chose (`max_parallel_llm_calls auto-derived: 6 (anthropic:claude-sonnet-4-7)`).
+
+**Runtime adaptation — AdaptiveLLMGate.** With `adaptive_llm_concurrency: true` (the default), the gate self-tunes between `1` and the initial ceiling using AIMD: it halves multiplicatively on errors, empty responses, or sharp latency spikes vs the best observed baseline, and grows additively by 1 after a streak of clean calls under saturation. Backoff and probe-up steps are logged (`AdaptiveLLMGate: 6 -> 3 (backoff: latency spike ...)`).
+
+**When to pin a value.** Set `max_parallel_llm_calls: <int>` explicitly only when you need determinism (benchmarking) or when an API enforces a hard rate limit you must not exceed. Pinning still lets the gate adapt downward — to disable self-tuning entirely and pin the gate exactly at your value, also set `adaptive_llm_concurrency: false`.
 
 ### `intent_gate`
 
@@ -145,7 +191,7 @@ task_types:
 |---|---|---|---|
 | `adaptive` | **Adaptive** | LLM decomposes and executes freely each run. Soft hints accumulate in the blueprint's *Discovery Hints* section after each run to steer future ones. | Open-ended tasks where the approach may vary: research, writing, classification |
 | `pinned` | **Pinned** | LLM still executes each sub-task, but the decomposition DAG is locked to the blueprint's *Topology* section (hard constraint). Reproducible workflow on every run. | Recurring workflows with a known fixed structure — e.g. SDLC: code → test → deploy |
-| `scripted` | **Scripted** | Bypasses the LLM entirely. Your Python handler function runs directly and returns the output. Zero token cost, fully auditable. | DB lookups, API calls, validation, math — anything where the logic is fixed |
+| `scripted` | **Scripted** | Bypasses the LLM entirely. Your Python handler function runs directly and returns the output. Zero token cost, fully auditable. This is a **code node**. | DB lookups, API calls, validation, math — anything where the logic is fixed |
 
 For `scripted` tasks, set `handler` to the dotted Python path of your function:
 
@@ -157,6 +203,10 @@ task_types:
     handler: my_pkg.handlers.fetch_user
     output_format: json
 ```
+
+The handler is `async def fn(ctx)` (sync also works) and receives a [`TaskContext`](GETTING_STARTED.md#the-taskcontext) — `ctx.request`, `ctx.deps` (upstream outputs), `await ctx.llm(...)`, `await ctx.call_tool(...)`. It returns a string, a `(string, format)` tuple, or a dict/list (JSON).
+
+> **Code-first:** instead of a dotted path, define handlers inline with the [`CortexBuilder.node()`](GETTING_STARTED.md#code-nodes--agentnode) decorator — no importable module needed, and `execution_mode` flips to `static` automatically.
 
 For `pinned` tasks, pair with a `blueprint` that has a `## Topology` section. After the first successful run the framework populates it automatically, or you can author it by hand:
 
@@ -173,11 +223,11 @@ task_types:
 
 ### Capability hints
 
-Tells the router which kind of tool server this task needs:
+`capability_hint` is a **planning hint, not an execution router**. It is optional — it defaults to `auto`. For non-scripted tasks the [ReAct loop](#react-loop-react) chooses the actual action(s) at runtime regardless of what you set here; the hint instead helps the decomposer understand each task type and guides which MCP servers the Capability Scout probes before decomposition. Setting it explicitly is most useful on **scripted** tasks, where a non-`auto` hint lets the framework skip MCP probing for that handler.
 
-| Hint | Purpose |
+| Hint | Meaning |
 |---|---|
-| `auto` | Let the agent pick |
+| `auto` *(default)* | No hint — the planner and ReAct loop decide |
 | `llm_synthesis` | No external tools — pure LLM reasoning, writing, summarisation |
 | `web_search` | Search the web for live/current information. Tries configured tool servers first; falls back to built-in DuckDuckGo (no API key needed) |
 | `workspace_bash` | Read, write, or execute files in the user's workspace directory (requires HITL approval for mutating ops) |
@@ -186,6 +236,31 @@ Tells the router which kind of tool server this task needs:
 | `document_generation` | Create structured documents (PDF, DOCX, reports) |
 | `image_generation` | Generate or manipulate images |
 | `forge_mcp` | Generate a new MCP server from code and register it with Ant Colony at the wave boundary (requires `tool_forge.enabled`, `code_sandbox.enabled`, and `ant_colony.enabled`) |
+
+---
+
+### ReAct loop (`react`)
+
+Every non-scripted task runs through a **ReAct (reason → act → observe) loop**: the sub-agent's LLM picks one action, observes its result, and repeats until it decides the task is done. The loop is always on — there is no enable/disable flag — but three per-task-type knobs bound its cost:
+
+```yaml
+task_types:
+  - name: web_research
+    description: Search the web for current info on a topic
+    capability_hint: web_search
+    react:
+      max_iterations: 10            # safety cap on reason→act→observe cycles
+      observation_max_tokens: 600   # each tool observation is truncated to ~this
+      context_char_budget: 24000    # older steps are summarised past this size
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `max_iterations` | `10` | Hard safety cap. On reaching it the loop stops calling actions and forces a best-effort final answer. Normal tasks finish well before this. |
+| `observation_max_tokens` | `600` | Each action's observation is truncated to roughly this many tokens before being fed back, so the running context can't explode. |
+| `context_char_budget` | `24000` | Once the running conversation exceeds this many characters, the oldest reason/act/observe steps are digested into a compact summary. |
+
+Scripted tasks (`complexity: scripted`) skip the loop entirely — their handler runs directly — so `react` has no effect on them. See [Task execution: the ReAct loop](ARCHITECTURE.md#task-execution-the-react-loop) for the full mechanics.
 
 ---
 
@@ -287,10 +362,14 @@ When enabled, every completed session is stored and queryable via `cortex replay
 validation:
   enabled: true
   threshold: 0.75                       # Min composite score (hard floor: 0.60)
+  critical_threshold: 0.40              # Below this, the response is not delivered
   model: null                           # Override model for validation (null = default)
+  max_remediation_attempts: 2           # Iterative remediation passes (1 = single-shot)
 ```
 
-Every response is scored on intent match, completeness, and coherence. Responses below `threshold` are flagged on `SessionResult.validation_report`.
+Every response is scored on intent match, completeness, and coherence. Responses below `threshold` are flagged on `SessionResult.validation_report`. Set `enabled: false` to skip the post-synthesis Validation Agent entirely (the per-task wave gate still runs for tasks that declare an `output_schema` or `validation_notes`).
+
+When a response scores between `critical_threshold` and `threshold`, the framework remediates it. `max_remediation_attempts` controls how many corrective passes run: each pass sees the prior attempt's response and the findings it still failed on, so it corrects without repeating mistakes. If no pass clears `threshold`, the best-scoring candidate across the original and all attempts is delivered. Set to `1` for the legacy single-shot behaviour.
 
 ---
 
@@ -463,6 +542,72 @@ workspace_bash:
 - If the HITL prompt times out or the user denies it, a `CortexHITLDeniedError` is raised and the task fails cleanly.
 
 All paths are resolved relative to the workspace root and checked for traversal — any `rel_path` that resolves outside the workspace raises `CortexSecurityError`.
+
+---
+
+## `app_control`
+
+Launch and drive native desktop applications. Primary path discovers each app's scripting interface (macOS sdef, Windows UI Automation / COM, Linux AT-SPI / xdotool) and injects it into the LLM prompt so the agent generates precise actions. Fallback is a screenshot → vision-LLM → action loop. Once enabled, `app_control` is available to the ReAct loop as an action on any non-scripted task — no `capability_hint` wiring needed.
+
+```yaml
+app_control:
+  enabled: false           # Master switch
+  hitl_enabled: true       # Prompt before each mutating action (launch / script / screenshot)
+  timeout_seconds: 30      # Per-action subprocess timeout
+  sdef_max_chars: 8000     # Trim scripting-dict summary before injecting into LLM context
+  max_vision_steps: 10     # Cap on screenshot → action loop iterations
+  vision_provider: default # LLM provider for vision steps ("default" = primary)
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Activates the App Control capability |
+| `hitl_enabled` | `true` | Require user approval per action. Vision loops ask once up-front for batch approval covering the whole task. |
+| `timeout_seconds` | `30` | Per-action timeout for osascript / PowerShell / shell subprocesses |
+| `sdef_max_chars` | `8000` | Max chars of scripting-dictionary summary; longer summaries are truncated before injection |
+| `max_vision_steps` | `10` | When no scripting dictionary exists for an app, this caps how many screenshot → action iterations the vision loop runs |
+| `vision_provider` | `default` | LLM provider used for vision steps. `default` inherits the primary provider |
+
+**Action types** (emitted by the LLM as `ACTION: <name>` blocks): `launch_app`, `run_applescript`, `run_powershell`, `run_shell_command`, `screenshot`, `get_running_apps`, `get_window_text`, `copy_to_clipboard`, `paste_from_clipboard`. Multiple blocks can be chained with `---`.
+
+**Platform support:** AppleScript and `sdef` discovery are macOS-only. PowerShell + UIA discovery work on Windows. Linux uses AT-SPI / xdotool plus `run_shell_command`.
+
+**Accessibility (macOS):** Before any AppleScript that uses keystrokes, the framework probes whether the host process has Accessibility permission. If denied, a clear instruction message is surfaced (instead of a cryptic `-1743` error). The result is cached per-session.
+
+---
+
+## `playwright_mcp`
+
+Built-in Playwright MCP server — browser automation as a first-class capability. The framework starts `@playwright/mcp` internally as a stdio MCP server at boot. It is NOT exposed in `tool_servers`; users get a `browser` capability automatically.
+
+```yaml
+playwright_mcp:
+  enabled: false
+  browser: chromium                  # chromium | firefox | webkit
+  headless: false                    # false = visible browser window
+  startup_timeout_seconds: 60
+  # Leave both null to auto-default storage_state_path to
+  # {storage.local_path}/playwright_session.json (cookies + localStorage)
+  storage_state_path: null
+  user_data_dir: null
+  viewport_width: 1280
+  viewport_height: 720
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Master switch — when on, the Playwright MCP server starts at framework boot |
+| `browser` | `chromium` | Browser engine to drive. One of `chromium`, `firefox`, `webkit` |
+| `headless` | `false` | `true` hides the browser window (CI / server mode) |
+| `startup_timeout_seconds` | `60` | How long to wait for the Playwright MCP server to come up |
+| `storage_state_path` | (auto) | JSON file that persists cookies + localStorage so logins survive across runs. When left `null`, defaults to `{storage.local_path}/playwright_session.json` |
+| `user_data_dir` | `null` | Full persistent browser profile dir (extensions, IndexedDB, service workers). Takes precedence over `storage_state_path` when set |
+| `viewport_width` | `1280` | Browser viewport width in pixels |
+| `viewport_height` | `720` | Browser viewport height |
+
+**Prerequisites:** Node.js + `npx` must be on PATH. The first invocation downloads the Playwright MCP package via `npx -y @playwright/mcp@latest`.
+
+**Capability surface:** The agent receives a `browser` capability that the ReAct loop can use as an action on any non-scripted task. All Playwright MCP tools (navigate, click, type, screenshot, evaluate, fill, upload, etc.) are surfaced through the standard MCP tool-discovery flow.
 
 ---
 

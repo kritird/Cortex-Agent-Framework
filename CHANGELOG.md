@@ -5,6 +5,233 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-15
+
+Headline changes this release: a **code-first way to define agents** — build
+the whole agent in Python, including LangGraph-style code nodes; a **ReAct
+execution loop for every sub-agent**, replacing the old single-pass task
+dispatch; two new automation capabilities — **AppControl** (cross-platform
+desktop app control) and a built-in **Playwright** browser server; a
+**full-featured `cortex` CLI** for running agents and managing sessions,
+blueprints, MCPs, providers, and storage; and a prompt-engineering pass on the
+framework's iterative LLM calls, where Cortex previously lost context between
+repeated calls for the same unit of work.
+
+### Added
+
+#### ReAct sub-agent execution — every sub-task now reasons in a loop
+
+Sub-agents no longer execute a task in a single LLM call. Once the primary
+agent decomposes a request, each sub-task is run by a **ReAct (reason → act →
+observe) loop**: the sub-agent's LLM picks one action, observes its result,
+and repeats until it decides the task is done.
+
+- **`ReactLoop`** (`cortex/modules/react_loop.py`) — drives the reason/act/
+  observe cycle for one task. It owns the reasoning conversation; the agent
+  owns action execution. Each step the model emits a JSON object with a
+  `thought`, an `action`, an `action_input`, and an `expectation`; the loop
+  runs the action and feeds the observation back **alongside the model's own
+  stated expectation**, so every reasoning turn sees both what happened and
+  what was intended.
+- **Actions are the agent's capabilities** — `llm_synthesis`, `web_search`,
+  `code_exec`, `bash`, `workspace_bash`, `forge_mcp`, and `ask_user` (when
+  `human_in_loop` is set), the new `app_control` capability (see below), plus
+  every registered MCP tool-server capability. The action menu is built per
+  task from what the agent actually has wired up.
+  `GenericMCPAgent._execute_action()` runs one action and returns an
+  observation; the old `_infer_capability_hint()` router and single-pass
+  capability dispatch are gone — the loop's reasoning step replaces them.
+- **No flag — it is the execution model.** Every non-scripted task runs the
+  loop; scripted code-node handlers still run their Python directly (no LLM
+  step to loop over). The loop terminates as soon as the sub-agent emits a
+  `finish` action.
+- **Context management between iterations** — observations are truncated to
+  `react.observation_max_tokens`; once the running conversation passes
+  `react.context_char_budget` the oldest steps are digested into a compact
+  summary appended to the opening instruction. A failed action becomes an
+  observation the loop can adapt to rather than aborting the task.
+- **`TaskTypeConfig.react`** (`ReactConfig`) — `max_iterations` (default `10`;
+  a safety cap that forces a best-effort final answer), `observation_max_tokens`
+  (default `600`), and `context_char_budget` (default `24000`). There is no
+  enable/disable knob — the loop is always on for LLM-driven tasks.
+- **Wave validation still wraps the loop** — on a validation retry, prior
+  attempts and judge feedback are threaded into the loop's opening instruction.
+  Token usage, generated scripts, forged servers, and produced files are
+  aggregated across every step onto the `ResultEnvelope`.
+- New prompt fragments `REACT_SYSTEM`, `REACT_USER_INITIAL`,
+  `REACT_OBSERVATION`, `REACT_UNKNOWN_ACTION`, `REACT_FORCE_FINAL`,
+  `REACT_BUILTIN_ACTIONS`, and `REACT_COMPACTION_HEADER` in `cortex/prompts.py`.
+
+#### Code-first agents — `CortexBuilder`, code nodes, and static DAGs
+
+Cortex agents no longer require a `cortex.yaml` file. The whole agent —
+providers, tool servers, task graph — can be built in Python, and individual
+graph nodes can be plain Python functions.
+
+- **`CortexBuilder`** (`cortex/builder.py`) — a fluent builder that assembles a
+  `CortexConfig` in code: `.llm()`, `.provider()`, `.tool_server()`, `.task()`,
+  `.node()`, `.storage()`, `.validation()`, `.configure()`, `.build()`.
+- **`CortexFramework(config=...)`** — the framework constructor now accepts a
+  pre-built `CortexConfig` object, not just a YAML path. No file is read.
+- **`@builder.node` decorator** — register a Python callable as a graph node.
+  The function receives a `TaskContext` and returns its output (string, tuple,
+  dict/list → JSON, or `None`). Works bare or parameterised
+  (`@agent.node(depends_on=["fetch"])`).
+- **Static-DAG execution** — `AgentConfig.execution_mode` (`"planned"` |
+  `"static"`). Registering any code node flips the agent to `"static"`: the
+  task graph runs verbatim in dependency order with **no decomposition,
+  intent-gate, or capability-scout LLM calls**. The fan-out/fan-in wave engine,
+  validation gate, retries, streaming events, and envelope store are all
+  reused unchanged.
+- **Enriched `TaskContext`** — code nodes get `ctx.request`, `ctx.deps`
+  (upstream node outputs keyed by node name), `await ctx.llm(prompt)`, and
+  `await ctx.call_tool(server, tool, **params)`, wiring them into the same
+  LLM providers and MCP tool servers the rest of the agent uses.
+- **`SessionResult.node_outputs`** — per-node raw outputs keyed by node name,
+  populated for every task-mode session.
+- **`run_session(event_queue=...)` is now optional** — omit it when you only
+  want the returned `SessionResult`; an internal queue is created and discarded.
+- **`cortex.handler_registry`** — in-process registry backing code-node
+  handlers, addressed by the `cortex:node:<id>` sentinel scheme. Dotted-path
+  handlers (`"module.function"`) in `cortex.yaml` continue to work unchanged.
+- New top-level exports: `CortexBuilder`, `CortexConfig`, `TaskContext`,
+  `LLMResponse`, `TokenUsage`.
+
+#### `ValidationConfig.enabled`
+
+- The post-synthesis Validation Agent's master switch is now a declared schema
+  field (default `true`) instead of an extra key, so a config built in code
+  has a sensible default. `cortex.yaml` files may still set it explicitly.
+
+#### Session context for sub-tasks — `agent.inject_session_context`
+
+- **`AgentConfig.inject_session_context`** — new `cortex.yaml` key under `agent:` (default `true`). When enabled, every LLM-synthesis sub-task receives the original user request and the planner's current reasoning scratchpad in its system prompt.
+- **`RuntimeTask.session_goal` / `session_scratchpad`** — transient fields refreshed by the framework at each wave dispatch (not serialized; re-populated on resume). Previously a worker sub-agent saw only its own instruction and ran blind to the session.
+- New prompt fragments `TASK_EXEC_SESSION_CONTEXT` and `TASK_EXEC_SESSION_SCRATCHPAD_LINE` in `cortex/prompts.py`. The worker is still instructed to produce output for its own task only — the context is for consistency, not scope expansion.
+- The request is truncated to ~800 chars and the scratchpad to ~1500 chars to bound per-call token overhead; set the flag to `false` for budget-sensitive deployments.
+
+#### Iterative remediation — `validation.max_remediation_attempts`
+
+- **`ValidationConfig.max_remediation_attempts`** — new `cortex.yaml` key under `validation:` (default `2`). A sub-threshold response is now remediated over multiple passes instead of a single shot.
+- Each pass after the first receives the prior attempt's response and the findings it still failed on (`REMEDIATE_PRIOR_ATTEMPT` prompt fragment), so the model corrects without repeating a fix that already proved insufficient.
+- Set to `1` for the legacy single-shot behaviour.
+
+#### AppControl — cross-platform desktop application control
+
+A new `app_control` capability lets a sub-agent launch and drive native
+desktop applications on macOS, Windows, and Linux. Disabled by default;
+enable with `app_control.enabled: true`.
+
+- **`cortex/modules/app_control.py`** — `AppControl` (action execution) and
+  `AppCapabilityScout` (automation-interface discovery).
+- **Two-path execution model.** *Primary:* discover the app's scripting
+  dictionary — macOS `sdef` XML, Windows UI Automation tree / COM type-library
+  introspection, Linux AT-SPI / `xdotool` — and inject a compact summary into
+  the LLM prompt so it generates actions against the app's real API.
+  *Fallback:* when no scripting dictionary exists, enter a **screenshot vision
+  loop** — capture the screen, ask a vision-capable LLM for the next action,
+  execute it, and repeat up to `max_vision_steps` times.
+- **HITL is mandatory.** Every mutating action (launch, script, screenshot)
+  requires user approval; read-only queries (`get_running_apps`,
+  `get_window_text`) never prompt. `app_control.hitl_enabled` cannot be
+  disabled — the framework forces it back to `true` at init.
+- **`AppControlConfig`** — new `cortex.yaml` block: `enabled` (default
+  `false`), `hitl_enabled`, `timeout_seconds` (`30`), `sdef_max_chars`
+  (`8000`), `max_vision_steps` (`10`), and `vision_provider` (`"default"`).
+- Wired into the ReAct action menu as `app_control` and dispatched by
+  `GenericMCPAgent._call_app_control()`. New prompt fragments
+  `APP_CONTROL_SYSTEM`, `APP_CONTROL_USER`, `APP_CONTROL_WITH_CAPS_USER`, and
+  `APP_CONTROL_VISION_USER` in `cortex/prompts.py`.
+
+#### Built-in Playwright MCP server — browser automation
+
+- **`PlaywrightMCPConfig`** — new `cortex.yaml` block. When
+  `playwright_mcp.enabled: true`, the framework starts `@playwright/mcp` as an
+  internal stdio MCP server at startup and grants the agent a `browser`
+  capability automatically. It is **not** listed under `tool_servers` — users
+  don't configure it as an external server. Requires Node.js / `npx` on PATH.
+- Options: `browser` (`chromium` | `firefox` | `webkit`), `headless`
+  (default `false` — visible window), `startup_timeout_seconds` (`60`),
+  `viewport_width` / `viewport_height` (`1280×720`), and session persistence
+  via either `storage_state_path` (cookies + localStorage; defaults to
+  `{storage_base}/playwright_session.json`) or `user_data_dir` (full
+  persistent context — `user_data_dir` wins if both are set).
+- If the server fails to start, the framework logs a warning and continues —
+  the `browser` capability is simply unavailable rather than aborting init.
+
+#### Expanded `cortex` CLI — run agents and manage state from the terminal
+
+Nine new commands registered in `cortex/cli/main.py`, alongside the existing
+`setup` / `dev` / `dry-run` / `ants` / `config-ui` commands:
+
+- **`cortex run`** — run a single request through the agent and print the
+  response, streaming framework events.
+- **`cortex chat`** — interactive chat REPL, with mid-run message injection
+  (polls stdin and injects into the live session).
+- **`cortex sessions`** — `list`, `show`, `delete`, and `export` (JSON or
+  Markdown) session history.
+- **`cortex blueprints`** — `list`, `show`, `edit` (in `$EDITOR`), and
+  `delete` per-task learning blueprints.
+- **`cortex mcps`** — `list`, `test`, `add`, and `remove` external MCP
+  servers in the auto-discovered registry.
+- **`cortex stats`** — token usage and session statistics, per-user or
+  aggregate, in text or JSON.
+- **`cortex config`** — `validate` (`cortex.yaml`, with `--strict`) and
+  `show` a summary of the loaded configuration.
+- **`cortex providers`** — `list` configured LLM providers and `test`
+  reachability with a minimal prompt.
+- **`cortex storage`** — `status` (paths, sizes, backend health) and
+  `purge` (delete session history older than N days).
+
+Documented in full in `docs/CLI.md`.
+
+### Changed
+
+#### Iterative, best-candidate remediation
+
+- `ValidationAgent.validate_with_remediation()` loops up to `max_remediation_attempts` times. If no pass clears `threshold`, the **best-scoring** candidate across the original response and all attempts is delivered — previously a failed remediation always fell back to the original even when the remediation scored higher.
+- `PrimaryAgent.remediate()` gains a `prior_attempts` argument (the `(response, findings)` history) and a `stream` flag. Intermediate passes run with `stream=False`, so discarded attempts are never streamed to the user — `validate_with_remediation()` emits only the single response that is actually delivered.
+
+#### Richer decomposition history
+
+- The prior-session snippet fed into the decomposition prompt now includes each session's **outcome** — task completion counts (`4/5 tasks completed (1 failed)`) and the validation verdict — via the new `_format_history_record()` helper, not just request/summary. The decomposer can now weigh whether a similar plan shape succeeded before. Request/summary truncation also switched to head-and-tail so trailing detail survives.
+
+#### Conversational retry-with-feedback in the wave validation gate
+
+- When a task fails the validation gate, the retry no longer just appends a `[RETRY FEEDBACK]` blob to the instruction. The failed attempt is recorded on the new **`RuntimeTask.attempt_history`** field as an `{output, feedback}` pair, and `GenericMCPAgent._call_llm()` threads those pairs into the next call as real conversation turns (`user → assistant → user → …`).
+- The model now sees **its own prior output** followed by the judge's feedback, so it can fix only what was flagged instead of regenerating blind. Attempts accumulate — attempt 3 sees both attempt 1 and attempt 2, preventing oscillation between two failure modes.
+- A "Retry Context" stanza is added to the sub-agent system prompt on retries (`This is attempt N of 3 …`).
+- `_execute_once()` now splits a clean `base_instruction` from the feedback-appended `full_instruction`; non-LLM dispatch paths (code_exec, bash, app_control, MCP tool calls) keep the appended-block behaviour since they don't take a message list.
+- `attempt_history` is included in `RuntimeTaskGraph` snapshot/restore.
+
+#### Context-rich replan prompt
+
+- **`PrimaryAgent.replan()`** accepts a new `trigger_reason` argument and `REPLAN_USER` surfaces it. The framework's wave loop builds a specific label — `mandatory_failure:<task>`, `stale_blueprint:<task>`, or `adaptive_completed` — so the replanner knows *why* it was invoked instead of inferring intent from completed-task content.
+- Pending tasks are now rendered with their full **instruction and `depends_on` edges**, not just their names — a `modify`/`remove` op now acts on a task body the LLM has actually seen.
+- Completed-task and pending-task summaries use a new `_head_tail()` helper (head + tail truncation) instead of a plain `[:300]` / `[:1000]` slice, so trailing URLs, IDs, and error codes survive truncation.
+- The same enrichment (`trigger_reason` aside) is applied to `handle_user_interrupt()` so an in-flight user interrupt sees the same quality of context.
+
+#### UI surface — Synapse mid-run interrupt, Config Studio & Setup Wizard
+
+- **Synapse — mid-run interrupt.** The composer now stays active while a session streams: typing a message and pressing send (`↪`) or `Cmd+Enter` injects it via the new `POST /api/session/{ui_id}/interrupt` endpoint, which calls `framework.inject_user_message()`. An empty composer still cancels the session. The injected message renders as a dashed "mid-run" bubble, and `user_interrupt` SSE events update it with the framework's decision (`queued` → `replanning` / `stopping`).
+- **Synapse — ReAct progress.** The Task Graph rail and inline task stream now show a `↻ step N · action` badge per task, read from the `react_step` / `action` metadata already carried on `status` events.
+- **Synapse — HITL options.** Approval cards render the clarification event's own `options` as buttons (so App Control's `yes` / `no` prompts get matching buttons), falling back to approve/deny when no options are supplied.
+- **Config Studio.** Added `validation.enabled`, `validation.max_remediation_attempts`, and `validation.expose_report_to_user` to the validation settings, and a per-task-type **ReAct Loop** group (`react.max_iterations`, `react.observation_max_tokens`, `react.context_char_budget`).
+- **Setup Wizard.** Added a `max_remediation_attempts` field to the validation step. The generated `validation` block now writes `enabled` explicitly and the loader reads it — previously disabling validation omitted the block entirely, which let the schema default (`enabled: true`) silently switch it back on.
+
+#### Auto-tuned LLM concurrency
+
+- **`max_parallel_llm_calls` is now auto-derived.** New module **`cortex/llm/model_power.py`** maps `provider:model` patterns to a sensible starting ceiling — `1` for `local:*`, `8` for `anthropic:*haiku*` / `openai:*mini*` / `gemini:*flash*`, `6` for `anthropic:*sonnet*` / `openai:*gpt-4o*`, `4` for `anthropic:*opus*` / `openai:*gpt-4*`, falling back to `2` for unknowns. Picked at startup and logged (`max_parallel_llm_calls auto-derived: N (provider:model)`).
+- **`AdaptiveLLMGate` is now actually wired in.** The pre-existing AIMD self-tuning gate (`cortex/llm/adaptive_gate.py`) replaces the static `asyncio.Semaphore` inside `LLMClient` whenever `agent.concurrency.adaptive_llm_concurrency` is true (the default). Each `complete()` / `stream()` call reports `ok`, `empty`, and `latency` to the gate; it halves multiplicatively on bad signals (errors, empty responses, latency spikes >2.5× the best observed) and grows additively after sustained clean-and-saturated streaks. Queue-wait credit (`_credit_gate_wait`) is preserved.
+- **Setup wizard.** The "Max parallel LLM calls" field is removed from the Runtime & delivery step; Config UI keeps the field as an optional override with an updated hint ("leave blank for default behavior").
+- **Schema.** `agent.concurrency.max_parallel_llm_calls` is now `Optional[int]` with default `None` (= auto-derive). Existing configs that set an explicit integer are honoured as a pin — backward-compatible. Set `adaptive_llm_concurrency: false` to disable self-tuning and pin the gate at the value exactly.
+- **Docs.** See [`docs/CONFIGURATION.md` § "LLM concurrency auto-tuning"](docs/CONFIGURATION.md#llm-concurrency-auto-tuning).
+
+### Fixed
+
+- **`CredentialScrubber` now masks Anthropic API keys.** The `sk-` scrub pattern matched only `[A-Za-z0-9]`, so it stopped at the first hyphen and left Anthropic keys (`sk-ant-api03-…`) exposed in logs and streamed output. A dedicated `sk-ant-…` pattern was added.
+- **`LLMClient` accepts the `adaptive_llm_concurrency` kwarg.** `framework.py` was already passing this kwarg when constructing the client, but `LLMClient.__init__` didn't declare it — a startup `TypeError` waiting to fire. Now wired through correctly and gates on the value.
+
 ## [1.4.1] - 2026-05-08
 
 ### Fixed

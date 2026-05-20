@@ -2,4 +2,4 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY . .
 RUN pip install -e .
-CMD ["python", "-m", "cortex.cli.main", "dev", "--config", "/private/var/folders/44/m0y8v__n0nz6bw0djj6lnd1w0000gn/T/pytest-of-kritiranjandas/pytest-0/test_w11_publish_docker_genera0/cortex.yaml"]
+CMD ["python", "-m", "cortex.cli.main", "dev", "--config", "/private/var/folders/44/m0y8v__n0nz6bw0djj6lnd1w0000gn/T/pytest-of-kritiranjandas/pytest-149/test_w11_publish_docker_genera0/cortex.yaml"]

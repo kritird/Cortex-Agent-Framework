@@ -7,6 +7,8 @@ from typing import List, Optional
 from cortex.config.schema import ValidationConfig
 from cortex.exceptions import CortexConfigError
 from cortex.llm.client import LLMClient
+from cortex.prompts import VALIDATION_SYSTEM, VALIDATION_USER
+from cortex.streaming.status_events import ResultEvent
 
 logger = logging.getLogger(__name__)
 
@@ -34,43 +36,6 @@ class ValidationReport:
     validator_recommendation: str = ""
     status: str = "complete"  # complete | unavailable
 
-
-VALIDATION_PROMPT_TEMPLATE = """You are a strict quality assessor evaluating an AI agent's response.
-
-USER REQUEST:
-{user_request}
-
-AGENT RESPONSE:
-{final_response}
-
-Evaluate the response on exactly three dimensions. For each, provide a score from 0.0 to 1.0:
-
-1. INTENT_MATCH (0.0-1.0): Does the response address what the user actually asked for?
-   - 1.0 = perfectly addresses the intent
-   - 0.5 = partially addresses the intent
-   - 0.0 = completely misses the intent
-
-2. COMPLETENESS (0.0-1.0): Is the response complete and thorough?
-   - 1.0 = fully complete, nothing important missing
-   - 0.5 = partially complete, some important elements missing
-   - 0.0 = severely incomplete
-
-3. COHERENCE (0.0-1.0): Is the response coherent, clear, and well-structured?
-   - 1.0 = perfectly coherent and clear
-   - 0.5 = somewhat coherent with some confusion
-   - 0.0 = incoherent or contradictory
-
-Also list any specific findings (issues you found) with suggestions for improvement.
-
-Respond in this exact format:
-INTENT_MATCH_SCORE: <float>
-COMPLETENESS_SCORE: <float>
-COHERENCE_SCORE: <float>
-FINDINGS:
-- dimension: <intent_match|completeness|coherence> | issue: <description> | suggestion: <how to fix>
-(repeat for each finding, or write NONE if no significant issues)
-RECOMMENDATION: <brief overall assessment>
-"""
 
 
 def _parse_validation_response(text: str) -> tuple[Optional[float], Optional[float], Optional[float], List[ValidationFinding], str]:
@@ -141,7 +106,7 @@ class ValidationAgent:
         No session_id, no task list, no history.
         """
         cfg = config or self._config
-        prompt = VALIDATION_PROMPT_TEMPLATE.format(
+        prompt = VALIDATION_USER.format(
             user_request=user_request,
             final_response=final_response,
         )
@@ -150,7 +115,7 @@ class ValidationAgent:
             response = await asyncio.wait_for(
                 self._llm.complete(
                     messages=[{"role": "user", "content": prompt}],
-                    system="You are a precise quality evaluator. Follow the output format exactly.",
+                    system=VALIDATION_SYSTEM,
                     provider_name="default",
                     max_tokens=1024,
                 ),
@@ -229,26 +194,67 @@ class ValidationAgent:
             )
             return None, report
 
-        # Between critical and threshold — attempt remediation
-        logger.info("Attempting remediation: score=%.3f", score)
+        # Between critical and threshold — attempt remediation. Up to
+        # cfg.max_remediation_attempts passes; each pass sees the prior
+        # attempt's response and the findings it still failed on, so it can
+        # correct without repeating mistakes. The best-scoring candidate
+        # across the original and all attempts is delivered if none passes.
+        max_attempts = max(1, getattr(cfg, "max_remediation_attempts", 1))
+        logger.info(
+            "Attempting remediation: score=%.3f (up to %d pass%s)",
+            score, max_attempts, "" if max_attempts == 1 else "es",
+        )
+        best_response, best_report = initial_response, report
+        prior_attempts: list[tuple] = []
+
+        async def _deliver(text: str) -> None:
+            """Emit the finally chosen response. Intermediate remediation passes
+            run with stream=False, so the user only ever sees the response that
+            is actually delivered — never a discarded attempt."""
+            await event_queue.put(ResultEvent(
+                content=text, session_id=session_id, partial=False,
+            ))
+
         try:
-            remediated = await primary_agent.remediate(
-                session_id=session_id,
-                original_request=user_request,
-                original_response=initial_response,
-                validation_findings=report.findings,
-                event_queue=event_queue,
-            )
-            remediated_report = await self.validate(user_request, remediated)
-            if remediated_report.passed:
-                logger.info("Remediation successful: score=%.3f", remediated_report.composite_score or 0)
-                return remediated, remediated_report
-            else:
-                logger.warning(
-                    "Remediation did not improve quality: %.3f",
-                    remediated_report.composite_score or 0
+            for attempt in range(1, max_attempts + 1):
+                remediated = await primary_agent.remediate(
+                    session_id=session_id,
+                    original_request=user_request,
+                    original_response=initial_response,
+                    validation_findings=report.findings,
+                    event_queue=event_queue,
+                    prior_attempts=prior_attempts,
+                    stream=False,
                 )
-                return initial_response, report
+                remediated_report = await self.validate(user_request, remediated)
+                r_score = remediated_report.composite_score or 0.0
+
+                if r_score > (best_report.composite_score or 0.0):
+                    best_response, best_report = remediated, remediated_report
+
+                if remediated_report.passed:
+                    logger.info(
+                        "Remediation successful on attempt %d/%d: score=%.3f",
+                        attempt, max_attempts, r_score,
+                    )
+                    await _deliver(remediated)
+                    return remediated, remediated_report
+
+                logger.warning(
+                    "Remediation attempt %d/%d did not pass: %.3f",
+                    attempt, max_attempts, r_score,
+                )
+                # Feed this failed attempt into the next pass so it is not repeated.
+                prior_attempts.append((remediated, remediated_report.findings))
+
+            logger.warning(
+                "Remediation exhausted %d attempt(s) — delivering best candidate "
+                "(score=%.3f)",
+                max_attempts, best_report.composite_score or 0.0,
+            )
+            await _deliver(best_response)
+            return best_response, best_report
         except Exception as e:
             logger.error("Remediation failed: %s", e)
-            return initial_response, report
+            await _deliver(best_response)
+            return best_response, best_report

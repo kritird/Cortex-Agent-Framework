@@ -575,7 +575,10 @@ def _generate_config(data: dict) -> str:
 
     # Validation
     if data.get("validation_enabled"):
+        # ``enabled`` is written explicitly: ValidationConfig.enabled defaults to
+        # True, so an omitted block would silently re-enable validation.
         validation_cfg = {
+            "enabled": True,
             "threshold": data.get("validation_threshold", 0.75),
         }
         wave_gate_provider = data.get("wave_gate_llm_provider")
@@ -583,12 +586,17 @@ def _generate_config(data: dict) -> str:
             validation_cfg["wave_gate_llm_provider"] = wave_gate_provider
         _only_if(validation_cfg, "critical_threshold", data.get("validation_critical_threshold"), 0.40)
         _only_if(validation_cfg, "timeout_seconds", data.get("validation_timeout_seconds"), 150)
+        _only_if(validation_cfg, "max_remediation_attempts", data.get("validation_max_remediation_attempts"), 2)
         _only_if(validation_cfg, "weights_intent_match", data.get("validation_weights_intent_match"), 0.50)
         _only_if(validation_cfg, "weights_completeness", data.get("validation_weights_completeness"), 0.30)
         _only_if(validation_cfg, "weights_coherence", data.get("validation_weights_coherence"), 0.20)
         _only_if(validation_cfg, "expose_report_to_user", data.get("validation_expose_report_to_user"), True)
         _only_if(validation_cfg, "expose_score_to_user", data.get("validation_expose_score_to_user"), False)
         config["validation"] = validation_cfg
+    else:
+        # Persist the explicit off-state — without it the schema default
+        # (enabled=True) would turn validation back on at framework load.
+        config["validation"] = {"enabled": False}
 
     # History
     if data.get("history_enabled"):
@@ -666,6 +674,28 @@ def _generate_config(data: dict) -> str:
     # Workspace Bash
     if data.get("workspace_bash_enabled"):
         config["workspace_bash"] = {"enabled": True, "hitl_enabled": True}
+
+    # App Control — native app launch + control (AppleScript / PowerShell / vision loop)
+    if data.get("app_control_enabled"):
+        ac_cfg: dict = {"enabled": True}
+        _only_if(ac_cfg, "hitl_enabled",     data.get("app_control_hitl_enabled"),     True)
+        _only_if(ac_cfg, "timeout_seconds",  data.get("app_control_timeout_seconds"),  30)
+        _only_if(ac_cfg, "sdef_max_chars",   data.get("app_control_sdef_max_chars"),   8000)
+        _only_if(ac_cfg, "max_vision_steps", data.get("app_control_max_vision_steps"), 10)
+        _only_if(ac_cfg, "vision_provider",  data.get("app_control_vision_provider"),  "default")
+        config["app_control"] = ac_cfg
+
+    # Playwright MCP — built-in browser automation (started internally as stdio MCP)
+    if data.get("playwright_mcp_enabled"):
+        pw_cfg: dict = {"enabled": True}
+        _only_if(pw_cfg, "browser",                 data.get("playwright_mcp_browser"),                 "chromium")
+        _only_if(pw_cfg, "headless",                data.get("playwright_mcp_headless"),                False)
+        _only_if(pw_cfg, "startup_timeout_seconds", data.get("playwright_mcp_startup_timeout_seconds"), 60)
+        _only_if(pw_cfg, "storage_state_path",      data.get("playwright_mcp_storage_state_path"),      None)
+        _only_if(pw_cfg, "user_data_dir",           data.get("playwright_mcp_user_data_dir"),           None)
+        _only_if(pw_cfg, "viewport_width",          data.get("playwright_mcp_viewport_width"),          1280)
+        _only_if(pw_cfg, "viewport_height",         data.get("playwright_mcp_viewport_height"),         720)
+        config["playwright_mcp"] = pw_cfg
 
     # Ant Colony
     if data.get("ant_colony_enabled"):
@@ -748,6 +778,8 @@ def _load_existing_config(config_path: str) -> dict:
     user_raw = raw.get("user_config", {}) or {}
     sandbox_raw = raw.get("code_sandbox", {}) or {}
     workspace_bash_raw = raw.get("workspace_bash", {}) or {}
+    app_control_raw = raw.get("app_control", {}) or {}
+    playwright_mcp_raw = raw.get("playwright_mcp", {}) or {}
     file_input_raw = raw.get("file_input", {}) or {}
     ui_raw = raw.get("ui", {}) or {}
     ui_auth_raw = ui_raw.get("auth", {}) or {}
@@ -826,11 +858,14 @@ def _load_existing_config(config_path: str) -> dict:
         "file_input_max_size_mb": file_input_raw.get("max_size_mb", 50),
         "file_input_allowed_mime_types": _list_to_lines(file_input_raw.get("allowed_mime_types", [])),
         # ── Validation ──
-        "validation_enabled": "threshold" in validation_raw,
+        # Honour an explicit ``enabled`` key; fall back to the presence heuristic
+        # only for legacy configs written before ``enabled`` became a field.
+        "validation_enabled": validation_raw.get("enabled", "threshold" in validation_raw),
         "wave_gate_llm_provider": validation_raw.get("wave_gate_llm_provider", "default"),
         "validation_threshold": validation_raw.get("threshold", 0.75),
         "validation_critical_threshold": validation_raw.get("critical_threshold", 0.40),
         "validation_timeout_seconds": validation_raw.get("timeout_seconds", 150),
+        "validation_max_remediation_attempts": validation_raw.get("max_remediation_attempts", 2),
         "validation_weights_intent_match": validation_raw.get("weights_intent_match", 0.50),
         "validation_weights_completeness": validation_raw.get("weights_completeness", 0.30),
         "validation_weights_coherence": validation_raw.get("weights_coherence", 0.20),
@@ -875,6 +910,22 @@ def _load_existing_config(config_path: str) -> dict:
         "code_sandbox_auto_add_to_yaml": sandbox_raw.get("auto_add_to_yaml", False),
         # ── Workspace Bash ──
         "workspace_bash_enabled": workspace_bash_raw.get("enabled", False),
+        # ── App Control ──
+        "app_control_enabled":          app_control_raw.get("enabled",          False),
+        "app_control_hitl_enabled":     app_control_raw.get("hitl_enabled",     True),
+        "app_control_timeout_seconds":  app_control_raw.get("timeout_seconds",  30),
+        "app_control_sdef_max_chars":   app_control_raw.get("sdef_max_chars",   8000),
+        "app_control_max_vision_steps": app_control_raw.get("max_vision_steps", 10),
+        "app_control_vision_provider":  app_control_raw.get("vision_provider",  "default"),
+        # ── Playwright MCP (built-in browser automation) ──
+        "playwright_mcp_enabled":                 playwright_mcp_raw.get("enabled",                 False),
+        "playwright_mcp_browser":                 playwright_mcp_raw.get("browser",                 "chromium"),
+        "playwright_mcp_headless":                playwright_mcp_raw.get("headless",                False),
+        "playwright_mcp_startup_timeout_seconds": playwright_mcp_raw.get("startup_timeout_seconds", 60),
+        "playwright_mcp_storage_state_path":      playwright_mcp_raw.get("storage_state_path",      ""),
+        "playwright_mcp_user_data_dir":           playwright_mcp_raw.get("user_data_dir",           ""),
+        "playwright_mcp_viewport_width":          playwright_mcp_raw.get("viewport_width",          1280),
+        "playwright_mcp_viewport_height":         playwright_mcp_raw.get("viewport_height",         720),
         # ── Ant Colony ──
         "ant_colony_enabled": ant_colony_raw.get("enabled", False),
         "ant_colony_base_port": ant_colony_raw.get("base_port", 8100),

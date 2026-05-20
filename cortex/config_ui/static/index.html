@@ -579,6 +579,64 @@ pre.code-block { font-family: 'JetBrains Mono', monospace; font-size: 12px; line
       </div>
     </div>
 
+    <!-- ══ APP CONTROL ══ -->
+    <div x-show="activeSection==='app_control'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">App Control</div>
+        <div class="section-desc">Launch and drive native applications. Primary path uses each app's scripting interface (AppleScript on macOS, UI Automation / COM on Windows); when no scripting dictionary is found, a vision loop takes screenshots and asks the LLM for the next action. Every mutating action requires user approval unless HITL is disabled.</div>
+      </div>
+      <template x-if="formValues.app_control !== undefined">
+        <div>
+          <div class="field-group glass" style="padding:20px 24px">
+            <div class="group-title">App Control Configuration</div>
+            <template x-for="f in SCHEMAS.app_control.fields" :key="f.key">
+              <div class="field-row">
+                <div>
+                  <div class="field-label" x-text="f.label"></div>
+                  <div class="field-hint" x-text="f.hint"></div>
+                </div>
+                <div x-html="renderField(f)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('app_control')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ══ PLAYWRIGHT MCP ══ -->
+    <div x-show="activeSection==='playwright_mcp'">
+      <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
+        <div class="section-title">Browser Automation (Playwright)</div>
+        <div class="section-desc">Built-in Playwright MCP — starts <code>@playwright/mcp</code> internally as a stdio MCP server. The agent automatically receives a <code>browser</code> capability for navigation, clicks, form fills, and screenshots. Session persistence keeps cookies and localStorage across runs so logins survive.</div>
+      </div>
+      <template x-if="formValues.playwright_mcp !== undefined">
+        <div>
+          <div class="field-group glass" style="padding:20px 24px">
+            <div class="group-title">Playwright Configuration</div>
+            <template x-for="f in SCHEMAS.playwright_mcp.fields" :key="f.key">
+              <div class="field-row">
+                <div>
+                  <div class="field-label" x-text="f.label"></div>
+                  <div class="field-hint" x-text="f.hint"></div>
+                </div>
+                <div x-html="renderField(f)"></div>
+              </div>
+            </template>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-primary" :disabled="saving" @click="saveSection('playwright_mcp')">
+              <span x-text="saving ? 'Saving…' : 'Save Changes'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <!-- ══ AUTO MCPs ══ -->
     <div x-show="activeSection==='auto_mcps'">
       <div class="glass glass-accent" style="padding:20px 24px;margin-bottom:28px">
@@ -847,6 +905,8 @@ const SECTIONS = [
   { id:'llm_providers',label:'LLM Providers',        group:'config',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   { id:'blueprints',   label:'Blueprints',           group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>' },
   { id:'code_registry',label:'Code Registry',        group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' },
+  { id:'app_control',  label:'App Control',          group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="2"/><line x1="8" y1="20" x2="16" y2="20"/><line x1="12" y1="18" x2="12" y2="20"/></svg>' },
+  { id:'playwright_mcp',label:'Browser (Playwright)', group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>' },
   { id:'auto_mcps',    label:'Auto-Discovered MCPs', group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>' },
   { id:'ant_colony',   label:'Ant Colony',           group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/><polygon points="12 8 17 11 17 16 12 19 7 16 7 11"/></svg>' },
   { id:'system',       label:'Learning & History',   group:'runtime', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07M8.46 8.46a5 5 0 000 7.07"/></svg>' },
@@ -874,6 +934,7 @@ const SCHEMAS = {
         { key:'agent.concurrency.max_concurrent_sessions_per_user', type:'number', label:'Max Sessions (per user)', hint:'Per-user session limit. Prevents a single user from consuming all capacity.' },
         { key:'agent.concurrency.max_tasks_per_session',            type:'number', label:'Max Tasks / Session',    hint:'Maximum sub-tasks a single session can dispatch in its lifetime. Guards against runaway decomposition.' },
         { key:'agent.concurrency.max_parallel_tasks',               type:'number', label:'Max Parallel Tasks',     hint:'Maximum sub-tasks executed concurrently within one session. Higher values use more LLM quota simultaneously.' },
+        { key:'agent.concurrency.max_parallel_llm_calls',           type:'number', label:'Max Parallel LLM Calls', hint:'Auto-derived from your provider+model and self-tuned at runtime by AdaptiveLLMGate. Leave blank for default behavior. Set an explicit value only to pin a fixed ceiling (e.g. for benchmarking or hard rate-limited APIs).' },
         { key:'agent.concurrency.max_mcp_agent_llm_calls',          type:'number', label:'Max MCP LLM Calls',      hint:'Maximum LLM calls an MCP sub-agent may make for a single task. Guards against LLM call loops.' },
       ]},
       { title: 'Streaming (SSE)', fields: [
@@ -939,6 +1000,11 @@ const SCHEMAS = {
       { title: 'Retry', fields: [
         { key:'retry.max_attempts',    type:'number', label:'Max Attempts',     hint:'How many times to retry a failed task before marking it permanently failed.' },
         { key:'retry.backoff_initial_ms', type:'number', label:'Backoff Initial (ms)', hint:'Initial backoff delay before the first retry. Doubles on each subsequent attempt.' },
+      ]},
+      { title: 'ReAct Loop', fields: [
+        { key:'react.max_iterations',        type:'number', label:'Max Iterations',        hint:'Safety cap on reason→act→observe steps. On reaching it the sub-agent is forced to emit a best-effort final answer. The loop normally finishes well before this.' },
+        { key:'react.observation_max_tokens',type:'number', label:'Observation Max Tokens',hint:'Each tool observation is truncated to roughly this many tokens before being fed back into the loop, so the running context cannot explode.' },
+        { key:'react.context_char_budget',   type:'number', label:'Context Char Budget',   hint:'Once the running reason/act/observe conversation exceeds this many characters, the oldest steps are digested into a compact summary.' },
       ]},
       { title: 'Output', fields: [
         { key:'output.content_summary_tokens', type:'number', label:'Summary Tokens', hint:'Token budget for the task\'s output summary included in the final synthesis prompt.' },
@@ -1032,6 +1098,30 @@ const SCHEMAS = {
     ]
   },
 
+  app_control: {
+    fields: [
+      { key:'app_control.enabled',          type:'toggle', label:'Enabled',                hint:'Allow the agent to launch and drive native applications (AppleScript on macOS, PowerShell + UIA on Windows, screenshot vision loop as fallback).' },
+      { key:'app_control.hitl_enabled',     type:'toggle', label:'Require HITL',           hint:'Prompt the user before every mutating action (launch / script / screenshot). Disable only in fully trusted automation contexts.' },
+      { key:'app_control.timeout_seconds',  type:'number', label:'Timeout (s)',            hint:'Per-action subprocess timeout. AppleScript / PowerShell / shell calls killed after this.' },
+      { key:'app_control.sdef_max_chars',   type:'number', label:'sdef Max Chars',         hint:'Maximum chars of scripting-dictionary summary injected into LLM context. Long summaries are trimmed.' },
+      { key:'app_control.max_vision_steps', type:'number', label:'Max Vision Steps',       hint:'Upper bound on screenshot → action loop iterations when no scripting dictionary is found for the target app.' },
+      { key:'app_control.vision_provider',  type:'text',   label:'Vision Provider',        hint:'LLM provider key for vision steps. Use "default" to inherit the primary provider.' },
+    ]
+  },
+
+  playwright_mcp: {
+    fields: [
+      { key:'playwright_mcp.enabled',                 type:'toggle', label:'Enabled',               hint:'Start @playwright/mcp internally as a stdio MCP server. The agent gets a "browser" capability automatically. Requires Node.js + npx on PATH.' },
+      { key:'playwright_mcp.browser',                 type:'select', label:'Browser', options:['chromium','firefox','webkit'], hint:'Which browser engine Playwright should drive.' },
+      { key:'playwright_mcp.headless',                type:'toggle', label:'Headless',              hint:'Hide the browser window (CI / server mode). Off = visible browser.' },
+      { key:'playwright_mcp.startup_timeout_seconds', type:'number', label:'Startup Timeout (s)',   hint:'Time budget for the Playwright MCP server to come up before giving up.' },
+      { key:'playwright_mcp.viewport_width',          type:'number', label:'Viewport Width',        hint:'Browser viewport width in pixels.' },
+      { key:'playwright_mcp.viewport_height',         type:'number', label:'Viewport Height',       hint:'Browser viewport height in pixels.' },
+      { key:'playwright_mcp.storage_state_path',      type:'text',   label:'Storage State Path',    hint:'JSON file that persists cookies + localStorage across runs so logins survive. Leave blank to auto-default to {storage}/playwright_session.json.' },
+      { key:'playwright_mcp.user_data_dir',           type:'text',   label:'User Data Dir',         hint:'Full persistent browser profile directory (extensions, IndexedDB, service workers). Takes precedence over storage_state_path when set.' },
+    ]
+  },
+
   auto_mcps: {
     fields: [
       { key:'external_discovery.enabled',             type:'toggle', label:'Enabled',             hint:'Allow the scout to query public MCP registries for MCPs the agent doesn\'t already know about.' },
@@ -1072,9 +1162,12 @@ const SCHEMAS = {
         { key:'learning.max_lesson_chars',         type:'number', label:'Max Lesson Chars',          hint:'Character limit for lessons stored in a blueprint. Older lessons are trimmed when exceeded.' },
       ]},
       { title: 'Validation', fields: [
+        { key:'validation.enabled',              type:'toggle', label:'Enabled',               hint:'Master switch for the post-synthesis Validation Agent. When off, the final response is delivered without a scored quality gate.' },
         { key:'validation.threshold',            type:'number', label:'Threshold',             hint:'Composite score below which a session is marked as a partial failure. Range: 0–1.' },
         { key:'validation.critical_threshold',   type:'number', label:'Critical Threshold',   hint:'Score below which a session is marked critically failed and logged as a quality event. Range: 0–1.' },
         { key:'validation.timeout_seconds',      type:'number', label:'Timeout (s)',           hint:'Time budget for the LLM-based validation gate.' },
+        { key:'validation.max_remediation_attempts', type:'number', label:'Max Remediation Attempts', hint:'Passes allowed to fix a sub-threshold response. Each pass after the first sees the prior attempt and the findings it still failed. 1 = single-shot (legacy).' },
+        { key:'validation.expose_report_to_user',type:'toggle', label:'Expose Report to User', hint:'Include the validation findings report in the API response payload returned to the caller.' },
         { key:'validation.expose_score_to_user', type:'toggle', label:'Expose Score to User', hint:'Include the validation score in the API response payload returned to the caller.' },
         { key:'validation.wave_gate_llm_provider', type:'text', label:'Wave Gate LLM Provider', hint:'LLM provider key used for wave-level output validation.' },
       ]},
@@ -1191,6 +1284,35 @@ function app() {
         const r = await fetch(`/api/section/${id}`);
         const j = await r.json();
         if (j.ok) {
+          // Seed sane defaults for sections where the YAML may have nothing yet,
+          // so users only have to flip the top-level toggle on — sub-fields are
+          // already populated with production-ready values they can tweak.
+          const SECTION_DEFAULTS = {
+            app_control: { app_control: {
+              enabled: false, hitl_enabled: true, timeout_seconds: 30,
+              sdef_max_chars: 8000, max_vision_steps: 10,
+              vision_provider: 'default',
+            } },
+            playwright_mcp: { playwright_mcp: {
+              enabled: false, browser: 'chromium', headless: false,
+              startup_timeout_seconds: 60,
+              storage_state_path: '', user_data_dir: '',
+              viewport_width: 1280, viewport_height: 720,
+            } },
+            // validation.enabled / max_remediation_attempts default to on/2 in
+            // the schema — seed them so a config that predates these keys does
+            // not show the toggle as falsely "off".
+            system: { validation: {
+              enabled: true, max_remediation_attempts: 2,
+              expose_report_to_user: true,
+            } },
+          };
+          const defaults = SECTION_DEFAULTS[id];
+          if (defaults) {
+            for (const k of Object.keys(defaults)) {
+              j.data[k] = { ...defaults[k], ...(j.data[k] || {}) };
+            }
+          }
           this.sectionData[id] = j.data;
           this.formValues = JSON.parse(JSON.stringify(j.data));
           // auto-select first items in list+detail sections

@@ -631,6 +631,8 @@ recommending equitable AI deployment strategies.
 | A pre-configured agent for users to install | **Python package** (`cortex publish package`) |
 | Specialist agents at different scales | **ANT Colony** (`AntColony.hatch()`) |
 
+**Defining the agent** — every mode above takes its agent definition from either a `cortex.yaml` file *or* a Python `CortexBuilder` (`CortexFramework(config=builder.build())`). For a deterministic graph of Python functions, register `@agent.node` **code nodes** — the agent runs as a static DAG. See [Getting Started § Code-First Agents](GETTING_STARTED.md#code-first-agents--cortexbuilder).
+
 ---
 
 ### 1. Customer Support Triage

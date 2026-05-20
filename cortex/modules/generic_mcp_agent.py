@@ -3,18 +3,33 @@ import asyncio
 import importlib
 import logging
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from cortex.config.schema import TaskTypeConfig
+from cortex.config.schema import ReactConfig, TaskTypeConfig
 from cortex.exceptions import CortexTaskError, CortexToolUnavailableError
-from cortex.llm.client import LLMClient
+from cortex.llm.client import LLMClient, LLMQueueCredit, llm_queue_credit
 from cortex.llm.context import TaskContext, TokenUsage
+from cortex.modules.react_loop import ActionResult, ReactLoop, ReactResult
 from cortex.modules.result_envelope_store import ResultEnvelope, ResultEnvelopeStore
 from cortex.modules.signal_registry import SignalRegistry
 from cortex.modules.task_graph_compiler import RuntimeTask
 from cortex.modules.tool_server_registry import ToolServerRegistry
+from cortex.prompts import (
+    APP_CONTROL_SYSTEM,
+    APP_CONTROL_WITH_CAPS_USER,
+    BASH_CODEGEN_SYSTEM,
+    BASH_CODEGEN_USER,
+    REACT_BUILTIN_ACTIONS,
+    REACT_SYSTEM,
+    REACT_USER_INITIAL,
+    TASK_EXEC_HITL_SUFFIX,
+    TASK_EXEC_SESSION_CONTEXT,
+    TASK_EXEC_SESSION_SCRATCHPAD_LINE,
+    TASK_EXEC_SYSTEM,
+)
 from cortex.security.bash_sandbox import BashSandbox
 from cortex.security.scrubber import CredentialScrubber
 
@@ -113,6 +128,8 @@ class GenericMCPAgent:
                                  # injected by CortexFramework; triggers CapabilityScout
                                  # mid-run when no tool server is found for a capability.
         workspace_bash=None,     # cortex.modules.workspace_bash.WorkspaceBash instance
+        app_control=None,        # cortex.modules.app_control.AppControl instance
+        app_control_config=None, # cortex.config.schema.AppControlConfig
         hitl_relay_url: Optional[str] = None,  # URL of per-session HITL relay (for ant calls)
         builtin_web_search_enabled: bool = True,
     ):
@@ -123,8 +140,39 @@ class GenericMCPAgent:
         self._sandbox_config = sandbox_config
         self._discovery_callback = discovery_callback
         self._workspace_bash = workspace_bash
+        self._app_control = app_control
+        self._app_control_config = app_control_config
         self._hitl_relay_url = hitl_relay_url
         self._builtin_web_search_enabled = builtin_web_search_enabled
+
+    async def _run_with_credit_timeout(self, coro, timeout: float):
+        """Run ``coro`` under a wall-clock timeout that excludes time the task
+        spent queued for the shared LLM gate.
+
+        A single-stream LLM backend serializes inference, so a task running
+        alongside others is charged wall-clock time it spent merely waiting its
+        turn. That starvation is credited back via the ``llm_queue_credit``
+        ContextVar, so a task is timed out only for its *own* work. Raises
+        ``asyncio.TimeoutError`` on breach — callers handle it as before.
+        """
+        credit = LLMQueueCredit()
+        token = llm_queue_credit.set(credit)
+        try:
+            inner = asyncio.ensure_future(coro)
+            start = time.monotonic()
+            while True:
+                done, _ = await asyncio.wait({inner}, timeout=5.0)
+                if inner in done:
+                    return inner.result()
+                if time.monotonic() - start > timeout + credit.seconds:
+                    inner.cancel()
+                    try:
+                        await inner
+                    except BaseException:
+                        pass
+                    raise asyncio.TimeoutError()
+        finally:
+            llm_queue_credit.reset(token)
 
     async def execute_task(
         self,
@@ -145,9 +193,9 @@ class GenericMCPAgent:
 
         for attempt in range(1, max_attempts + 1):
             try:
-                envelope = await asyncio.wait_for(
+                envelope = await self._run_with_credit_timeout(
                     self._execute_once(task, tool_registry, llm_client, envelope_store, config, event_queue=event_queue),
-                    timeout=config.timeout_seconds,
+                    config.timeout_seconds,
                 )
                 await envelope_store.write_envelope(envelope)
                 signal_registry.fire_signal(task.task_id.split("/")[0], task.task_id)
@@ -360,6 +408,129 @@ class GenericMCPAgent:
             logger.error("workspace_bash error for task %s: %s", task.task_id, exc)
             return f"[workspace_bash error: {exc}]"
 
+    async def _call_app_control(
+        self,
+        task: RuntimeTask,
+        instruction: str,
+        session_id: str,
+        llm_client,
+        config,
+        event_queue,
+    ) -> str:
+        """
+        Dispatch an app_control task using a two-path strategy:
+
+        1. Primary — scripting dictionary
+           Run AppCapabilityScout to find the app's automation interface (macOS
+           sdef, Windows UI Automation / COM). Inject the summary into the LLM
+           prompt so it generates precise, API-correct actions.
+
+        2. Fallback — screenshot vision loop
+           When no scripting interface is found, enter a screenshot → vision LLM
+           → execute action loop (up to max_vision_steps).
+        """
+        if self._app_control is None:
+            return "[app_control not enabled — add app_control.enabled: true to cortex.yaml]"
+
+        import platform as _platform
+        self._app_control._event_queue = event_queue
+
+        # Pull config knobs (defaults if no config provided)
+        ac_cfg = self._app_control_config
+        sdef_max_chars   = getattr(ac_cfg, "sdef_max_chars",   8000)
+        max_vision_steps = getattr(ac_cfg, "max_vision_steps", 10)
+        vision_provider  = getattr(ac_cfg, "vision_provider",  "default")
+        scout_timeout    = getattr(ac_cfg, "timeout_seconds",  15)
+
+        # ── Step 1: extract the app name from the instruction ─────────────────
+        app_name = await self._extract_app_name(instruction, llm_client, config)
+
+        # ── Step 2: run capability scout ──────────────────────────────────────
+        from cortex.modules.app_control import AppCapabilityScout
+        scout = AppCapabilityScout(
+            timeout_seconds=scout_timeout,
+            sdef_max_chars=sdef_max_chars,
+        )
+        capability = await scout.discover(app_name)
+        logger.info(
+            "AppCapabilityScout: app=%r type=%s (task %s)",
+            app_name, capability.type, task.task_id,
+        )
+
+        # ── Step 3a: scripting dictionary path ────────────────────────────────
+        if capability.type != "none":
+            try:
+                prompt = APP_CONTROL_WITH_CAPS_USER.format(
+                    instruction=instruction,
+                    platform=_platform.system(),
+                    capabilities=capability.summary,
+                    app_name=app_name,
+                )
+                resp = await llm_client.complete(
+                    messages=[{"role": "user", "content": prompt}],
+                    system=APP_CONTROL_SYSTEM,
+                    provider_name=config.llm_provider or "default",
+                    max_tokens=800,
+                )
+                raw_plan = (resp.content or "").strip()
+            except Exception as e:
+                return f"[app_control: LLM plan generation failed — {e}]"
+
+            blocks = [b.strip() for b in raw_plan.split("---") if b.strip()]
+            results = []
+            for block in blocks:
+                result = await self._app_control._execute_action_block(block, task, session_id)
+                results.append(result)
+            return "\n---\n".join(results) if results else "[app_control: no actions generated]"
+
+        # ── Step 3b: vision loop fallback ─────────────────────────────────────
+        logger.info(
+            "app_control: no scripting dict for %r — falling back to vision loop "
+            "(max_steps=%d, provider=%s)",
+            app_name, max_vision_steps, vision_provider,
+        )
+        import os as _os
+        vision_output_dir = _os.path.join(self._session_storage_path, "app_control_vision")
+        return await self._app_control.execute_with_vision_loop(
+            instruction=instruction,
+            app_name=app_name,
+            llm_client=llm_client,
+            session_id=session_id,
+            task=task,
+            output_dir=vision_output_dir,
+            max_steps=max_vision_steps,
+            vision_provider=vision_provider,
+            event_queue=event_queue,
+        )
+
+    async def _extract_app_name(
+        self, instruction: str, llm_client, config
+    ) -> str:
+        """Ask the LLM to extract the target app name from a free-text instruction."""
+        # Fast heuristic first: look for quoted app names or known patterns
+        quoted = re.search(r'"([^"]{2,40})"', instruction)
+        if quoted:
+            return quoted.group(1)
+
+        # Small LLM call to identify the app
+        try:
+            resp = await llm_client.complete(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Extract the name of the application being controlled from this "
+                        f"instruction. Reply with ONLY the app name — no punctuation, "
+                        f"no explanation:\n\n{instruction[:400]}"
+                    ),
+                }],
+                system="You are a text extractor. Reply with only the app name.",
+                provider_name=config.llm_provider or "default",
+                max_tokens=15,
+            )
+            return (resp.content or "").strip().strip('"').strip("'")
+        except Exception:
+            return ""
+
     async def _execute_once(
         self,
         task: RuntimeTask,
@@ -376,7 +547,9 @@ class GenericMCPAgent:
         tool_trace = []
         kwargs["event_queue"] = event_queue
         # Derive available capabilities from the registry for LLM context
-        available_capabilities = list(tool_registry._capability_map.keys()) + ["llm_synthesis", "workspace_bash"]
+        available_capabilities = list(tool_registry._capability_map.keys()) + [
+            "llm_synthesis", "workspace_bash", "app_control",
+        ]
 
         # Log principal identity for audit trail
         if task.principal:
@@ -390,6 +563,7 @@ class GenericMCPAgent:
 
         # Resolve input_refs from storage
         input_context = ""
+        upstream_files: list[str] = []
         for ref in task.input_refs:
             parts = ref.split(":")
             ref_session = parts[0] if len(parts) > 1 else session_id
@@ -401,15 +575,32 @@ class GenericMCPAgent:
             ref_envelope = await envelope_store.read_envelope(ref_session, ref_task_id)
             if ref_envelope:
                 input_context += f"\n\n[Input from {ref_task_id}]:\n{ref_envelope.content_summary}"
+                # Pipe any artifacts produced by the upstream task into this one
+                # so app_control / code_exec can act on them (e.g. open the file
+                # generated by an earlier code_exec step).
+                refs_files = getattr(ref_envelope, "output_files", None) or []
+                upstream_files.extend(refs_files)
 
-        # Build full instruction
-        full_instruction = task.instruction
+        # Build base instruction (instruction + upstream context).
+        # The retry-feedback block is *not* baked in here — LLM-synthesis paths
+        # consume `task.attempt_history` and thread prior (output, feedback)
+        # pairs as real conversation turns inside `_call_llm`. Non-LLM paths
+        # (code_exec, bash, app_control, MCP tool calls) don't take a message
+        # list, so for them we append a compact feedback block below.
+        base_instruction = task.instruction
         if input_context:
-            full_instruction += f"\n\nContext from prior tasks:{input_context}"
+            base_instruction += f"\n\nContext from prior tasks:{input_context}"
+        if upstream_files:
+            base_instruction += (
+                "\n\nUPSTREAM_FILES (artifacts produced by prior tasks):\n  "
+                + "\n  ".join(upstream_files)
+                + "\n\nWhen launching or opening files, prefer one of these absolute paths."
+            )
 
-        # Retry-with-feedback: if the wave validation gate re-queued this task
-        # with analysis of what went wrong on the previous attempt, surface it
-        # so the sub-agent can correct itself instead of blindly re-running.
+        # For non-LLM dispatch paths: append validation feedback to instruction
+        # (legacy behavior). The LLM-synthesis path uses task.attempt_history
+        # instead and ignores this block.
+        full_instruction = base_instruction
         if task.validation_feedback:
             full_instruction += (
                 "\n\n[RETRY FEEDBACK — the previous attempt failed validation]\n"
@@ -421,169 +612,38 @@ class GenericMCPAgent:
         output_type = config.output_format
         generated_script: Optional[str] = None   # populated for code_exec tasks
         forged_server_path: Optional[str] = None  # populated for forge_mcp tasks
+        produced_files: list[str] = []           # absolute paths produced by this task
         token_usage = TokenUsage()
 
-        # Scripted handler
+        # Scripted-handler / code-node tasks run their Python handler directly:
+        # deterministic, no LLM step to loop over. Every other task is executed
+        # by the ReAct loop, which reasons, picks an action, observes the
+        # result, and repeats until the sub-agent decides the task is done.
         if config.complexity == "scripted" and config.handler:
             output_content, output_type = await self._call_handler(
                 config.handler,
                 task, full_instruction, config,
+                tool_registry=tool_registry,
+                llm_client=llm_client,
+                envelope_store=envelope_store,
             )
             tool_trace.append(f"handler:{config.handler}")
-
-        # Code execution sandbox
-        elif config.capability_hint == "code_exec":
-            output_content, generated_script = await self._call_code_exec(
+        else:
+            react_result = await self._run_react_loop(
                 task=task,
-                instruction=full_instruction,
                 config=config,
+                base_instruction=base_instruction,
+                tool_registry=tool_registry,
                 llm_client=llm_client,
-                tool_trace=tool_trace,
-                event_queue=kwargs.get("event_queue"),
-            )
-
-        # ToolForge — generate a new MCP server script and stage it for wave-boundary registration
-        elif config.capability_hint == "forge_mcp":
-            output_content, forged_server_path = await self._call_forge_mcp(
-                task=task,
-                instruction=full_instruction,
-                config=config,
-                llm_client=llm_client,
-                tool_trace=tool_trace,
-                event_queue=kwargs.get("event_queue"),
-            )
-
-        # Bash capability
-        elif config.capability_hint == "bash":
-            sandbox = BashSandbox(self._session_storage_path)
-            output_content = await sandbox.execute(full_instruction)
-            tool_trace.append("bash_sandbox")
-
-        # Workspace bash — reads/writes/executes in the user's own workspace directory
-        elif config.capability_hint == "workspace_bash":
-            output_content = await self._call_workspace_bash(
-                task=task,
-                instruction=full_instruction,
-                session_id=session_id,
-                event_queue=event_queue,
-            )
-            tool_trace.append("workspace_bash")
-
-        # LLM synthesis
-        elif config.capability_hint == "llm_synthesis":
-            output_content, token_usage = await self._call_llm(
-                task_id=task.task_id,
-                instruction=full_instruction,
-                config=config,
-                llm_client=llm_client,
-                tool_trace=tool_trace,
-                task=task,
                 event_queue=event_queue,
                 available_capabilities=available_capabilities,
             )
-
-        # Web search — try configured tool server first, fall back to built-in DuckDuckGo
-        elif config.capability_hint == "web_search":
-            conn = await _select_tool_for_task("web_search", config.tool_servers, tool_registry)
-            if conn:
-                try:
-                    output_content = await self.call_tool_server(
-                        server_name=conn.server_name,
-                        tool_name=config.capability_hint,
-                        params={"instruction": full_instruction, "task_id": task.task_id},
-                        tool_registry=tool_registry,
-                    )
-                    tool_trace.append(f"tool:{conn.server_name}")
-                except Exception as e:
-                    logger.warning("Configured web_search server failed (%s) — using built-in DDG", e)
-                    conn = None
-            if not conn:
-                if not self._builtin_web_search_enabled:
-                    output_content = "Web search is disabled. Configure a web_search tool server or enable builtin_web_search_enabled in the agent config."
-                    tool_trace.append("builtin:duckduckgo:disabled")
-                else:
-                    from cortex.modules.builtin_search import DuckDuckGoSearch
-                    output_content = await DuckDuckGoSearch().search(full_instruction)
-                    tool_trace.append("builtin:duckduckgo")
-
-        # Tool server call (document_generation, image_generation, auto, etc.)
-        else:
-            conn = await _select_tool_for_task(
-                config.capability_hint,
-                config.tool_servers,
-                tool_registry,
-            )
-            if conn is None and self._discovery_callback and config.capability_hint not in (
-                "llm_synthesis", "bash", "code_exec", "auto"
-            ):
-                # No internal tool found — ask the scout to search for an external MCP
-                # before falling back to LLM synthesis.
-                logger.info(
-                    "Task %s: no tool for '%s' — triggering mid-run external discovery",
-                    task.task_id, config.capability_hint,
-                )
-                try:
-                    discovered = await self._discovery_callback(config.capability_hint)
-                    if discovered:
-                        # Re-attempt tool selection with the newly registered server
-                        conn = await _select_tool_for_task(
-                            config.capability_hint,
-                            config.tool_servers,
-                            tool_registry,
-                        )
-                except Exception as disc_err:
-                    logger.warning(
-                        "Mid-run discovery callback failed for task %s: %s",
-                        task.task_id, disc_err,
-                    )
-
-            if conn:
-                if event_queue:
-                    from cortex.streaming.status_events import TaskToolCallEvent
-                    await event_queue.put(TaskToolCallEvent(
-                        session_id=session_id,
-                        task_id=task.task_id,
-                        task_name=task.task_name,
-                        tool_name=config.capability_hint,
-                        tool_input={"server": conn.server_name},
-                    ))
-                tool_result = await self.call_tool_server(
-                    server_name=conn.server_name,
-                    tool_name=config.capability_hint,
-                    params={"instruction": full_instruction, "task_id": task.task_id},
-                    tool_registry=tool_registry,
-                )
-                tool_trace.append(f"tool:{conn.server_name}")
-                # If tool returned instructions (not data), make an LLM call
-                if tool_result.startswith("INSTRUCTIONS:"):
-                    output_content, token_usage = await self._call_llm(
-                        task_id=task.task_id,
-                        instruction=tool_result[len("INSTRUCTIONS:"):].strip(),
-                        config=config,
-                        llm_client=llm_client,
-                        tool_trace=tool_trace,
-                        task=task,
-                        event_queue=event_queue,
-                        available_capabilities=available_capabilities,
-                    )
-                else:
-                    output_content = tool_result
-            else:
-                # No tool server available — fall back to LLM
-                logger.warning(
-                    "No tool server for capability '%s' on task %s — falling back to LLM",
-                    config.capability_hint, task.task_id,
-                )
-                output_content, token_usage = await self._call_llm(
-                    task_id=task.task_id,
-                    instruction=full_instruction,
-                    config=config,
-                    llm_client=llm_client,
-                    tool_trace=tool_trace,
-                    task=task,
-                    event_queue=event_queue,
-                    available_capabilities=available_capabilities,
-                )
+            output_content = react_result.final_answer
+            token_usage = react_result.token_usage
+            produced_files = list(react_result.produced_files)
+            generated_script = react_result.generated_script
+            forged_server_path = react_result.forged_server_path
+            tool_trace.extend(react_result.tool_trace)
 
         # Scrub credentials from output
         output_content = self._scrubber.scrub(output_content)
@@ -610,7 +670,397 @@ class GenericMCPAgent:
             generated_script=generated_script,
             forged_server_path=forged_server_path,
             is_adhoc=task.is_adhoc,
+            output_files=produced_files,
         )
+
+    async def _run_react_loop(
+        self,
+        task: RuntimeTask,
+        config: TaskTypeConfig,
+        base_instruction: str,
+        tool_registry: ToolServerRegistry,
+        llm_client: LLMClient,
+        event_queue,
+        available_capabilities: List[str],
+    ) -> ReactResult:
+        """Execute a task via the ReAct (reason -> act -> observe) loop.
+
+        Builds the action menu, system prompt, and initial instruction, then
+        hands control to :class:`ReactLoop`. The loop calls back into
+        :meth:`_execute_action` for every step and stops as soon as the
+        sub-agent's LLM emits a ``finish`` action. Each observation is fed
+        back together with the model's own stated expectation for that step,
+        so every reasoning turn sees both what happened and what was intended.
+        """
+        from cortex.streaming.status_events import EventType, StatusEvent
+
+        session_id = task.task_id.split("/")[0]
+        react_cfg = getattr(config, "react", None) or ReactConfig()
+
+        # Action menu — built-ins gated by what is actually wired up, plus
+        # every ready MCP tool-server capability.
+        actions = self._build_action_menu(tool_registry, config)
+        action_names = [name for name, _ in actions]
+        action_menu = "\n".join(f"  - {name}: {desc}" for name, desc in actions)
+
+        # System prompt: role + task + action menu, then optional session
+        # context (same gating as the legacy llm_synthesis path).
+        system = REACT_SYSTEM.format(
+            task_name=config.name,
+            description=config.description,
+            output_format=config.output_format,
+            action_menu=action_menu,
+        )
+        session_goal = (getattr(task, "session_goal", "") or "").strip()
+        if session_goal:
+            scratchpad = (getattr(task, "session_scratchpad", "") or "").strip()
+            scratchpad_line = (
+                TASK_EXEC_SESSION_SCRATCHPAD_LINE.format(scratchpad=scratchpad[:1500])
+                if scratchpad else ""
+            )
+            system += TASK_EXEC_SESSION_CONTEXT.format(
+                session_goal=session_goal[:800],
+                scratchpad_line=scratchpad_line,
+            )
+
+        # Initial instruction + retry context. On a wave-validation retry,
+        # prior attempts and judge feedback are threaded in so the loop diffs
+        # against what failed instead of starting blind.
+        initial = REACT_USER_INITIAL.format(instruction=base_instruction)
+        attempt_history = list(getattr(task, "attempt_history", []) or [])
+        if attempt_history:
+            blocks = ["\n\n## Previous attempts (rejected by the validation judge)"]
+            for i, entry in enumerate(attempt_history, start=1):
+                prev_output = (entry.get("output") or "").strip()
+                prev_feedback = (entry.get("feedback") or "").strip()
+                blocks.append(
+                    f"\nAttempt {i} produced:\n{prev_output[:800]}\n"
+                    f"Judge feedback: {prev_feedback}"
+                )
+            blocks.append(
+                "\nKeep what was correct; fix only the issues the judge raised."
+            )
+            initial += "\n".join(blocks)
+        elif task.validation_feedback:
+            initial += (
+                "\n\n[RETRY FEEDBACK - the previous attempt failed validation]\n"
+                f"{task.validation_feedback}"
+            )
+
+        async def _emit(message: str, metadata: dict) -> None:
+            if event_queue is None:
+                return
+            await event_queue.put(StatusEvent(
+                message=message,
+                session_id=session_id,
+                event_type=EventType.STATUS,
+                metadata={
+                    "task_id": task.task_id,
+                    "task_name": task.task_name,
+                    **metadata,
+                },
+            ))
+
+        async def _exec(action: str, action_input: str) -> ActionResult:
+            return await self._execute_action(
+                action=action,
+                action_input=action_input,
+                task=task,
+                config=config,
+                tool_registry=tool_registry,
+                llm_client=llm_client,
+                event_queue=event_queue,
+                available_capabilities=available_capabilities,
+                session_id=session_id,
+            )
+
+        loop = ReactLoop(
+            llm_client=llm_client,
+            provider_name=config.llm_provider or "default",
+            system_prompt=system,
+            max_iterations=react_cfg.max_iterations,
+            observation_max_tokens=react_cfg.observation_max_tokens,
+            context_char_budget=react_cfg.context_char_budget,
+            valid_actions=action_names,
+            execute_action=_exec,
+            emit_status=_emit,
+        )
+        result = await loop.run(initial)
+        logger.info(
+            "Task %s: ReAct loop finished in %d step(s) (%d action call(s))",
+            task.task_id, result.steps, len(result.tool_trace),
+        )
+        return result
+
+    def _build_action_menu(
+        self, tool_registry: ToolServerRegistry, config: TaskTypeConfig
+    ) -> List[tuple]:
+        """Return ``[(action_name, description)]`` for this task's ReAct loop.
+
+        A built-in action is offered only when its backing capability is
+        actually wired up on this agent; every ready MCP tool-server
+        capability is appended so the loop can reach discovered tools too.
+        """
+        actions: List[tuple] = [
+            ("llm_synthesis", REACT_BUILTIN_ACTIONS["llm_synthesis"]),
+            ("web_search", REACT_BUILTIN_ACTIONS["web_search"]),
+            ("bash", REACT_BUILTIN_ACTIONS["bash"]),
+        ]
+        if self._code_sandbox is not None:
+            actions.append(("code_exec", REACT_BUILTIN_ACTIONS["code_exec"]))
+            actions.append(("forge_mcp", REACT_BUILTIN_ACTIONS["forge_mcp"]))
+        if self._workspace_bash is not None:
+            actions.append(("workspace_bash", REACT_BUILTIN_ACTIONS["workspace_bash"]))
+        if self._app_control is not None:
+            actions.append(("app_control", REACT_BUILTIN_ACTIONS["app_control"]))
+        if config.human_in_loop:
+            actions.append(("ask_user", REACT_BUILTIN_ACTIONS["ask_user"]))
+
+        builtin = {name for name, _ in actions}
+        try:
+            for cap in sorted(tool_registry._capability_map):
+                if cap not in builtin and tool_registry._capability_map[cap]:
+                    actions.append((cap, f"MCP tool-server capability: {cap}"))
+        except Exception:
+            pass
+        return actions
+
+    async def _execute_action(
+        self,
+        *,
+        action: str,
+        action_input: str,
+        task: RuntimeTask,
+        config: TaskTypeConfig,
+        tool_registry: ToolServerRegistry,
+        llm_client: LLMClient,
+        event_queue,
+        available_capabilities: List[str],
+        session_id: str,
+    ) -> ActionResult:
+        """Execute one ReAct action and return its observation.
+
+        Each action maps to one execution capability - the same set the legacy
+        single-pass dispatch used. Exceptions raised here are caught by the
+        caller (:class:`ReactLoop`) and fed back as observations, so a failed
+        action lets the loop adapt rather than aborting the whole task.
+        """
+        tool_trace: List[str] = []
+
+        # ── code_exec ─────────────────────────────────────────────────────────
+        if action == "code_exec":
+            task._produced_files = []  # capture only this step's files
+            output, script = await self._call_code_exec(
+                task=task,
+                instruction=action_input,
+                config=config,
+                llm_client=llm_client,
+                tool_trace=tool_trace,
+                event_queue=event_queue,
+            )
+            return ActionResult(
+                observation=output,
+                generated_script=script,
+                produced_files=list(getattr(task, "_produced_files", []) or []),
+                tool_trace=tool_trace,
+            )
+
+        # ── forge_mcp ─────────────────────────────────────────────────────────
+        if action == "forge_mcp":
+            output, server_path = await self._call_forge_mcp(
+                task=task,
+                instruction=action_input,
+                config=config,
+                llm_client=llm_client,
+                tool_trace=tool_trace,
+                event_queue=event_queue,
+            )
+            return ActionResult(
+                observation=output,
+                forged_server_path=server_path,
+                tool_trace=tool_trace,
+            )
+
+        # ── bash ──────────────────────────────────────────────────────────────
+        if action == "bash":
+            sandbox = BashSandbox(self._session_storage_path)
+            bash_cmd = action_input
+            try:
+                bash_resp = await llm_client.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": BASH_CODEGEN_USER.format(instruction=action_input),
+                    }],
+                    system=BASH_CODEGEN_SYSTEM,
+                    provider_name=config.llm_provider or "default",
+                    max_tokens=60,
+                )
+                generated = (bash_resp.content or "").strip().strip("`").strip()
+                if generated:
+                    bash_cmd = generated
+                    tool_trace.append("bash:llm_generated_cmd")
+            except Exception as be:
+                logger.debug("bash LLM command generation failed: %s", be)
+            output = await sandbox.execute(bash_cmd)
+            tool_trace.append("bash_sandbox")
+            return ActionResult(observation=output, tool_trace=tool_trace)
+
+        # ── workspace_bash (falls back to code_exec when no workspace set) ────
+        if action == "workspace_bash":
+            ws_ready = (
+                self._workspace_bash is not None
+                and self._workspace_bash._default_workspace is not None
+            )
+            if not ws_ready:
+                task._produced_files = []
+                output, script = await self._call_code_exec(
+                    task=task,
+                    instruction=action_input,
+                    config=config,
+                    llm_client=llm_client,
+                    tool_trace=tool_trace,
+                    event_queue=event_queue,
+                )
+                tool_trace.append("workspace_bash->code_exec")
+                return ActionResult(
+                    observation=output,
+                    generated_script=script,
+                    produced_files=list(getattr(task, "_produced_files", []) or []),
+                    tool_trace=tool_trace,
+                )
+            output = await self._call_workspace_bash(
+                task=task,
+                instruction=action_input,
+                session_id=session_id,
+                event_queue=event_queue,
+            )
+            tool_trace.append("workspace_bash")
+            return ActionResult(observation=output, tool_trace=tool_trace)
+
+        # ── app_control ───────────────────────────────────────────────────────
+        if action == "app_control":
+            output = await self._call_app_control(
+                task=task,
+                instruction=action_input,
+                session_id=session_id,
+                llm_client=llm_client,
+                config=config,
+                event_queue=event_queue,
+            )
+            tool_trace.append("app_control")
+            return ActionResult(observation=output, tool_trace=tool_trace)
+
+        # ── ask_user (human-in-the-loop clarification) ───────────────────────
+        if action == "ask_user":
+            answer = await self.ask_human(
+                task=task,
+                question=action_input,
+                event_queue=event_queue,
+            )
+            observation = answer or (
+                "(No answer available - human-in-the-loop is disabled or the "
+                "request timed out. Proceed with your best judgement and do "
+                "not ask again.)"
+            )
+            return ActionResult(observation=observation, tool_trace=["hitl:ask_user"])
+
+        # ── llm_synthesis ─────────────────────────────────────────────────────
+        if action == "llm_synthesis":
+            output, usage = await self._call_llm(
+                task_id=task.task_id,
+                instruction=action_input,
+                config=config,
+                llm_client=llm_client,
+                tool_trace=tool_trace,
+                task=task,
+                event_queue=event_queue,
+                available_capabilities=available_capabilities,
+            )
+            return ActionResult(observation=output, token_usage=usage, tool_trace=tool_trace)
+
+        # ── web_search — configured tool server first, built-in DDG fallback ──
+        if action == "web_search":
+            conn = await _select_tool_for_task("web_search", config.tool_servers, tool_registry)
+            if conn:
+                try:
+                    output = await self.call_tool_server(
+                        server_name=conn.server_name,
+                        tool_name="web_search",
+                        params={"instruction": action_input, "task_id": task.task_id},
+                        tool_registry=tool_registry,
+                    )
+                    tool_trace.append(f"tool:{conn.server_name}")
+                    return ActionResult(observation=output, tool_trace=tool_trace)
+                except Exception as e:
+                    logger.warning("Configured web_search server failed (%s) - using built-in DDG", e)
+            if not self._builtin_web_search_enabled:
+                tool_trace.append("builtin:duckduckgo:disabled")
+                return ActionResult(
+                    observation=(
+                        "Web search is disabled. Configure a web_search tool "
+                        "server or enable builtin_web_search_enabled in the agent config."
+                    ),
+                    tool_trace=tool_trace,
+                )
+            from cortex.modules.builtin_search import DuckDuckGoSearch
+            output = await DuckDuckGoSearch().search(action_input)
+            tool_trace.append("builtin:duckduckgo")
+            return ActionResult(observation=output, tool_trace=tool_trace)
+
+        # ── MCP tool-server capability ────────────────────────────────────────
+        conn = await _select_tool_for_task(action, config.tool_servers, tool_registry)
+        if conn is None and self._discovery_callback:
+            logger.info(
+                "Task %s: no tool for '%s' - triggering mid-run external discovery",
+                task.task_id, action,
+            )
+            try:
+                discovered = await self._discovery_callback(action)
+                if discovered:
+                    conn = await _select_tool_for_task(action, config.tool_servers, tool_registry)
+            except Exception as disc_err:
+                logger.warning(
+                    "Mid-run discovery callback failed for task %s: %s",
+                    task.task_id, disc_err,
+                )
+        if conn is None:
+            return ActionResult(
+                observation=(
+                    f"[no tool server provides capability '{action}'. Pick a "
+                    "different action - e.g. code_exec, web_search, bash, or "
+                    "llm_synthesis - or finish with what you already have.]"
+                ),
+                tool_trace=[f"{action}:unavailable"],
+            )
+        if event_queue:
+            from cortex.streaming.status_events import TaskToolCallEvent
+            await event_queue.put(TaskToolCallEvent(
+                session_id=session_id,
+                task_id=task.task_id,
+                task_name=task.task_name,
+                tool_name=action,
+                tool_input={"server": conn.server_name},
+            ))
+        tool_result = await self.call_tool_server(
+            server_name=conn.server_name,
+            tool_name=action,
+            params={"instruction": action_input, "task_id": task.task_id},
+            tool_registry=tool_registry,
+        )
+        tool_trace.append(f"tool:{conn.server_name}")
+        if tool_result.startswith("INSTRUCTIONS:"):
+            output, usage = await self._call_llm(
+                task_id=task.task_id,
+                instruction=tool_result[len("INSTRUCTIONS:"):].strip(),
+                config=config,
+                llm_client=llm_client,
+                tool_trace=tool_trace,
+                task=task,
+                event_queue=event_queue,
+                available_capabilities=available_capabilities,
+            )
+            return ActionResult(observation=output, token_usage=usage, tool_trace=tool_trace)
+        return ActionResult(observation=tool_result, tool_trace=tool_trace)
 
     async def _call_llm(
         self,
@@ -635,21 +1085,32 @@ class GenericMCPAgent:
         import re as _re
 
         provider_name = config.llm_provider or "default"
-        caps_note = ""
-        if available_capabilities:
-            caps_note = (
-                f" Agent capabilities available: {', '.join(sorted(available_capabilities))}."
-            )
-        system = (
-            f"You are executing a '{config.name}' task as part of an AI agent.{caps_note} "
-            f"Output format: {config.output_format}. "
-            f"{config.description} "
-            f"Generate the requested content directly and completely. "
-            f"If the task involves creating a document, PDF, report, or any file, "
-            f"produce the full content as your output — the framework handles saving it to disk. "
-            f"Never refuse by saying you cannot create files or access the internet; "
-            f"just produce the best output you can for this task."
+        caps_note = (
+            f" Agent capabilities available: {', '.join(sorted(available_capabilities))}."
+            if available_capabilities else ""
         )
+        system = TASK_EXEC_SYSTEM.format(
+            task_name=config.name,
+            caps_note=caps_note,
+            output_format=config.output_format,
+            description=config.description,
+        )
+
+        # Session context: give the worker the overall goal + planner scratchpad
+        # so it can reason about why its task exists instead of running blind.
+        # Populated by the framework at wave dispatch only when
+        # agent.inject_session_context is enabled — empty otherwise.
+        session_goal = (getattr(task, "session_goal", "") or "").strip() if task else ""
+        if session_goal:
+            scratchpad = (getattr(task, "session_scratchpad", "") or "").strip()
+            scratchpad_line = (
+                TASK_EXEC_SESSION_SCRATCHPAD_LINE.format(scratchpad=scratchpad[:1500])
+                if scratchpad else ""
+            )
+            system += TASK_EXEC_SESSION_CONTEXT.format(
+                session_goal=session_goal[:800],
+                scratchpad_line=scratchpad_line,
+            )
 
         hitl_enabled = (
             task is not None
@@ -657,23 +1118,48 @@ class GenericMCPAgent:
             and event_queue is not None
         )
         if hitl_enabled:
+            system += TASK_EXEC_HITL_SUFFIX
+
+        # Wave-validation retry: if previous attempts produced output that the
+        # judge rejected, thread each (output, feedback) pair as real
+        # conversation turns so the model can diff its prior text against the
+        # rule that fired instead of regenerating blind from a single
+        # appended-feedback blob.
+        attempt_history = list(getattr(task, "attempt_history", []) or []) if task else []
+        attempt_index = len(attempt_history) + 1  # 1-indexed: this call's attempt
+        if attempt_history:
             system += (
-                "\n\n## Human-in-the-Loop\n"
-                "If anything in the task is ambiguous or you are missing information "
-                "you need to proceed confidently, DO NOT GUESS. Instead, ask the user a "
-                "single focused question by emitting EXACTLY this tag and then stopping "
-                "your output immediately:\n"
-                "<ask_human>your concise question here</ask_human>\n"
-                "The system will pause execution, get the answer, and restart you with "
-                "the answer included in the conversation. You may ask up to 3 questions "
-                "per attempt. Only ask when necessary; prefer acting on clear instructions."
+                f"\n\n## Retry Context\n"
+                f"This is attempt {attempt_index} of 3. Previous attempts are "
+                f"shown as assistant turns followed by judge feedback. "
+                f"Keep what was correct; fix only the issues the judge raised. "
+                f"Do not regenerate from scratch."
             )
 
         tool_trace.append(f"llm:{provider_name}")
 
         ask_pattern = _re.compile(r"<ask_human>(.*?)</ask_human>", _re.DOTALL | _re.IGNORECASE)
         conversation: List[Dict[str, str]] = [{"role": "user", "content": instruction}]
-        total_input_chars = len(instruction)
+        for i, entry in enumerate(attempt_history, start=1):
+            prev_output = (entry.get("output") or "").strip()
+            prev_feedback = (entry.get("feedback") or "").strip()
+            if not prev_output and not prev_feedback:
+                continue
+            conversation.append({
+                "role": "assistant",
+                "content": prev_output or "(no output produced)",
+            })
+            conversation.append({
+                "role": "user",
+                "content": (
+                    f"[Attempt {i}/3 failed validation]\n"
+                    f"Judge feedback: {prev_feedback}\n\n"
+                    "Produce a revised response that addresses ONLY the issues "
+                    "above. Preserve any parts of your previous response that "
+                    "the judge did not call out."
+                ),
+            })
+        total_input_chars = sum(len(m.get("content", "")) for m in conversation)
         total_output_chars = 0
         final_content = ""
         MAX_ASKS = 3
@@ -762,32 +1248,99 @@ class GenericMCPAgent:
         task: RuntimeTask,
         instruction: str,
         config: TaskTypeConfig,
+        tool_registry: Optional[ToolServerRegistry] = None,
+        llm_client: Optional[LLMClient] = None,
+        envelope_store: Optional[ResultEnvelopeStore] = None,
     ) -> tuple[str, str]:
-        """Call a scripted handler function."""
-        parts = handler_path.rsplit(".", 1)
-        if len(parts) != 2:
-            raise CortexTaskError(f"Invalid handler path: {handler_path}", task_id=task.task_id)
-        module_path, fn_name = parts
-        try:
-            module = importlib.import_module(module_path)
-            fn = getattr(module, fn_name)
-        except (ImportError, AttributeError) as e:
-            raise CortexTaskError(f"Cannot load handler {handler_path}: {e}", task_id=task.task_id)
+        """Run a scripted handler / code node.
+
+        Two handler addressing schemes are supported:
+          - ``cortex:node:<id>`` — an in-process callable registered by
+            CortexBuilder.node(). Resolved via cortex.handler_registry.
+          - ``my_module.my_function`` — a dotted import path (cortex.yaml
+            ``handler:`` field). Imported from the agent_tools store.
+        """
+        from cortex.handler_registry import is_registered_handler, resolve_handler
+
+        session_id = task.task_id.split("/")[0]
+
+        if is_registered_handler(handler_path):
+            try:
+                fn = resolve_handler(handler_path)
+            except KeyError:
+                raise CortexTaskError(
+                    f"Code node handler '{handler_path}' is not registered in "
+                    f"this process — rebuild the agent with CortexBuilder",
+                    task_id=task.task_id,
+                )
+        else:
+            parts = handler_path.rsplit(".", 1)
+            if len(parts) != 2:
+                raise CortexTaskError(f"Invalid handler path: {handler_path}", task_id=task.task_id)
+            module_path, fn_name = parts
+            try:
+                # Ensure the agent_tools directory is importable. The store lives at
+                # {base_path}/agent_tools/ so we need {base_path} on sys.path.
+                if self._code_store is not None:
+                    store_parent = str(self._code_store._store_dir.parent)
+                    if store_parent not in sys.path:
+                        sys.path.insert(0, store_parent)
+                module = importlib.import_module(module_path)
+                fn = getattr(module, fn_name)
+            except (ImportError, AttributeError) as e:
+                raise CortexTaskError(f"Cannot load handler {handler_path}: {e}", task_id=task.task_id)
+
+        # Resolve upstream node outputs into a {dep_name: output} dict so a
+        # code node can read its dependencies' results directly.
+        deps: Dict[str, str] = {}
+        if envelope_store is not None and task.depends_on_ids:
+            for dep_name, dep_id in zip(task.depends_on, task.depends_on_ids):
+                try:
+                    env = await envelope_store.read_envelope(session_id, dep_id)
+                except Exception as e:  # never fail a node on dep-read errors
+                    logger.debug("Code node dep read failed (%s): %s", dep_id, e)
+                    env = None
+                if env is not None:
+                    deps[dep_name] = (
+                        env.output_value
+                        if env.output_type != "file"
+                        else (env.content_summary or env.output_value)
+                    )
 
         ctx = TaskContext(
             task_id=task.task_id,
-            session_id=task.task_id.split("/")[0],
+            session_id=session_id,
             task_name=task.task_name,
             instruction=instruction,
             input_refs=task.input_refs,
             context_hints=task.context_hints,
             output_format=config.output_format,
         )
-        result = await fn(ctx)
+        # ── Runtime wiring ──────────────────────────────────────────────────
+        ctx.request = task.context_hints.get("request") or task.instruction
+        ctx.user_id = task.principal.principal_id if task.principal else ""
+        ctx.deps = deps
+        ctx._llm_client = llm_client
+        ctx._llm_provider = config.llm_provider or "default"
+        if tool_registry is not None:
+            async def _tool_caller(server: str, tool: str, params: Dict) -> str:
+                return await self.call_tool_server(server, tool, params, tool_registry)
+            ctx._tool_caller = _tool_caller
+
+        if asyncio.iscoroutinefunction(fn):
+            result = await fn(ctx)
+        else:
+            result = fn(ctx)
+            if asyncio.iscoroutine(result):
+                result = await result
+
         if result is None:
             return "", config.output_format
         if isinstance(result, tuple):
-            return result[0] or "", result[1] if len(result) > 1 else config.output_format
+            return str(result[0] or ""), (result[1] if len(result) > 1 else config.output_format)
+        if isinstance(result, (dict, list)):
+            import json as _json
+            return _json.dumps(result, default=str), "json"
         return str(result), config.output_format
 
     async def call_tool_server(
@@ -1158,6 +1711,11 @@ class GenericMCPAgent:
         output = result.stdout
         if result.output_files:
             output += f"\n\nOutput files: {', '.join(result.output_files)}"
+            # Stash on task for the caller to surface into the envelope.
+            try:
+                task._produced_files = list(result.output_files)
+            except Exception:
+                pass
 
         # Return the generated source_code so the caller can store it in the
         # ResultEnvelope. End-of-session consent is handled by LearningEngine.
